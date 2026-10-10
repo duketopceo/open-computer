@@ -18,8 +18,19 @@ Build the missing layer between the fleet and Perplexity-Computer-equivalent ope
 
 ## Scope boundary
 
-In: router service, fs-protocol, execplane client, escalation gate, placement policy, orchestrator glue, conformance tests, Khan adapter.
-Out (explicit): connectors/integrations ecosystem, UI (docketry is the front door later), harness migration off Khan, multi-tenant anything, CI pipelines (Actions minutes exhausted — manual `pytest` runs).
+In: **deterministic conformance harness first**, then router service, fs-protocol, execplane client, escalation gate, placement policy, orchestrator glue, Khan adapter.
+Out (explicit): connectors/integrations ecosystem, full web UI (docketry is the front door later), harness migration off Khan, multi-tenant anything, CI pipelines (Actions minutes exhausted — manual `pytest` runs).
+
+## UX bar (any human-facing surface)
+
+Surfaces exist even in "no UI" scope: the gate's per-step **approval console**, ops/audit views, and the eventual docketry front door. Every one meets the same bar — a hard quality gate, not a nicety:
+
+- **Keyboard-complete** — every action reachable without a pointer; focus order sane; no dead-end dialogs.
+- **Command-palette interaction** where the surface supports it (approve/reject/inspect/goto).
+- **Information density over decoration** — operator panels, not marketing pages; the data is the UI.
+- **Deterministic renderable states** — every state a subtask/sandbox/lease can be in renders explicitly (queued, leased, running, blocked-awaiting-approval, denied, tombstoned); no implicit undefined states.
+- **Zero fake UI** — no buttons that don't do what they say, no unverified metrics, no placeholder promises (AGENTS.md §5.10).
+- **TUI-first is acceptable** — a terminal surface (herdr pane / prompt) satisfies the bar if it's keyboard-complete and state-explicit. Any future GUI (web) gets a real design pass — research-grounded, not AI slop — and the same rules apply.
 
 ## Stack decisions
 
@@ -29,7 +40,15 @@ Out (explicit): connectors/integrations ecosystem, UI (docketry is the front doo
 
 ## Implementation units
 
-### U1 — fs-protocol spec + reference impl *(no deps — start first)*
+### U0 — deterministic conformance harness *(built first — executable spec)*
+`docs/determinism.md`'s rules + test matrix become executable pytest checks BEFORE any feature code. Tests-as-spec: every later unit merges only when its matrix rows go red→green.
+- `tests/conformance/harness.py` — tiny runner: registers named checks, emits per-rule pass/fail + which deterministic rule it proves. stdlib + pytest only.
+- `tests/conformance/rules/` — one module per determinism.md rule: fail-closed, egress-deny, no-creds-in-VM, fsproto-only comms, per-step escalation approval, dry-run policy diffs, dependency-queue-never-fabricates.
+- `tests/conformance/fixtures/` — golden corpora: route-fuzz set, PII-labeled fixtures, malicious-policy diffs, fsproto transcripts.
+- Contract: each unit below lists the matrix rows it must turn green. A unit with all-green rows is done; nothing ships on "mostly passing."
+- Deps: none — this is the foundation everything else is measured against. Test: the harness itself fails correctly on a deliberately-broken stub (meta-test).
+
+### U1 — fs-protocol spec + reference impl *(no deps — after U0)*
 The genuinely new design work. OACP-derived envelope + the semantics OACP lacks.
 - `docs/fs-protocol-spec.md` — envelope (inbox/outbox per agent, YAML front-matter messages), lease files (TTL + reclaim), tombstones (completion signal), dependency queueing (consumer waits on producer tombstone; never fabricates).
 - `oc/fsproto/` — reference implementation: `mailbox.py` (send/poll/claim), `lease.py`, `tombstone.py`, `queue.py` (dependency DAG).
@@ -48,7 +67,8 @@ The genuinely new design work. OACP-derived envelope + the semantics OACP lacks.
 - `services/gate/approve.py` — per-step human approval record; unapproved → blocked before any token leaves.
 - `services/gate/audit.py` — append-only NDJSON audit log (every approval, every block, every policy change).
 - `services/gate/input_screen.py` — browsesafe pre-filter on fetched content (one layer, documented 36% bypass caveat).
-- Tests: labeled PII fixture → flagged pre-call; unapproved cloud call → zero bytes egress + audit row; audit log append-only (delete attempt fails).
+- `services/gate/console.py` — **approval console (TUI, first human surface)**: shows the exact step/payload diff awaiting approval, keyboard approve/reject, writes the audit row. Meets the UX bar above; docketry board item replaces it later.
+- Tests: labeled PII fixture → flagged pre-call; unapproved cloud call → zero bytes egress + audit row; audit log append-only (delete attempt fails); console renders every gate state deterministically.
 - Deps: none.
 
 ### U4 — router service *(bench DONE — decider primary)*
@@ -81,13 +101,14 @@ The genuinely new design work. OACP-derived envelope + the semantics OACP lacks.
 ## Sequencing
 
 ```
+U0 conformance harness ──► everything else
 E2 bench ──done──► U4 router ──► U5 placement ──┐
 U1 fsproto ─────────┐                           ├──► U6 orchestrator ──► U7 Khan+Temporal
 U2 execplane ───────┤                           │
 U3 gate ────────────┴───────────────────────────┘
 ```
 
-Parallel now: **U1, U2, U3** (all independent). U4 unblocked by bench. U5/U6 chain behind. First PR sequence: U1 spec → U1 impl → U2 → U3 → U4.
+**U0 first, always** — the matrix is the executable spec; units are only "done" when their rows are green. Parallel after U0: **U1, U2, U3** (independent). U4 unblocked by bench. U5/U6 chain behind. First PR sequence: U0 harness → U1 spec → U1 impl → U2 → U3 → U4.
 
 ## Risks / deferreds
 
