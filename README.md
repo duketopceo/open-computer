@@ -1,69 +1,67 @@
-# open-computer
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo-dark.svg">
+    <img src="assets/brand/logo.svg" alt="open-computer" width="360">
+  </picture>
+</p>
 
-An open-source equivalent of Perplexity Computer's **cloud** orchestration —
-multi-model routing, disposable sandboxed execution, and hybrid local/cloud
-placement — built from open components and Luke's existing agent fleet.
+<p align="center"><em>Logo is a proposal pending owner sign-off.</em></p>
 
-Perplexity's thesis: *the orchestration layer matters more than any individual
-model.* Models are replaceable specialists; routing is the durable product.
-This repo is that thesis, built in the open.
+**An open, self-hosted take on the cloud half of Perplexity Computer: route each subtask to a cheap model, run it in a disposable sandbox, hold anything sensitive for approval, and stop at a hard cost cap.**
 
-## The shape of the system
+> **Status: research phase, no runtime code yet.** The architecture is mapped, the router question is
+> answered with data, and a small vertical slice is planned. Nothing below under "How it works" is
+> runnable today. See the [roadmap](./ROADMAP.md).
 
+## Why
+
+Perplexity Computer coordinates 19 models for $200/month; reviewers report simple tasks at roughly
+$0.60-$0.80 and complex ones at $2-$6, with runaway-spend complaints
+([research](./docs/research/2026-10-10-landscape.md)). Open projects cover single slices: browser-use for
+browsers, OpenHands for coding, E2B and CubeSandbox for sandboxes. open-computer is the composition of
+those slices under a cost cap and an approval gate, built from parts the owner already runs
+(`orchestral`, `agentflow`, `Argus`, `jev-compact`, CubeSandbox).
+
+It is personal infrastructure first. It does not try to match Perplexity's connectors, memory or enterprise features.
+
+## How it works (planned)
+
+```mermaid
+flowchart LR
+  G[goal] --> O[orchestrator<br/>orchestral loop + agentflow fan-out]
+  O --> P[placement policy<br/>rules + hosted decider call]
+  P -->|local or cheap model| S[sandbox per subtask<br/>CubeSandbox, egress deny]
+  P -->|cloud + flagged content| A[approval gate<br/>PII scan, human OK]
+  A --> S
+  S --> R[results + cost ledger + audit log]
 ```
-                    ┌─────────────────────────────────────┐
-                    │           ORCHESTRATOR (Khan)       │
-                    │  goal → subtasks → assignments      │
-                    └──────────────┬──────────────────────┘
-                                   │
-                    ┌──────────────▼──────────────────────┐
-                    │      ROUTER (Jev or pplx-decider)   │
-                    │  task type × complexity × latency   │
-                    │  → model per subtask via OpenRouter │
-                    └──────────────┬──────────────────────┘
-                                   │
-        ┌──────────────────────────┼──────────────────────────┐
-        ▼                          ▼                          ▼
-┌───────────────┐        ┌──────────────────┐        ┌──────────────────┐
-│  EXECUTION    │        │  ESCALATION GATE │        │  KNOWLEDGE INDEX │
-│  CubeVM       │        │  PII-Tracer      │        │  pplx-embed      │
-│  microVMs     │        │  per-step        │        │  shared-space    │
-│  + OpenShell  │        │  approval        │        │  local retrieval │
-│  policy       │        │                  │        │                  │
-└───────────────┘        └──────────────────┘        └──────────────────┘
-        │                          │                          │
-        └──────────────────────────┼──────────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-                    │  SUB-AGENTS via filesystem protocol │
-                    │  inbox/outbox · leases · tombstones │
-                    │  jev-compact keeps context alive    │
-                    └─────────────────────────────────────┘
-```
+
+What exists as measured evidence, from open PR [#2](https://github.com/duketopceo/open-computer/pull/2): on a 180-fixture
+set the hosted `pplx-decider` reached 86.7% route and tier accuracy at about $0.000004 per decision, and a
+self-hosted router did not stay up under load, so no router service will be built.
+
+## Install and quick start
+
+Not available yet. There is nothing to install. The first runnable command (`open-computer run "<goal>"`) is
+unit U8 in the [program plan](./docs/plans/2026-10-10-program-roadmap-plan.md).
+
+A screenshot or recording goes here once the CLI exists. TODO: capture from the real CLI; the design is in [DESIGN.md](./DESIGN.md).
 
 ## Docs
 
-- [ARCHITECTURE_MAP.md](./ARCHITECTURE_MAP.md) — component-by-component map:
-  Perplexity's part → open equivalent → status
-- [docs/determinism.md](./docs/determinism.md) — the non-negotiable rules and the
-  deterministic test matrix (fail-closed, egress deny-by-default, no creds in the
-  VM, per-step escalation approval)
-- [docs/perplexity-open-catalog.md](./docs/perplexity-open-catalog.md) —
-  everything Perplexity has actually open-sourced (HF models, GitHub repos,
-  benchmarks, licenses) and what's still proprietary
-- [docs/harness-positioning.md](./docs/harness-positioning.md) — where Computer
-  lands vs Agent Zero, LangGraph, CrewAI, OpenHands, Strands, etc.
-- [docs/fleet-inventory.md](./docs/fleet-inventory.md) — what already exists in
-  the fleet (Khan, wisp, orchestral, jev-compact, kurultai, docketry, …) and the
-  four genuinely new builds
-- [ROADMAP.md](./ROADMAP.md) — build sequencing
+- [Landscape research](./docs/research/2026-10-10-landscape.md): Perplexity Computer, Manus, ChatGPT agent, Claude computer use, browser-use, OpenHands, Open Interpreter, E2B/Cube/Daytona, routers.
+- [Program roadmap plan](./docs/plans/2026-10-10-program-roadmap-plan.md)
+- [ARCHITECTURE_MAP.md](./ARCHITECTURE_MAP.md): Perplexity part, open equivalent, status.
+- [docs/determinism.md](./docs/determinism.md): the non-negotiable rules and test matrix.
+- [docs/perplexity-open-catalog.md](./docs/perplexity-open-catalog.md): what Perplexity has open-sourced.
+- [docs/harness-positioning.md](./docs/harness-positioning.md), [docs/fleet-inventory.md](./docs/fleet-inventory.md)
+- [DESIGN.md](./DESIGN.md): "Flight Strip" design direction; [assets/brand](./assets/brand/README.md): logo proposal.
 
-## Status
+## Contributing
 
-Research phase. The architecture is mapped, the adopt-vs-build list is settled,
-and the first experiment (router bench: Jev vs pplx-decider-v1-27b in
-`orchestral`) is defined. No runtime code yet.
+Docs and plans only for now. Open an issue before proposing code: the roadmap deliberately avoids new services
+where an existing repo already does the job. Default branch changes go through a pull request.
 
 ## License
 
-TBD — same open question as wisp (AGPLv3 vs BSL). Decided before first code lands.
+MIT is proposed in open PR [#1](https://github.com/duketopceo/open-computer/pull/1) and adds the `LICENSE` file when merged.
