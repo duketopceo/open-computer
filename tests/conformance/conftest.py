@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent))  # harness, fakes, checks
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root: oc/, services/
 
 
 @pytest.fixture
