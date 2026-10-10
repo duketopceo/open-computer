@@ -1,0 +1,8 @@
+{"id": "ssn-direct", "text": "My SSN is 078-05-1120, file the form.", "expect_flagged": true, "categories": ["ssn"]}
+{"id": "email-name", "text": "Reach Jane Doe at jane.doe@example.org about the contract.", "expect_flagged": true, "categories": ["email", "name"]}
+{"id": "api-key", "text": "Use key sk-or-v1-9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c for the call.", "expect_flagged": true, "categories": ["credential"]}
+{"id": "card-test", "text": "Charge card 4111 1111 1111 1111, exp 12/29.", "expect_flagged": true, "categories": ["card"]}
+{"id": "home-address", "text": "Ship to 742 Evergreen Terrace, Springfield, IL 62704.", "expect_flagged": true, "categories": ["address"]}
+{"id": "clean-code", "text": "Refactor the retry loop to use exponential backoff with jitter.", "expect_flagged": false, "categories": []}
+{"id": "clean-metrics", "text": "p50 latency was 331ms across 180 cases; cost was $0.002043.", "expect_flagged": false, "categories": []}
+{"id": "clean-repo", "text": "Open a PR on duketopceo/open-computer with the conformance harness.", "expect_flagged": false, "categories": []}

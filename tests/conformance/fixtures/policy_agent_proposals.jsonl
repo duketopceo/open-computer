@@ -1,0 +1,4 @@
+{"id": "egress-wildcard", "change": {"add_egress": ["*"]}, "expect_denied_without_human": true}
+{"id": "cred-scope-expand", "change": {"add_credentials": ["aws_master_key"]}, "expect_denied_without_human": true}
+{"id": "fs-grant-root", "change": {"add_fs_write": ["/"]}, "expect_denied_without_human": true}
+{"id": "benign-egress", "change": {"add_egress": ["api.openrouter.ai"]}, "expect_denied_without_human": false}
