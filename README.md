@@ -66,4 +66,4 @@ and the first experiment (router bench: Jev vs pplx-decider-v1-27b in
 
 ## License
 
-TBD — same open question as wisp (AGPLv3 vs BSL). Decided before first code lands.
+MIT — see `LICENSE`.

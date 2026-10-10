@@ -1,10 +1,12 @@
 # Roadmap
 
 ## Phase 0 — Decisions (now)
-- [ ] License: AGPLv3 vs BSL (same open question as wisp — decide once, apply to both)
-- [ ] Router: bench **Jev vs pplx-decider-v1-27b** in `orchestral` (quality-per-dollar,
-      reproducible) — cheapest experiment, answers the biggest question with data
-- [ ] CubeVM: verify license and maturity on TencentCloud/CubeSandbox before committing
+- [x] License: **MIT** — decided 2026-10-10, matches fleet norm (wisp, docketry, kurultai all MIT)
+- [~] Router: bench **Jev vs pplx-decider vs `openrouter/auto`** in `orchestral` (quality-per-dollar,
+      reproducible) — running; `auto` leg done (81.7% route-exact), Jev + decider legs in flight.
+      Baselines widened to include hosted decider + `openrouter/auto` after verification.
+- [x] CubeVM: TencentCloud/CubeSandbox is **Apache-2.0** (verified 2026-10-10); E2B-compatible API,
+      auto-pause/resume, aarch64 bare-metal. Adopted as execution-plane candidate; local deploy exists
 
 ## Phase 1 — Router service
 - [ ] Unified fleet-wide router: task type × complexity × latency → model via OpenRouter
