@@ -56,8 +56,8 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 |---|---|---|---|
 | OC-001 | P0 | Reconcile docs with code: rebase PR #6, fix stale README/ROADMAP/ARCHITECTURE_MAP | in review (this PR) |
 | OC-002 | P0 | Decide and record: name, router (keep/shrink/delete), fsproto (keep), Anthropic models in TIER_MODELS | open |
-| OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | partial: pyproject.toml + uv.lock + pytest/ruff config (#21); sys.path hacks remain |
-| OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | done (#21): hosted ubuntu-latest, SHA-pinned actions, pull_request only; python and console-e2e jobs; mypy not configured, not added |
+| OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | partial: pyproject.toml + uv.lock + pytest/ruff config (#22); sys.path hacks remain |
+| OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | done (#22): hosted ubuntu-latest, SHA-pinned actions, pull_request only; python and console-e2e jobs; mypy not configured, not added |
 | OC-005 | P0 | Determinism guard: random order x20, frozen/foreign clock, matrix-vs-docs drift check | open |
 | OC-006 | P0 | U0 conformance harness (R1-R7 executable) | done (#3) |
 | OC-007 | P0 | U1 fs-protocol spec v0.1 | done (#4) |
