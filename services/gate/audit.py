@@ -29,7 +29,7 @@ class AuditLog:
 
     def rows(self) -> list[dict]:
         return [
-            json.loads(l) for l in self.path.read_text().splitlines() if l.strip()
+            json.loads(ln) for ln in self.path.read_text().splitlines() if ln.strip()
         ]
 
     def delete(self, i: int) -> None:

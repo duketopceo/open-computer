@@ -56,8 +56,8 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 |---|---|---|---|
 | OC-001 | P0 | Reconcile docs with code: rebase PR #6, fix stale README/ROADMAP/ARCHITECTURE_MAP | in review (this PR) |
 | OC-002 | P0 | Decide and record: name, router (keep/shrink/delete), fsproto (keep), Anthropic models in TIER_MODELS | open |
-| OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | open |
-| OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | open |
+| OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | partial: pyproject.toml + uv.lock + pytest/ruff config (#21); sys.path hacks remain |
+| OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | done (#21): hosted ubuntu-latest, SHA-pinned actions, pull_request only; python and console-e2e jobs; mypy not configured, not added |
 | OC-005 | P0 | Determinism guard: random order x20, frozen/foreign clock, matrix-vs-docs drift check | open |
 | OC-006 | P0 | U0 conformance harness (R1-R7 executable) | done (#3) |
 | OC-007 | P0 | U1 fs-protocol spec v0.1 | done (#4) |
@@ -119,6 +119,14 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-064 | P6 | Remote HTTPS MCP with auth (prerequisite for public directories) | open |
 | OC-065 | P6 | Anthropic directory submission (claude.ai/directory/manage) | open |
 | OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open |
+
+## Product direction (owner, 2026-10-11)
+
+open-computer should feel like Perplexity Computer: the user states a goal in a chat, work runs in sandboxes,
+and a right sidebar shows steps, sources, artifacts and approvals live. The current console becomes the
+admin/ops surface. Backend units therefore emit a streamable event model (run, steps with status, tool
+calls, sources, artifacts, approvals bound to payload hash, cost). The schema is defined and documented
+with the orchestrator / goal-to-artifact units (OC-039, OC-040) in `docs/event-schema.md`.
 
 ## Open decisions (OC-002)
 

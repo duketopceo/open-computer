@@ -7,6 +7,8 @@ rule, proving the checks detect real violations rather than rubber-stamping.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -91,7 +93,7 @@ class GoodFS:
         self.leases[lid]["alive"] = False
 
     def pending(self, tid):
-        alive = any(l["tid"] == tid and l["alive"] for l in self.leases.values())
+        alive = any(le["tid"] == tid and le["alive"] for le in self.leases.values())
         return not alive and not self.tasks[tid]["tombstone"]
 
     def record_path(self, agent, tid):
@@ -343,10 +345,6 @@ class GoodAudit:
 
     def delete(self, i):
         raise ReadOnly("audit log is append-only")
-
-
-import hashlib
-import json
 
 
 def _h(payload):
