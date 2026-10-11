@@ -76,7 +76,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-020 | P1 | Gate: payload-hash-bound approval, single egress path, pending queue, decision table | partial: hash-bound, single-use, expiring approval and single send path with injected sender (#19); hash-chained audit is OC-021 |
 | OC-021 | P1 | Audit log: hash chain, fsync, file mode, `oc audit verify` | open |
 | OC-022 | P1 | PII corpus >= 300 rows + precision/recall gates | open |
-| OC-023 | P1 | Execplane contract tests with recorded Cube cassettes (zero skips in CI) | open |
+| OC-023 | P1 | Execplane contract tests with recorded Cube cassettes (zero skips in CI) | partial: cassette record/replay layer, strict matching, schema + provenance, R1-R3 replayed against the real adapter in CI (#PRN); cassettes are SYNTHETIC until `scripts/record_cube.py` is run live |
 | OC-024 | P1 | Chaos and timeout suite | open |
 | OC-025 | P1 | Ops view: fix 12 defects + render/escape/no-mutation tests | open |
 | OC-026 | P1 | Approval console v2 (show payload, keys, states, EOF=reject) + golden renders | open |

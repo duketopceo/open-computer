@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "provenance": "synthetic",
+  "note": "Hand-written from SDK semantics, not recorded from a real CubeSandbox. Replace with `scripts/record_cube.py` output when run live.",
+  "interactions": [
+    {
+      "op": "create",
+      "id": "sb-allow",
+      "result": {
+        "ok": true
+      },
+      "request": {
+        "template": "code-interpreter",
+        "timeout": 300,
+        "env_vars": null,
+        "allow_internet_access": false,
+        "network": {
+          "allow_out": [
+            "example.com"
+          ]
+        }
+      }
+    },
+    {
+      "op": "run",
+      "sandbox": "sb-allow",
+      "cmd": "curl -sS --max-time 3 -o /dev/null https://example.com",
+      "result": {
+        "exit_code": 0
+      }
+    },
+    {
+      "op": "run",
+      "sandbox": "sb-allow",
+      "cmd": "curl -sS --max-time 3 -o /dev/null https://example.org",
+      "result": {
+        "exit_code": 56,
+        "stderr": "curl: (56) CONNECT tunnel failed, response 403"
+      }
+    },
+    {
+      "op": "create",
+      "id": "sb-deny",
+      "result": {
+        "ok": true
+      },
+      "request": {
+        "template": "code-interpreter",
+        "timeout": 300,
+        "env_vars": null,
+        "allow_internet_access": false
+      }
+    },
+    {
+      "op": "run",
+      "sandbox": "sb-deny",
+      "cmd": "curl -sS --max-time 3 -o /dev/null https://example.com",
+      "result": {
+        "exit_code": 56,
+        "stderr": "curl: (56) CONNECT tunnel failed, response 403"
+      }
+    },
+    {
+      "op": "create",
+      "id": "sb-cred",
+      "result": {
+        "ok": true
+      },
+      "request": {
+        "template": "code-interpreter",
+        "timeout": 300,
+        "allow_internet_access": false,
+        "env_vars": {
+          "OPENROUTER_API_KEY": "oc-placeholder-0"
+        }
+      }
+    },
+    {
+      "op": "run",
+      "sandbox": "sb-cred",
+      "cmd": "env",
+      "result": {
+        "stdout": "OPENROUTER_API_KEY={{env:OPENROUTER_API_KEY}}\nPATH=/usr/bin\n"
+      }
+    },
+    {
+      "op": "run",
+      "sandbox": "sb-cred",
+      "cmd": "printenv OPENROUTER_API_KEY || true",
+      "result": {
+        "stdout": "{{env:OPENROUTER_API_KEY}}\n"
+      }
+    }
+  ]
+}
