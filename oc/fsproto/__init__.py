@@ -210,12 +210,33 @@ class FSAdapter:
             self._set_status(lease_id, "queued")
 
     def pending(self, tid: str) -> bool:
-        """Task exists, no live lease, no tombstone → requeue candidate. §4."""
+        """Task exists, no live lease, no tombstone, not failed. §4."""
+        status = self._task_dir(tid) / "status"
+        if status.exists() and status.read_text().strip() == "failed":
+            return False  # failed is terminal for the run — not a requeue
         return (
             self._task_dir(tid).exists()
             and not self._lease_valid(tid)
             and not self._tombstoned(tid)
         )
+
+    def done(self, tid: str) -> bool:
+        """Tombstone present → result is final and collectable. §5."""
+        return self._tombstoned(tid)
+
+    def fail(self, tid: str) -> None:
+        """Mark a task failed — never tombstoned, never collectable. §5."""
+        self._set_status(tid, "failed")
+
+    def inbox_ids(self, agent: str) -> list[str]:
+        """Task ids offered to an agent's inbox, in name order. §3."""
+        inbox = self._agent_dir(agent) / "inbox"
+        return sorted(p.name for p in inbox.iterdir())
+
+    def task_body(self, tid: str) -> bytes:
+        """Raw task.md body — what the worker executes. §3."""
+        meta, body = _parse_record(self._task_dir(tid) / "task.md")
+        return body
 
     # --- integrity (spec §6) --------------------------------------------------
 
