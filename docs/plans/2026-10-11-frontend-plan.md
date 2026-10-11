@@ -1,101 +1,116 @@
-# Frontend build plan — operator surface
+# Frontend build plan — workplace
 
-Implements `docs/design/2026-10-11-frontend-design.md`. Frontend units
-(F1–F4) slot against the backend roadmap (U5–U7); every unit ships only
-views backed by real data.
+Implements `docs/design/2026-10-11-frontend-design.md` — the
+OpenWebUI-shaped workplace for open-computer: left rail + main pane,
+passkey-gated, task-centric, every view behind a real backend.
 
 ## Ordering
 
 ```
+F-AUTH (passkey gate)   — urgent: oc.shippedit.dev is live but bare
+F1 shell + ops views    — no new backend deps
 U5 placement ─┐
-              ├─► U6 orchestrator ─► U7 Khan+Temporal
-F1 shell ─────┤
-              └─► F2 task views ────► F3 approvals ─► F4 skills/automations
+              ├─► U6 orchestrator ──► U7 Khan+Temporal
+              └─► F2 work surface ──► F3 approval actions ─► F4 skills/auto
 ```
 
-F1 needs nothing new — all its views already have real backends.
-F2 needs U6 (task records). F3 needs gate pending-queue read (small U3
-addition). F4 needs U7.
+F-AUTH is first because the URL is already public — the workplace is
+useless-to-dangerous open until the passkey gate exists.
 
-## F1 — shell + real-data views (now)
+## F-AUTH — passkey gate (first)
 
-Refactor `services/opsview` from one page into shell + views. No new
-backend dependencies — everything rendered exists today.
+The app authenticates itself; perimeter stacks on top.
 
-- Shell: left rail nav (or top bar — one dense row, not a sidebar;
-  density over chrome), view keymap, `/` palette stub listing only
-  implemented views
-- `/ops` — current page unchanged (backward compat; oc.shippedit.dev
-  keeps working)
-- `/matrix` — matrix table + run action (extracted, same code path)
-- `/fleet` — sandbox inventory from execplane: id, template, state,
-  egress posture, TTL, parent task (none yet — column exists, renders
-  `—`)
-- `/gate` — audit tail view (read-only for now; actions arrive in F3)
-- `/router` — route tester + ledger tail (move existing, add ledger read)
-- `/` → redirect to `/ops` until F2
+- `python-fido2` (Yubico reference) — registration + assertion
+  ceremonies server-side; the one new dependency, and it's the standard
+- Credential store `~/.local/share/oc/credentials.json`, rp_id-scoped
+- Session: signed cookie (stdlib hmac), 12h rolling; unauthed → ceremony
+  page only
+- Enrollment: app refuses non-loopback bind until ≥1 credential;
+  enrollment allowed on loopback or behind verified perimeter
+- rp_id per origin — `oc.shippedit.dev` and the tailnet host get
+  separate enrollments; app offers enrollment when perimeter-authed but
+  credential-less
+- Approver identity = authenticated credential handle (records into gate
+  audit); self-approval stays structurally impossible
 
-Keyboard: `g`+letter view switching, `j/k` scroll, `?` help overlay.
-Palette lists views only — no action entries until F3 gives them real
-targets.
+Done when: `oc.shippedit.dev` serves the ceremony page to strangers,
+asserts with the platform passkey, session survives reload, and a
+non-enrolled origin offers enrollment only behind the perimeter.
 
-Done when: every route serves real data, `?` documents all keys,
-matrix/gate/fleet/router views match ops data exactly.
+## F1 — shell + ops views
 
-## F2 — task surfaces (with U6)
+Left rail + main pane over `services/opsview` (stdlib, server-rendered).
+No new backend dependencies — everything rendered already exists.
 
-Depends on: orchestrator emitting task records (filesystem task dirs per
-fsproto).
+- Shell: rail (task list region — empty "no orchestrator yet" until U6,
+  no input bar; nav: Gate · Matrix · Fleet · Router · Ops), main pane,
+  `/` palette over implemented views
+- `/ops` preserved verbatim (deep links keep working)
+- `/matrix` — extracted matrix table + run action
+- `/fleet` — sandbox inventory: id, template, state, literal egress
+  posture (`deny-all` / `allow: hosts`), TTL
+- `/gate` — audit tail, read-only for now
+- `/router` — route tester + ledger tail
+- Keyboard: `g`+letter, `j/k`, `?` help; `n`/`a`/`r` inert until their
+  views exist
 
-- `/` → task list (replaces redirect): STATE, GOAL, SUBTASKS n/m, COST,
-  AGE, ENGINES; active first; `enter` opens task
-- `/tasks/<id>` — plan tree (subtask rows: state, route/tier, engine,
-  sandbox, cost, duration, dep indentation), event stream (fsproto
-  outbox tail — poll first, SSE only if polling measurably lags),
-  artifacts + audit slice
-- `?view=thread` read-only variant
-- Palette gains `new task` — but only if U6 exposes a submit path;
-  otherwise it stays absent
+Done when: all routes serve real data behind the passkey session, `?`
+documents shipped keys, matrix/gate/fleet/router render what ops
+renders today.
 
-Done when: a real U6 task renders end-to-end — plan tree matches the
-fsproto task dir, event stream matches the outbox, costs match the
-router ledger.
+## F2 — work surface (with U6)
+
+Depends on: orchestrator emitting task records (fsproto task dirs).
+
+- Rail task list live: `STATE GOAL(n/m) COST`, grouped
+  ACTIVE / AWAITING / DONE
+- `/` main pane = selected task run: goal+state header (cost, elapsed,
+  engines), plan tree (deps as indentation), fsproto event stream
+  (poll → SSE only if measurably needed), artifacts + audit slice
+- `?view=thread` read-only render
+- Input bar appears — submits orchestrator directives, audit-rowed;
+  `n` focuses it, palette gains `new goal`
+- Rail rows link `AWAITING` → `/gate` filtered
+
+Done when: a real U6 task renders end-to-end — tree matches the task
+dir, stream matches the outbox, cost matches the router ledger, and a
+submitted directive produces a task + audit row.
 
 ## F3 — approval actions (needs gate pending read)
 
-Depends on: U3 extension — gate exposes pending-escalation queue as
-data (today it lives inside the TUI console loop).
+Depends on: U3 extension — gate exposes its pending queue as data
+(today it lives inside the TUI console loop).
 
-- `/gate` gains pending section: exact payload/diff inline, `a`/`r` on
-  highlighted row, immediate audit append
+- `/gate` pending section: payload/diff inline, `a`/`r` on highlighted
+  row, immediate audit append
 - Palette gains `approve`/`reject` on highlighted context
-- Self-approval stays impossible — approver identity comes from the
-  perimeter (Tailscale/Access identity), not a form field
+- Approver = passkey credential identity, recorded in the audit row
 
-Done when: a real escalation created by `services/gate` appears,
-renders its payload, and approving via keypress writes the audit row the
-TUI console would have written (verify: same jsonl schema, readable by
-`services/gate/audit.py`).
+Done when: a real escalation appears in `/gate`, renders its payload,
+and `a` writes the identical audit row the TUI console writes (same
+jsonl schema, readable by `services/gate/audit.py`).
 
 ## F4 — skills + automations (U7 era)
 
 - `/skills` — registry view once U7 has one
 - `/automations` — Temporal schedules: cadence, next run, history;
-  actions Run now/Pause when Temporal adapter exposes them
+  Run now/Pause when the adapter exposes them
 
-Not designed further until U7 exists — same rule: no view without a
-backend.
+Not designed further until U7 exists.
 
 ## Cross-cutting requirements
 
-- **Conformance tie-in**: each F-unit adds one check to the matrix —
-  "view renders with empty data", "view renders real entity", so a UI
-  regression is a matrix row, not a screenshot diff.
-- **State vocabulary**: only the words in the design doc's normative
-  list; a view introducing a synonym fails review.
+- **Conformance tie-in**: each F-unit adds a matrix check — "view
+  renders with empty data", "view renders real entity" — a UI regression
+  becomes a matrix row, not a screenshot diff.
+- **Auth regression check**: matrix row asserting unauthed requests get
+  the ceremony page (no view leaks past the gate).
+- **State vocabulary**: only the design doc's normative words; a
+  synonym fails review.
 - **Cost everywhere**: no F-unit ships without inline cost where the
-  entity has cost (tasks, subtasks, routes).
-- **No new dependencies**: stdlib + existing opsview pattern. Vanilla JS
-  only, and only where keyboard behavior needs it.
-- **Perimeter stays the auth**: Tailscale/Access identity; no login
-  forms, no sessions in the app.
+  entity has cost.
+- **Deps**: stdlib + `python-fido2` only. Vanilla JS where keyboard
+  needs it, nothing else.
+- **Session hygiene**: signing key in omaseal or
+  `~/.local/share/oc/` with 0600 — never in the repo, never logged.

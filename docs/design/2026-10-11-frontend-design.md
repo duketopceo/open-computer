@@ -1,7 +1,9 @@
-# Frontend design — open-computer operator surface
+# Frontend design — open-computer workplace
 
-Status: design. Scope: the human-facing surface for open-computer — what it is,
-what it renders, what it deliberately does differently from Perplexity Computer.
+Status: design. Scope: the human-facing surface for open-computer — the
+workplace where goals are submitted, work is watched, and control points
+are acted on. "OpenWebUI for open-computer": a self-hosted web app that
+is the product's front door, not an observability afterthought.
 
 ## 1. Research: what Perplexity Computer's UI actually is
 
@@ -9,205 +11,196 @@ Surfaced from reviews, help-center docs, and selector-level harness notes
 (2026-10-11):
 
 - **Task-first, not chat-first.** The front door is `/computer/tasks` — a
-  grid of task rows (title, state), not a chat history. A task is the unit
-  of work; conversation is incidental.
-- **Task run page** (`/computer/tasks/<id>`): plan rendered as a todo list,
-  tool invocations inline, file artifacts (charts, PDFs, code) attached.
-  `?view=thread` gives a read-only share view — same data, no controls.
-- **"/" Command Panel**: slash palette over modes, skills, workflows — the
-  verb surface. Validates the command-palette interaction already in our
-  UX bar.
-- **Skills page**: named reusable instruction sets that deploy sub-agents;
-  My Skills / library tabs, searchable.
+  grid of task rows, not a chat history. A task is the unit of work.
+- **Task run page** (`/computer/tasks/<id>`): plan as todo list, tool
+  invocations inline, file artifacts attached. `?view=thread` is a
+  read-only share view — same data, no controls.
+- **"/" Command Panel**: slash palette over modes, skills, workflows —
+  the verb surface. Validates our keyboard-palette requirement.
+- **Skills page**: named reusable instruction sets deploying sub-agents.
 - **Connectors page**: 400+ managed OAuth connectors.
-- **Automations dashboard** (`/computer/automations`): scheduled tasks
-  grouped Active/Paused/Completed; row actions Run now/Pause/Edit/Pin/Delete.
-- **Background execution model**: close the browser, the task continues;
-  notifications on completion. The UI is a thin shell rendering events —
-  intelligence lives in the orchestrator.
+- **Automations dashboard**: scheduled tasks grouped
+  Active/Paused/Completed; Run now/Pause/Edit/Pin/Delete row actions.
+- **Background execution**: close the browser, work continues. Thin
+  shell — the UI renders events, the orchestrator owns intelligence.
 
 ### Documented weaknesses (reviews: awesomeagents 7.2/10, builder.io)
 
-1. **Opaque credit costs.** No per-task or per-step cost visibility;
-   failed runs still burn credits. The single most-punished complaint.
-2. **No debugging trail.** Sandbox resets between conversations; when a
-   run fails there is nothing to inspect — no logs, no step trace, no
-   state to audit.
-3. **Black-box routing.** You can't see which model ran a subtask or why.
+1. **Opaque credit costs** — no per-task/step cost; failed runs still
+   burn credits.
+2. **No debugging trail** — sandbox resets between runs; failures leave
+   nothing to inspect.
+3. **Black-box routing** — can't see which model ran a subtask or why.
 
-These three are exactly what our determinism rules already fix at the
-*system* level (audit log, per-step cost ledger, explicit engine
-attribution, egress/policy diffs). The UI's job is to make that
-inspectability visible — it is the differentiator, not a feature.
+Our determinism layer already produces the counter-evidence (audit log,
+per-step cost ledger, engine attribution, policy diffs). The workplace's
+job is to make that inspectability the product.
 
 ## 2. Position
 
-The surface is **mission control**, not a chat client and not a status
-dashboard alone. Perplexity hides the machinery; we render it — because
-our user's reason to run this instead of Computer is to see and control
-what the orchestrator does.
+An **OpenWebUI-shaped workplace for the orchestrator**: self-hosted, one
+app, where the user both *does* the work (submit goals, steer subtasks,
+approve escalations, collect artifacts) and *sees* the machinery (state,
+cost, audit, sandboxes). Perplexity hides the machinery behind the task;
+we render it — that visibility is the reason this exists at all.
 
-- **Thin shell**: the UI renders events and state, never runs agents.
-  Same architectural bet as Computer (their interface layer is swappable);
-  ours is more honest about it.
-- **States are text**: every entity renders a literal state word
-  (`RUNNING` `BLOCKED` `AWAITING-APPROVAL` `DENIED` `PASS` `FAIL`
-  `PENDING` `RECLAIMED`), not a spinner. Spinners may decorate, never
-  substitute.
-- **Cost is a column, not a popup**: every task row, every subtask, every
-  route decision shows cost inline. Their #1 complaint is our table.
-- **Approval is a first-class view**: gate escalations aren't
-  notifications to dismiss — they're a queue with the exact payload/diff
-  rendered, keyboard approvable.
-- **No fake anything**: a view ships only when its data source exists and
-  is real. No placeholder task list, no stubbed skills page.
+Layout follows the proven shape (OpenWebUI, Computer, every serious
+agent app): **left rail + main pane**.
 
-## 3. Surfaces
+- **Left rail**: goal input at top, task list below (grouped
+  `ACTIVE` / `AWAITING` / `DONE`), nav section at bottom
+  (Gate · Matrix · Fleet · Router · Ops).
+- **Main pane**: the selected thing — a task run, the gate queue, the
+  matrix — never a welcome screen. On load it selects the most recent
+  active task, or the task list itself if none.
 
-One service (`services/opsview`, stdlib server-rendered, extends the
-existing :8791 surface), one shell, named views:
+Design rules that don't move:
 
-| View | Path | Data source | Available when |
+- **States are text**: every entity renders a literal state word —
+  `QUEUED` `RUNNING` `BLOCKED` `AWAITING-APPROVAL` `DONE` `FAILED`
+  `RECLAIMED` `PENDING` `APPROVED` `REJECTED` `UP` `DOWN`. Spinners may
+  decorate, never substitute.
+- **Cost is a column**: per task, subtask, and route decision — inline,
+  always. Their #1 complaint is our default.
+- **No fake anything**: a view ships only when its data source exists.
+- **Thin shell**: the app renders events and state; it never runs agents.
+
+## 3. Auth — passkey-gated (F-AUTH, blocks everything public)
+
+The workplace is app-gated, not just perimeter-gated. Perimeter
+(Tailscale identity / Cloudflare Access) may stack on top, but the app
+itself authenticates.
+
+- **Mechanism**: WebAuthn/passkey — platform authenticator first
+  (fingerprint on this MacBook, phone via hybrid caBLE). No passwords,
+  no TOTP seeds, no recovery codes.
+- **Implementation**: `python-fido2` (Yubico reference lib) server-side —
+  registration + assertion ceremonies, credential store in
+  `~/.local/share/oc/credentials.json` (rp_id-scoped). The one new
+  dependency, and it's the standard.
+- **Session**: signed cookie (stdlib hmac), 12h, rolling. Unauthed
+  requests get the passkey ceremony page — nothing else renders.
+- **Enrollment**: first-run bootstrap — app refuses public bind until ≥1
+  credential registered. Enrollment itself happens on loopback or behind
+  the perimeter only.
+- **Identity matters for authz too**: the gate approver's identity comes
+  from the authenticated credential, not a form field — self-approval
+  stays structurally impossible.
+- **rp_id nuance**: passkeys are origin-scoped — a credential enrolled on
+  `oc.shippedit.dev` won't assert on `omarchy-max.tailaf1559.ts.net`.
+  Both origins get their own enrollment (register once per origin — the
+  app detects unenrolled-authed-perimeter and offers enrollment).
+
+## 4. Surfaces
+
+| View | Path | Data source | When |
 |---|---|---|---|
-| Tasks | `/` | orchestrator task records (U6) | U6 lands |
+| Work | `/` | task list + selected task (U6) | U6 |
 | Task run | `/tasks/<id>` | task record + fsproto outbox + audit | U6 |
-| Approvals | `/gate` | gate audit + pending escalations | now (U3 exists) |
-| Matrix | `/matrix` | conformance harness results | now |
-| Fleet | `/fleet` | execplane / CubeSandbox inventory | now |
-| Router | `/router` | route tester + budget ledger | now (U4) |
-| Ops | `/ops` | current dense page, unchanged | now |
-| Skills | `/skills` | U7 skill registry | future |
-| Automations | `/automations` | Temporal schedules | U7 |
+| Gate | `/gate` | pending escalations + audit | now → actions in F3 |
+| Matrix | `/matrix` | conformance harness | now |
+| Fleet | `/fleet` | execplane → CubeSandbox | now |
+| Router | `/router` | route tester + ledger | now |
+| Ops | `/ops` | dense page (current) | now |
+| Skills / Automations | `/skills`, `/automations` | U7 | future |
 
-`/tasks` does not ship until the orchestrator emits task records — an
-empty state would be honest but the view itself would still be a fake
-button. Until then `/` redirects to `/ops`.
+Until U6, `/` shows the task-list rail (empty, honest — "no orchestrator
+yet") with the input bar **absent** — a goal box with no backend is a
+fake control. Main pane defaults to `/ops` content.
 
-### 3.1 Task list (`/`, U6+)
+### 4.1 Task list (left rail)
 
-Dense grid, one row per task. Columns:
-
-```
-STATE      GOAL                              SUBTASKS  COST     AGE    ENGINES
-RUNNING    rebuild docs site from source     3/7       $0.041   4m     decider,jev
-BLOCKED    deploy staging to hetzner         1/4       $0.002   12m    decider
-AWAITING   port fsproto to rust              0/5       $0.000   1m     —
-```
-
-- `BLOCKED`/`AWAITING` rows link straight to `/gate` filtered to that task.
-- Sort: active first, then by age. No filters in v1 — density over
-  controls.
-
-### 3.2 Task run page (`/tasks/<id>`, U6+)
-
-Three panels, top to bottom, single scroll — no tabs:
-
-1. **Plan tree** — decomposition as a nested list. Each subtask row:
-   `state | title | route/tier | engine | sandbox id | cost | duration`.
-   Dependencies render as indentation, matching fsproto dep ordering.
-2. **Live event stream** — fsproto outbox for the task, tailed. Lease
-   claims, writes, tombstones, reclaims as timestamped lines. This is the
-   debugging trail Computer doesn't have.
-3. **Artifacts + audit** — files produced (from the task workspace) and
-   the gate audit slice for this task id.
-
-`?view=thread` — read-only render of the same page for sharing (their
-pattern, same mechanism: query flag, no separate share endpoint).
-
-### 3.3 Approvals (`/gate`)
-
-The differentiating view — what Computer doesn't expose at all:
+Rows, not cards. `STATE GOAL(n/m) COST` — dense, one line:
 
 ```
-PENDING ESCALATIONS
-T-4191  subtask-3  frontier call — claude-opus   payload: [diff ▾]   a=approve r=reject
-T-4192  subtask-1  egress allowlist +pypi.org   policy diff: [diff ▾] a=approve r=reject
-
-DECIDED (latest 20)
-07:41:12  approved  frontier — gpt-5.2   by luke   2.1s to decide
-07:40:03  rejected  egress +raw.githubusercontent.com   by luke
-07:38:44  BLOCKED   pii prefilter — ssn candidate   auto
+● RUNNING   rebuild docs site        $0.041
+■ BLOCKED   deploy staging           $0.002
+◐ AWAITING  port fsproto to rust     $0.000
 ```
 
-- Pending items render the **exact payload/diff** inline (expandable);
-  approving what you can't read is the failure mode this exists against.
-- `a`/`r` act on the highlighted pending row. Every decision appends to
-  the audit log immediately — the UI never holds undecided state.
+### 4.2 Task run (main pane, U6+)
 
-### 3.4 Matrix (`/matrix`)
+Top-to-bottom, single scroll:
 
-Current matrix table moved to its own view, unchanged semantics: rows
-R1–R7 + ROUTER, `PASS`/`FAIL`/`PENDING`, timestamp of last run, "run"
-action. The confidence surface stays one keystroke away.
+1. **Goal + state header** — goal text, state word, running cost,
+   elapsed, engines seen.
+2. **Plan tree** — subtask rows: `state | title | route/tier | engine |
+   sandbox | cost | duration`; dependencies as indentation (fsproto dep
+   order).
+3. **Event stream** — fsproto outbox tail: lease claims, writes,
+   tombstones, reclaims. The debugging trail Computer lacks.
+4. **Artifacts + audit slice** — produced files, gate rows for this task.
+5. **Input bar** (bottom, only on task views) — steers the running task
+   or starts a follow-up. This is goal-level input, not chat — every
+   submission becomes an orchestrator directive with an audit row.
 
-### 3.5 Fleet (`/fleet`)
+`?view=thread` — read-only share render.
 
-Sandbox inventory: id, template, state, egress posture
-(`deny-all` / `allow: host1,host2`), TTL remaining, parent task.
-Empty allowlist renders as literal `deny-all`, not "restricted" — the
-exact policy is the point.
+### 4.3 Gate (`/gate`)
 
-### 3.6 Router (`/router`)
+The differentiating view:
 
-Current route tester, plus below it the budget ledger tail: last N
-decisions with engine, confidence, cost, running daily total. The engine
-column always names the leg that answered (`decider`/`jev`/`table`) —
-routing is never a black box here either.
+```
+PENDING
+T-4191 subtask-3  frontier — claude-opus     [diff ▾]  a=approve r=reject
+T-4192 subtask-1  egress +pypi.org           [diff ▾]  a=approve r=reject
 
-## 4. Interaction model
+DECIDED (20)
+07:41 approved  frontier — gpt-5.2        by luke@m1   2.1s
+07:40 rejected  egress +raw.github…       by luke@m1
+07:38 BLOCKED   pii prefilter — ssn       auto
+```
 
-Keyboard-complete; the mouse does nothing the keys can't.
+Exact payload/diff inline. `a`/`r` on highlighted row. Decision appends
+to audit immediately — the UI holds no undecided state. Approver shown
+as the passkey-authenticated identity.
+
+### 4.4 Ops views
+
+Matrix / Fleet / Router / Ops — current semantics unchanged, moved into
+the shell. Fleet rows show literal egress posture (`deny-all`,
+`allow: h1,h2`); Router rows always name the engine leg
+(`decider`/`jev`/`table`).
+
+## 5. Interaction model
+
+Keyboard-complete; mouse does nothing keys can't.
 
 | Key | Action |
 |---|---|
-| `/` | command palette — views, actions (run matrix, new task, approve…) |
-| `g` then letter | go to view (`g t`asks, `g g`ate, `g m`atrix, `g f`leet, `g r`outer, `g o`ps) |
-| `j`/`k` | move row highlight |
+| `/` or `⌘K` | command palette — views + real actions |
+| `g`+letter | `g w`ork `g g`ate `g m`atrix `g f`leet `g r`outer `g o`ps |
+| `j`/`k` | move selection (rail and main-pane rows) |
 | `a`/`r` | approve / reject highlighted pending escalation |
-| `enter` | open highlighted row |
-| `?` | keyboard reference |
+| `n` | new goal → focuses input bar |
+| `enter` | open selected |
+| `?` | key reference |
 
-The palette mirrors Computer's "/" panel — same discovery pattern —
-but its entries are verbs against real backends; an action that has no
-backend doesn't appear.
-
-## 5. States vocabulary (normative)
-
-Every entity uses exactly these words — views must not invent synonyms:
-
-- Task/subtask: `QUEUED` `RUNNING` `BLOCKED` `AWAITING-APPROVAL`
-  `DONE` `FAILED` `RECLAIMED`
-- Gate item: `PENDING` `APPROVED` `REJECTED` `BLOCKED` (auto-deny)
-- Sandbox: `RUNNING` `PAUSED` `KILLED`
-- Check: `PASS` `FAIL` `PENDING`
-- Service: `UP` `DOWN`
-
-`PENDING` is reserved for "not yet evaluated" — never for "waiting on a
-human" (that's `AWAITING-APPROVAL`). The distinction matters: pending is
-ambient, awaiting is actionable.
+Palette entries only appear for implemented backends — no action with no
+target.
 
 ## 6. Data contracts
 
-Views read only real services — the UI adds no persistence of its own:
+- Auth ceremonies ← `python-fido2`; credentials ←
+  `~/.local/share/oc/credentials.json`
+- Tasks/subtasks ← U6 task records (fsproto task dirs)
+- Gate ← `services/gate` pending queue + `audit.jsonl`
+- Matrix ← `tests/conformance/harness.py`
+- Fleet ← execplane → CubeSandbox API
+- Router ← `services/router` + `router-ledger.jsonl`
+- Live events ← fsproto outbox tail (SSE via stdlib chunked responses)
 
-- Task/subtask state ← orchestrator records (U6; filesystem-backed via
-  fsproto task dirs)
-- Gate pending/decided ← `services/gate` audit.jsonl + pending queue
-- Matrix ← `tests/conformance/harness.py` run output
-- Fleet ← execplane client → CubeSandbox API
-- Router ← `services/router` decision + `router-ledger.jsonl`
-- Events ← fsproto outbox tail (SSE for live updates when needed;
-  stdlib chunked responses suffice — no framework dependency)
+The app keeps no business data — credential store and session signing
+key are the only local state.
 
 ## 7. Non-goals (v1)
 
-- No chat interface — talk to tasks, not at them. Khan owns the
-  conversational front door (U7); this surface is for watching and
-  controlling.
-- No connector management UI — that's docketry's eventual job; connectors
-  here are credentials at the execplane boundary, not a settings page.
-- No multi-user, no auth beyond the perimeter (Tailscale identity /
-  Cloudflare Access) — personal-first.
-- No framework migration — stdlib server-rendered until a view genuinely
-  can't be (live DAG editing would be the first candidate; nothing else
-  comes close).
+- No generic chatbot — input bar submits goals/directives to the
+  orchestrator, audited. Khan (U7) owns free-form conversation.
+- No connector management UI — docketry's job.
+- No multi-user roles — personal-first: passkey auth establishes *who*,
+  not *which role*. Approver identity is recorded; there's one trust
+  tier.
+- No framework — stdlib + `python-fido2` only. Revisit only when a view
+  genuinely can't be server-rendered (live DAG editing would be the
+  first candidate).
