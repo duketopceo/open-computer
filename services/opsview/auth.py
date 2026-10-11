@@ -268,8 +268,10 @@ class Auth:
         return tok
 
     def consume_token(self, rp: str, tok: str) -> bool:
+        if not tok or "/" in tok or ".." in tok:
+            return False
         src = ENROLL_DIR / tok
-        if not src.exists() or "/" in tok or ".." in tok:
+        if not src.is_file():  # "" or a dir must never resolve to ENROLL_DIR itself
             return False
         try:
             claimed = src.with_name(src.name + ".used")
