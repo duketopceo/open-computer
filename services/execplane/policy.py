@@ -9,6 +9,7 @@ the approver must be the human sentinel.
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -44,7 +45,7 @@ class Proposal:
 
 @dataclass
 class Diff:
-    items: set[str]
+    items: tuple[str, ...]  # sorted — the rendered grant list is deterministic
 
 
 class PolicyEngine:
@@ -65,7 +66,7 @@ class PolicyEngine:
 
     def dry_run(self, proposal: Proposal) -> Diff:
         """The complete grant list — nothing omitted, nothing applied."""
-        return Diff(items=set(proposal.items))
+        return Diff(items=tuple(sorted(proposal.items)))
 
     def apply(self, proposal: Proposal, approved_by: str) -> bool:
         """Apply iff a human approved. Agent-origin proposals can never be
@@ -77,5 +78,11 @@ class PolicyEngine:
         self._applied.append(
             {"id": proposal.id, "change": proposal.change, "ts": time.time()}
         )
-        self.path.write_text(json.dumps(self._applied, indent=2))
+        data = json.dumps(self._applied, indent=2).encode()
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        tmp.write_bytes(data)
+        fd = os.open(tmp, os.O_RDONLY)
+        os.fsync(fd)
+        os.close(fd)
+        os.rename(tmp, self.path)
         return True

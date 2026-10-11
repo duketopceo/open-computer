@@ -22,7 +22,7 @@ class AuditLog:
         self.path.touch(exist_ok=True)
 
     def append(self, row: dict) -> None:
-        rec = {"ts": time.time(), **row}
+        rec = {**row, "ts": time.time()}
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND)
         with os.fdopen(fd, "a") as f:
             f.write(json.dumps(rec) + "\n")
