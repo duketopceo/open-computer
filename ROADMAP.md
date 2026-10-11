@@ -124,9 +124,9 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 
 open-computer should feel like Perplexity Computer: the user states a goal in a chat, work runs in sandboxes,
 and a right sidebar shows steps, sources, artifacts and approvals live. The current console becomes the
-admin/ops surface. Backend units therefore emit a streamable event model (run, steps with status, tool
-calls, sources, artifacts, approvals bound to payload hash, cost). The schema is defined and documented
-with the orchestrator / goal-to-artifact units (OC-039, OC-040) in `docs/event-schema.md`.
+admin/ops surface. The goal event-stream contract (schema, emitter helper, SSE `/goals/<id>/events`) is owned by the
+UI workspace branch (`docs/design/event-stream.md`); the orchestrator units (OC-039, OC-040) emit through that helper
+and schema and do not define a second one.
 
 ## Open decisions (OC-002)
 
