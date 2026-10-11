@@ -27,7 +27,7 @@ from services.opsview.auth import Auth, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 
 REPO = Path(__file__).resolve().parents[2]
-MATRIX_RE = re.compile(r"^(R\d+|ROUTER|AUTH): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
+MATRIX_RE = re.compile(r"^(R\d+|ROUTER|AUTH|PLACE|ORCH): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
 LEDGER_PATH = Path(os.environ.get("OC_ROUTER_LEDGER", "/tmp/oc-audit/router-ledger.jsonl"))
 
 CSS = """
@@ -79,6 +79,24 @@ justify-content:center;padding-top:18vh}
 #pal .box .h{color:var(--dim);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
 padding:6px 14px 2px}
 #help{position:fixed;right:14px;bottom:12px;color:var(--dim)}
+.chip{display:inline-block;font-size:10px;letter-spacing:.1em;padding:1px 8px;
+border:1px solid var(--line);border-radius:3px;min-width:76px;text-align:center}
+.st-QUEUED{color:var(--dim)}
+.st-LEASED,.st-RUNNING{color:var(--pend);border-color:#c9a22755;background:#c9a22712}
+.st-DONE{color:var(--ok);border-color:#3fb96f55;background:#3fb96f12}
+.st-FAILED{color:var(--bad);border-color:#e05d5d55;background:#e05d5d12}
+.st-AWAITING-APPROVAL{color:var(--acc);border-color:#4d9fff55;background:#4d9fff12}
+.goalbar{display:flex;gap:8px;margin:6px 0 18px}
+.goalbar input{flex:1;max-width:560px}
+.runrow{display:block;color:var(--fg);padding:3px 8px;border-radius:3px}
+.runrow:hover{background:#141a20}
+.runrow .g{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+.runrow .s{color:var(--dim);font-size:11px}
+.subtask{border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin:8px 0}
+.subtask .head{display:flex;justify-content:space-between;gap:10px}
+.subtask .meta{color:var(--dim);font-size:11px;margin-top:4px}
+.subtask .result{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);
+white-space:pre-wrap;font-size:12px;color:var(--fg)}
 """
 
 VIEWS = [
@@ -209,7 +227,28 @@ def _sec_health(state: dict) -> str:
     )
 
 
-def _shell(title: str, active: str, body: str) -> str:
+def _rail(runs: list) -> str:
+    if not runs:
+        return '<div class=tl>no runs yet — n submits a goal</div>'
+    out = []
+    for r in runs[:8]:
+        st = r["states"]
+        active = st.get("LEASED", 0) + st.get("RUNNING", 0)
+        failed = st.get("FAILED", 0)
+        done = st.get("DONE", 0)
+        total = r["subtasks"]
+        word = (
+            "FAILED" if failed else ("RUNNING" if active else ("DONE" if done == total else "QUEUED"))
+        )
+        goal = html.escape(r["goal"][:40]) if r["goal"] else r["run"][:12]
+        out.append(
+            f'<a class=runrow href="/tasks/{r["run"]}"><span class=g>{goal}</span>'
+            f'<span class=s><span class="chip st-{word}">{word}</span> {done}/{total}</span></a>'
+        )
+    return "".join(out)
+
+
+def _shell(title: str, active: str, body: str, rail: str = "") -> str:
     nav = "".join(
         f'<a href="{path}" class="{"on" if label == active else ""}"><span>{label}</span><span class=k>g {key}</span></a>'
         for path, label, key in VIEWS
@@ -222,7 +261,7 @@ def _shell(title: str, active: str, body: str) -> str:
 <aside>
 <div class=brand>open-computer</div>
 <div class=sect>tasks</div>
-<div class=tl>no orchestrator yet — U6</div>
+{rail or '<div class=tl>no runs yet — n submits a goal</div>'}
 <div class=sect>views</div>
 <nav class=nav>{nav}</nav>
 <div style="margin-top:auto" class=tl>press / for palette<br>press ? for keys</div>
@@ -248,31 +287,77 @@ addEventListener('keydown',e=>{{
 </script>"""
 
 
-def _page_work(state: dict) -> str:
-    body = (
-        "<h1>work</h1>"
-        + _sec_health(state)
-        + _sec_matrix(state)
-        + _sec_fleet(state)
-        + _sec_gate(state)
+def _page_work(state: dict, runs: list) -> str:
+    rows = "".join(
+        f'<div class=subtask><div class=head><a href="/tasks/{r["run"]}">{html.escape(r["goal"] or r["run"])}</a>'
+        f'<span class="chip st-{("FAILED" if r["states"].get("FAILED") else "RUNNING" if r["states"].get("LEASED") or r["states"].get("RUNNING") else "DONE" if r["states"].get("DONE") == r["subtasks"] else "QUEUED")}">'
+        f'{"FAILED" if r["states"].get("FAILED") else "RUNNING" if r["states"].get("LEASED") or r["states"].get("RUNNING") else "DONE" if r["states"].get("DONE") == r["subtasks"] else "QUEUED"}</span></div>'
+        f'<div class=meta>{r["subtasks"]} subtasks · {r["states"].get("DONE",0)} done'
+        + (f' · <span class=fail>{r["states"]["FAILED"]} failed</span>' if r["states"].get("FAILED") else "")
+        + f'</div></div>'
+        for r in runs
     )
-    return _shell("work", "work", body + _SCRIPTS)
+    body = (
+        "<h1>work</h1><div class=sub>goal in — the orchestrator does the rest</div>"
+        '<div class=goalbar><input id=goal placeholder="describe the outcome — e.g. compare two approaches and report" '
+        'autocomplete=off><button id=go>submit</button></div>'
+        '<div id=goalstat class=dim></div>'
+        f"<h2>runs</h2>{rows or '<div class=dim>no runs yet</div>'}"
+    )
+    return _shell("work", "work", body + _SCRIPTS + _GOAL_JS, rail=_rail(runs))
+
+
+def _page_run(state: dict, run: dict, runs: list) -> str:
+    subs = []
+    for s in run["subtasks"]:
+        meta = (
+            f'{s["engine"]} · {s["route"]} · {s["placement"]} — {html.escape(s["reason"] or "")}'
+            + (f' · ${s["cost"]:.5f}' if s.get("cost") else "")
+            + (f' · <span class=fail>gate</span>' if s.get("gate_required") else "")
+            + (f' · pii: {",".join(s["pii"])}' if s.get("pii") else "")
+        )
+        result = (
+            f'<div class=result>{html.escape(str(s["result"]))}</div>'
+            if "result" in s
+            else ""
+        )
+        subs.append(
+            f'<div class=subtask><div class=head><span>{html.escape(s["subtask"] or "?")}</span>'
+            f'<span class="chip st-{s["state"]}">{s["state"]}</span></div>'
+            f'<div class=meta>{meta}</div>{result}</div>'
+        )
+    fails = "".join(
+        f'<div class=meta><span class=fail>worker_fail</span> {html.escape(f.get("error",""))} — {f.get("task","")[:12]}</div>'
+        for f in run["worker_failures"]
+    )
+    active = any(s["state"] not in ("DONE", "FAILED") for s in run["subtasks"]) or (
+        len(run["subtasks"]) < 1
+    )
+    refresh = '<meta http-equiv="refresh" content="4">' if active else ""
+    body = (
+        f"{refresh}<h1>run {html.escape(run['run'])}</h1>"
+        f'<div class=sub>{html.escape(run["goal"])}</div>'
+        + "".join(subs)
+        + (f"<h2>worker failures</h2>{fails}" if fails else "")
+        + '<div class="dim" style="margin-top:14px"><a href="/">← work</a></div>'
+    )
+    return _shell("run", "work", body, rail=_rail(runs))
 
 
 def _page_matrix(state: dict) -> str:
-    return _shell("matrix", "matrix", "<h1>matrix</h1>" + _sec_health(state) + _sec_matrix(state) + _SCRIPTS)
+    return _shell("matrix", "matrix", "<h1>matrix</h1>" + _sec_health(state) + _sec_matrix(state) + _SCRIPTS, rail=_rail(state.get("runs", [])))
 
 
 def _page_fleet(state: dict) -> str:
-    return _shell("fleet", "fleet", "<h1>fleet</h1>" + _sec_health(state) + _sec_fleet(state))
+    return _shell("fleet", "fleet", "<h1>fleet</h1>" + _sec_health(state) + _sec_fleet(state), rail=_rail(state.get("runs", [])))
 
 
 def _page_gate(state: dict) -> str:
-    return _shell("gate", "gate", "<h1>gate</h1>" + _sec_health(state) + _sec_gate(state))
+    return _shell("gate", "gate", "<h1>gate</h1>" + _sec_health(state) + _sec_gate(state), rail=_rail(state.get("runs", [])))
 
 
 def _page_router(state: dict) -> str:
-    return _shell("router", "router", "<h1>router</h1>" + _sec_router(state) + _SCRIPTS)
+    return _shell("router", "router", "<h1>router</h1>" + _sec_router(state) + _SCRIPTS, rail=_rail(state.get("runs", [])))
 
 
 _SCRIPTS = """<script>
@@ -289,6 +374,18 @@ document.getElementById('routeresult').innerHTML=j.html;};
 const rt=document.getElementById('route');if(rt)rt.onclick=routeIt;
 const qi=document.getElementById('q');if(qi)qi.addEventListener('keydown',e=>{if(e.key==='Enter')routeIt();});
 addEventListener('keydown',e=>{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey&&document.activeElement.tagName!=='INPUT'&&document.getElementById('run'))run();});
+</script>"""
+
+
+_GOAL_JS = """<script>
+const go=async()=>{const g=document.getElementById('goal').value.trim();if(!g)return;
+document.getElementById('goalstat').textContent='decomposing + dispatching…';
+const r=await fetch('/api/goal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({goal:g})});
+if(!r.ok){const j=await r.json().catch(()=>({}));document.getElementById('goalstat').textContent='rejected — '+(j.error||r.status);return;}
+const j=await r.json();location.href='/tasks/'+j.run;};
+const gb=document.getElementById('go');if(gb)gb.onclick=go;
+const gi=document.getElementById('goal');if(gi)gi.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
+addEventListener('keydown',e=>{if(e.key==='n'&&document.activeElement.tagName!=='INPUT'&&gi){gi.focus();e.preventDefault();}});
 </script>"""
 
 
@@ -335,12 +432,15 @@ class Handler(BaseHTTPRequestHandler):
             audit = [
                 json.loads(l) for l in audit_file.read_text().splitlines() if l.strip()
             ]
+        from services.opsview import runs as runs_mod
+
         return {
             "api_url": api,
             "health": code,
             "sandboxes": sandboxes,
             "audit": audit,
             "matrix": Handler.state.get("matrix", {}),
+            "runs": runs_mod.list_runs(),
         }
 
     def do_GET(self):
@@ -393,13 +493,24 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         state = self._state()
+        if path == "/" or path == "/ops":
+            self._send(200, _page_work(state, state["runs"]).encode())
+            return
+        if path.startswith("/tasks/"):
+            rid = path.removeprefix("/tasks/").strip("/")
+            from services.opsview import runs as runs_mod
+
+            run = runs_mod.get_run(rid) if rid else None
+            if run is None:
+                self._send(404, b"run not found")
+                return
+            self._send(200, _page_run(state, run, state["runs"]).encode())
+            return
         page = {
-            "/": _page_work,
             "/matrix": _page_matrix,
             "/fleet": _page_fleet,
             "/gate": _page_gate,
             "/router": _page_router,
-            "/ops": _page_work,  # legacy: same content, in-shell
         }.get(path)
         if page is None:
             self._send(404, b"not found")
@@ -410,6 +521,31 @@ class Handler(BaseHTTPRequestHandler):
         from urllib.parse import urlparse
 
         path = urlparse(self.path).path
+
+        if path == "/api/goal":
+            if not self._identity():
+                self._send(401, b'{"error":"unauthenticated"}', "application/json")
+                return
+            body = self._json_body()
+            goal = (body.get("goal") or "").strip()
+            if not goal or len(goal) > 4000:
+                self._send(400, b'{"error":"goal required"}', "application/json")
+                return
+            try:
+                from services.opsview import runs as runs_mod
+                from services.orchestrator.engines import decompose_engine, work_fn
+
+                rid = runs_mod.submit(goal, decompose_engine(), work_fn())
+            except Exception as e:
+                self._send(
+                    502,
+                    json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(),
+                    "application/json",
+                )
+                return
+            self._send(200, json.dumps({"run": rid}).encode(), "application/json")
+            return
+
         if not path.startswith("/webauthn/"):
             self._send(404, b'{"error":"not found"}', "application/json")
             return

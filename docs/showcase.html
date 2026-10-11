@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>open computer — showcase</title>
+<style>
+  :root{
+    --bg:#0b0e11; --panel:#11151a; --line:#1f2730; --ink:#d7dee6;
+    --dim:#7b8794; --green:#4ade80; --amber:#fbbf24; --red:#f87171;
+    --blue:#60a5fa; --violet:#a78bfa; --cyan:#22d3ee;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--ink);font:14px/1.5 "SF Mono","Cascadia Code",ui-monospace,monospace;
+    min-height:100vh;padding:28px 34px 60px;
+    background-image:radial-gradient(ellipse 60% 40% at 50% -10%,#15202b 0%,transparent 70%);
+  }
+  .wrap{max-width:1240px;margin:0 auto}
+  header{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+  h1{font-size:26px;letter-spacing:.14em;font-weight:700}
+  h1 .oc{color:var(--green)}
+  .tag{color:var(--dim);font-size:12px;letter-spacing:.08em}
+  .pills{margin-left:auto;display:flex;gap:8px}
+  .pill{border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:11px;color:var(--dim);background:var(--panel)}
+  .pill b{color:var(--green);font-weight:400}
+  .pill i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px;animation:blink 2.4s infinite}
+  .pill.off i{background:var(--dim);animation:none}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+  section{margin-top:34px}
+  .sec-h{font-size:11px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase;margin-bottom:14px}
+  .sec-h::after{content:"";display:inline-block;width:60px;height:1px;background:var(--line);vertical-align:middle;margin-left:12px}
+
+  /* ---------- pipeline ---------- */
+  .pipe{position:relative;height:300px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,#0e1319,#0b0e11);overflow:hidden}
+  .pipe svg{position:absolute;inset:0;width:100%;height:100%}
+  .node{position:absolute;transform:translate(-50%,-50%);text-align:center}
+  .node .box{
+    display:inline-block;border:1px solid var(--line);border-radius:10px;background:var(--panel);
+    padding:10px 16px;min-width:118px;transition:border-color .4s,box-shadow .4s;
+  }
+  .node .name{font-size:11px;letter-spacing:.16em;color:var(--dim)}
+  .node .big{font-size:14px;margin-top:2px}
+  .node.lit .box{border-color:var(--green);box-shadow:0 0 22px #4ade8033}
+  .node.hot .box{border-color:var(--amber);box-shadow:0 0 22px #fbbf2433}
+  .pkt{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--cyan);
+       box-shadow:0 0 10px var(--cyan);offset-rotate:0deg;z-index:3;opacity:0}
+  .pkt.go{opacity:1}
+  .pkt.slow{background:var(--green);box-shadow:0 0 10px var(--green)}
+
+  /* ---------- rail: task states ---------- */
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1.1fr .9fr .9fr}
+  @media(max-width:980px){.g2,.g3{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:16px}
+  .task{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px dashed #1a2129;font-size:13px}
+  .task:last-child{border-bottom:0}
+  .task .id{color:var(--dim);width:44px}
+  .task .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chip{font-size:10px;letter-spacing:.12em;padding:3px 9px;border-radius:5px;border:1px solid var(--line);min-width:96px;text-align:center;transition:all .35s}
+  .st-QUEUED{color:var(--dim)}
+  .st-RUNNING{color:var(--amber);border-color:#fbbf2455;background:#fbbf2412;animation:pulse 1.6s infinite}
+  .st-DONE{color:var(--green);border-color:#4ade8055;background:#4ade8012}
+  .st-FAILED{color:var(--red);border-color:#f8717155;background:#f8717112}
+  .st-LEASED{color:var(--blue);border-color:#60a5fa55;background:#60a5fa12}
+  .st-AWAITING-APPROVAL{color:var(--violet);border-color:#a78bfa55;background:#a78bfa12;animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.5)}}
+
+  /* audit feed */
+  .feed{height:238px;overflow:hidden;position:relative;font-size:12px}
+  .feed::after{content:"";position:absolute;inset:auto 0 0 0;height:56px;background:linear-gradient(transparent,var(--panel))}
+  .row{display:flex;gap:9px;padding:3px 0;color:var(--dim);animation:slidein .4s ease}
+  .row .t{color:#3d4854;flex:none}
+  .row .ev{color:var(--cyan);flex:none;width:150px}
+  .row.ok .ev{color:var(--green)} .row.warn .ev{color:var(--amber)} .row.bad .ev{color:var(--red)}
+  @keyframes slidein{from{opacity:0;transform:translateY(-8px)}to{opacity:1}}
+
+  /* ---------- placement cascade ---------- */
+  .rule{display:flex;gap:14px;align-items:center;padding:9px 0;border-bottom:1px dashed #1a2129;font-size:13px}
+  .rule:last-child{border-bottom:0}
+  .rule .q{color:var(--amber);width:210px;flex:none}
+  .rule .a{flex:1}
+  .rule .to{color:var(--dim);font-size:11px;letter-spacing:.1em;padding:3px 10px;border:1px solid var(--line);border-radius:5px;white-space:nowrap}
+  .to.local{color:var(--green);border-color:#4ade8044}
+  .to.cloud{color:var(--violet);border-color:#a78bfa44}
+  .to.gate{color:var(--amber);border-color:#fbbf2444}
+  .arrow{color:#3d4854}
+
+  /* ---------- safety ---------- */
+  .safe{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  @media(max-width:980px){.safe{grid-template-columns:repeat(2,1fr)}}
+  .scard{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px}
+  .scard .ic{font-size:18px;margin-bottom:8px}
+  .scard h3{font-size:12px;letter-spacing:.1em;margin-bottom:6px}
+  .scard p{font-size:11.5px;color:var(--dim)}
+
+  /* ---------- matrix ---------- */
+  .badges{display:flex;gap:10px;flex-wrap:wrap}
+  .badge{border:1px solid var(--line);border-radius:9px;padding:9px 14px;font-size:12px;background:var(--panel)}
+  .badge b{font-weight:400;margin-right:8px}
+  .badge .pass{color:var(--green)} .badge .pend{color:var(--dim)}
+
+  /* ---------- bench ---------- */
+  .bar{margin:9px 0;font-size:12px}
+  .bar .lab{display:flex;justify-content:space-between;color:var(--dim);margin-bottom:4px}
+  .bar .lab .win{color:var(--green)}
+  .track{height:10px;border-radius:5px;background:#161d25;overflow:hidden}
+  .fill{height:100%;border-radius:5px;background:var(--blue);width:0;transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
+  .fill.g{background:var(--green)} .fill.v{background:var(--violet)} .fill.d{background:#3d4854}
+  footer{margin-top:44px;color:#3d4854;font-size:11px;letter-spacing:.06em;text-align:center}
+  kbd{border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:11px;color:var(--dim);background:#0e1319}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1><span class="oc">OPEN</span>COMPUTER</h1>
+    <span class="tag">the workplace where goals become runs</span>
+    <div class="pills">
+      <span class="pill"><i></i>oc.shippedit.dev — <b>passkey gated</b></span>
+      <span class="pill"><i></i>tallyline — <b>tracking</b></span>
+      <span class="pill off"><i></i>cloud sandbox — pending</span>
+    </div>
+  </header>
+
+  <!-- ================= pipeline ================= -->
+  <section>
+    <div class="sec-h">one goal, end to end</div>
+    <div class="pipe" id="pipe">
+      <svg id="wires" preserveAspectRatio="none"></svg>
+      <!-- nodes positioned in % so the layout survives resize -->
+      <div class="node" id="n-goal"     style="left:7%;top:50%"><div class="box"><div class="name">GOAL</div><div class="big">“research &amp; report”</div></div></div>
+      <div class="node" id="n-plan"     style="left:21%;top:50%"><div class="box"><div class="name">PLAN</div><div class="big">3 subtasks</div></div></div>
+      <div class="node" id="n-route"    style="left:38%;top:50%"><div class="box"><div class="name">ROUTE</div><div class="big">per-subtask model</div></div></div>
+      <div class="node" id="n-place"    style="left:55%;top:50%"><div class="box"><div class="name">PLACE</div><div class="big">local or cloud</div></div></div>
+      <div class="node" id="n-gate"     style="left:72%;top:50%"><div class="box"><div class="name">GATE</div><div class="big">human approves</div></div></div>
+      <div class="node" id="n-work"     style="left:87%;top:28%"><div class="box"><div class="name">SANDBOX</div><div class="big">disposable VM</div></div></div>
+      <div class="node" id="n-collect"  style="left:87%;top:74%"><div class="box"><div class="name">COLLECT</div><div class="big">receipts only</div></div></div>
+    </div>
+  </section>
+
+  <!-- ================= live-ish board ================= -->
+  <section class="grid g3">
+    <div class="card">
+      <div class="sec-h">run · research a competitor</div>
+      <div id="tasks"></div>
+    </div>
+    <div class="card">
+      <div class="sec-h">audit stream · append-only</div>
+      <div class="feed" id="feed"></div>
+    </div>
+    <div class="card">
+      <div class="sec-h">router bench · 180 utterances</div>
+      <div class="bar"><div class="lab"><span>perplexity decider</span><span class="win">86.7% exact · $0.002</span></div><div class="track"><div class="fill g" data-w="86.7"></div></div></div>
+      <div class="bar"><div class="lab"><span>jev · local fallback</span><span>78.9% tier · $0.006 · 248ms</span></div><div class="track"><div class="fill v" data-w="78.9"></div></div></div>
+      <div class="bar"><div class="lab"><span>openrouter auto — rejected</span><span>21.1% tier · $0.035 · 1285ms</span></div><div class="track"><div class="fill d" data-w="21.1"></div></div></div>
+      <div class="bar"><div class="lab"><span>deterministic table</span><span>last resort · free · instant</span></div><div class="track"><div class="fill" data-w="100" style="background:#22d3ee22;border:1px dashed #22d3ee55"></div></div></div>
+    </div>
+  </section>
+
+  <!-- ================= placement rules ================= -->
+  <section class="grid g2">
+    <div class="card">
+      <div class="sec-h">placement — a table, not a model</div>
+      <div class="rule"><span class="q">private content, no approval?</span><span class="arrow">→</span><span class="a">never leaves this machine</span><span class="to local">LOCAL</span></div>
+      <div class="rule"><span class="q">answer needed now?</span><span class="arrow">→</span><span class="a">GPU local, no network round trip</span><span class="to local">LOCAL · FAST</span></div>
+      <div class="rule"><span class="q">budget would break?</span><span class="arrow">→</span><span class="a">demote, don’t spend — fail closed</span><span class="to local">LOCAL · FREE</span></div>
+      <div class="rule"><span class="q">must execute code?</span><span class="arrow">→</span><span class="a">sandboxed worker, own microVM</span><span class="to cloud">SANDBOX</span></div>
+      <div class="rule"><span class="q">needs frontier strength?</span><span class="arrow">→</span><span class="a">cloud — and a human signs off</span><span class="to gate">CLOUD + GATE</span></div>
+      <div class="rule"><span class="q">nothing special?</span><span class="arrow">→</span><span class="a">cheap tier already lives at home</span><span class="to local">LOCAL · CHEAP</span></div>
+    </div>
+
+    <div class="card">
+      <div class="sec-h">conformance matrix · live words</div>
+      <div class="badges">
+        <div class="badge"><b>R4</b><span class="pass">PASS · 3</span></div>
+        <div class="badge"><b>R5</b><span class="pass">PASS · 3</span></div>
+        <div class="badge"><b>R6</b><span class="pass">PASS · 2</span></div>
+        <div class="badge"><b>R7</b><span class="pass">PASS · 1</span></div>
+        <div class="badge"><b>AUTH</b><span class="pass">PASS · 5</span></div>
+        <div class="badge"><b>PLACE</b><span class="pass">PASS · 5</span></div>
+        <div class="badge"><b>ORCH</b><span class="pass">PASS · 5</span></div>
+        <div class="badge"><b>ROUTER</b><span class="pass">PASS · 4</span></div>
+        <div class="badge"><b>R1–R3</b><span class="pend">PENDING · live sandbox</span></div>
+      </div>
+      <div class="sec-h" style="margin-top:22px">the guarantees</div>
+      <div class="safe" style="grid-template-columns:1fr 1fr;gap:10px">
+        <div class="scard"><h3>fail closed</h3><p>a corrupt ledger halts spending. an unparseable plan halts the run. unknown means stop.</p></div>
+        <div class="scard"><h3>receipts, not vibes</h3><p>a result exists only after the worker’s signed record is flushed. nothing is fabricated.</p></div>
+        <div class="scard"><h3>no secrets inside</h3><p>sandboxes see placeholders. real values never enter the guest. egress is deny-by-default.</p></div>
+        <div class="scard"><h3>human in the loop</h3><p>private data to a cloud model requires your approval — recorded, auditable, single-shot.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    open computer · self-hosted · inspectable · <kbd>g</kbd><kbd>w</kbd> work · <kbd>g</kbd><kbd>g</kbd> gate · <kbd>/</kbd> palette — same grammar as the real UI
+  </footer>
+</div>
+
+<script>
+/* ---------- wires between nodes ---------- */
+const svg = document.getElementById('wires'), pipe = document.getElementById('pipe');
+const seq = ['n-goal','n-plan','n-route','n-place','n-gate','n-work','n-collect'];
+function center(id){const e=document.getElementById(id);const r=pipe.getBoundingClientRect();const b=e.getBoundingClientRect();
+  return {x:b.left-r.left+b.width/2, y:b.top-r.top+b.height/2};}
+function draw(){
+  const w=pipe.clientWidth,h=pipe.clientHeight;
+  svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
+  let s='';
+  for(let i=0;i<seq.length-1;i++){
+    const a=center(seq[i]),b=center(seq[i+1]);
+    const mx=(a.x+b.x)/2;
+    s+=`<path id="p${i}" d="M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}"
+        fill="none" stroke="#223040" stroke-width="1.4" stroke-dasharray="5 5">
+        <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.2s" repeatCount="indefinite"/></path>`;
+  }
+  svg.innerHTML=s;
+}
+draw(); addEventListener('resize',draw);
+
+/* ---------- packets travel the wire ---------- */
+const pkts=[]; for(let i=0;i<4;i++){const d=document.createElement('div');d.className='pkt'+(i%2?' slow':'');pipe.appendChild(d);pkts.push({el:d,t:i/4,seg:0});}
+function step(){
+  pkts.forEach(p=>{
+    p.t+=0.0045;
+    if(p.t>=1){p.t=0;p.seg=(p.seg+1)%(seq.length-1);
+      // light the node we just arrived at
+      document.querySelectorAll('.node').forEach(n=>n.classList.remove('lit'));
+      document.getElementById(seq[p.seg+1]).classList.add('lit');
+      document.getElementById('n-gate').classList.add('hot');}
+    const a=center(seq[p.seg]),b=center(seq[p.seg+1]),mx=(a.x+b.x)/2,t=p.t,mt=1-t;
+    // cubic bezier sample
+    const x=mt*mt*mt*a.x+3*mt*mt*t*mx+3*mt*t*t*mx+t*t*t*b.x;
+    const y=mt*mt*mt*a.y+3*mt*mt*t*a.y+3*mt*t*t*b.y+t*t*t*b.y;
+    p.el.classList.add('go');
+    p.el.style.transform=`translate(${x-4.5}px,${y-4.5}px)`;
+  });
+  requestAnimationFrame(step);
+}
+step();
+
+/* ---------- task board cycles ---------- */
+const taskDefs=[
+  {id:'t1',nm:'gather sources',      states:['QUEUED','LEASED','RUNNING','DONE']},
+  {id:'t2',nm:'analyse findings',    states:['QUEUED','QUEUED','LEASED','RUNNING','DONE']},
+  {id:'t3',nm:'draft report',        states:['QUEUED','QUEUED','QUEUED','AWAITING-APPROVAL','RUNNING','DONE']},
+];
+const taskEl=document.getElementById('tasks');
+taskEl.innerHTML=taskDefs.map(t=>`<div class="task"><span class="id">${t.id}</span><span class="nm">${t.nm}</span><span class="chip st-QUEUED" id="c-${t.id}">QUEUED</span></div>`).join('');
+let phase=0;
+setInterval(()=>{
+  phase++;
+  taskDefs.forEach(t=>{
+    const el=document.getElementById('c-'+t.id);
+    const st=t.states[Math.min(phase,t.states.length-1)];
+    if(el.textContent!==st){el.textContent=st;el.className='chip st-'+st;}
+  });
+  if(phase>6){phase=-1;taskDefs.forEach(t=>{const el=document.getElementById('c-'+t.id);el.textContent='QUEUED';el.className='chip st-QUEUED';});}
+},1400);
+
+/* ---------- audit feed ---------- */
+const feed=document.getElementById('feed');
+const events=[
+  ['run_submit','goal accepted — 3 subtasks','ok'],
+  ['dispatch','t1 → cheap · local · “cheap tier suffices”',''],
+  ['dispatch','t2 held — dep t1 not complete','warn'],
+  ['claim','worker-1 took t1 (60s lease)',''],
+  ['scan','t3 payload — pii: none',''],
+  ['dispatch','t3 → frontier · cloud · gated','warn'],
+  ['human_decision','approved — passkey: luke','ok'],
+  ['receipt','t1 done — sha256 verified','ok'],
+  ['worker_done','t2 done','ok'],
+  ['collect','run complete — 3/3 receipts','ok'],
+  ['budget_check','est $0.003 ≤ headroom $0.91',''],
+];
+let ei=0,now=Date.now();
+setInterval(()=>{
+  const [ev,msg,cls]=events[ei%events.length];ei++;now+=1000;
+  const r=document.createElement('div');r.className='row '+cls;
+  r.innerHTML=`<span class="t">${new Date(now).toTimeString().slice(0,8)}</span><span class="ev">${ev}</span><span>${msg}</span>`;
+  feed.prepend(r);
+  while(feed.children.length>14)feed.lastChild.remove();
+},1300);
+
+/* ---------- bars animate in ---------- */
+addEventListener('load',()=>setTimeout(()=>document.querySelectorAll('.fill').forEach(f=>f.style.width=f.dataset.w+'%'),250));
+</script>
+</body>
+</html>
