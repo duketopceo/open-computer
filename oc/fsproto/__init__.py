@@ -13,13 +13,15 @@ Contract: tests/conformance/checks/__init__.py — satisfies R4, R7.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 
 class NotReady(KeyError):
@@ -28,6 +30,18 @@ class NotReady(KeyError):
 
 class AlreadyLeased(RuntimeError):
     """A live lease already exists for this task."""
+
+
+class TaskFinal(RuntimeError):
+    """claim() on a tombstoned or failed task: final tasks are never leased (spec §4)."""
+
+
+class ResultImmutable(RuntimeError):
+    """outbox_write() on a tombstoned task: a final result is never replaced (spec §3)."""
+
+
+class IntegrityError(ValueError):
+    """A record failed verification and was quarantined to tasks/<id>/.bad/ (spec §6)."""
 
 
 def _sha(body: bytes) -> str:
@@ -65,6 +79,22 @@ def _atomic_write(path: Path, data: bytes) -> None:
     os.rename(tmp, path)
 
 
+def _create_exclusive(path: Path, data: bytes) -> None:
+    """Atomically create `path` with COMPLETE content, or raise FileExistsError.
+    tmpfile + fsync + link(): there is no moment at which `path` exists but is empty or partial."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:6]}.new")
+    tmp.write_bytes(data)
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        os.link(tmp, path)
+    finally:
+        tmp.unlink()
+
+
 def _write_record(path: Path, meta: dict, body: bytes) -> None:
     meta = {**meta, "sha256": _sha(body)}
     _atomic_write(path, _meta_text(meta).encode() + body)
@@ -93,12 +123,29 @@ class FSAdapter:
     def _lease_file(self, tid: str) -> Path:
         return self._task_dir(tid) / "lease"
 
+    @contextmanager
+    def _task_lock(self, tid: str) -> Iterator[None]:
+        """Per-task mutual exclusion across threads and processes (flock). Serialises claim, expire
+        and the final write of a result, so check-then-act sequences cannot interleave (spec §4)."""
+        with open(self._task_dir(tid) / ".lock", "a") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+
+    def _after_lease_check(self, agent: str, tid: str) -> None:
+        """Test seam: runs between 'lease is expired' and 'reclaim it'. No-op in production."""
+
     def _lease_valid(self, tid: str) -> bool:
         lf = self._lease_file(tid)
         if not lf.exists():
             return False
-        meta, _ = _parse_record(lf)
-        return float(meta.get("deadline", 0)) > self._clock()
+        try:
+            meta, _ = _parse_record(lf)
+            return float(meta.get("deadline", 0)) > self._clock()
+        except (ValueError, OSError, json.JSONDecodeError):
+            return True  # unreadable lease: treat as held (fail closed), never as free
 
     def _tombstoned(self, tid: str) -> bool:
         return (self._task_dir(tid) / "tombstone").exists()
@@ -108,8 +155,9 @@ class FSAdapter:
 
     # --- protocol ops (spec §3–§7) -------------------------------------------
 
-    def send(self, dst: str, msg: dict) -> str:
-        """Spawn: create task envelope, offer it in dst's inbox. §3."""
+    def send(self, dst: str, msg: dict, ttl: float | None = None, sender: str = "orchestrator") -> str:
+        """Spawn: create task envelope, offer it in dst's inbox. §3. `ttl` (seconds) is the default
+        lease duration for claim() and is recorded in the envelope (§2)."""
         tid = uuid.uuid4().hex
         td = self._task_dir(tid)
         td.mkdir(parents=True)
@@ -118,49 +166,72 @@ class FSAdapter:
             td / "task.md",
             {
                 "id": tid,
-                "from": "orchestrator",
+                "from": sender,
                 "to": dst,
                 "kind": "task",
                 "deps": [],
-                "ttl": None,
+                "ttl": ttl,
                 "created": self._clock(),
             },
             body,
         )
         self._set_status(tid, "queued")
         inbox = self._agent_dir(dst) / "inbox"
-        _atomic_write(inbox / tid, tid.encode())
+        os.link(td / "task.md", inbox / tid)  # same inode: the inbox entry IS the immutable envelope (§1)
         return tid
 
     def outbox_write(self, agent: str, tid: str, payload) -> None:
-        """Complete: write result, fsync, tombstone LAST. §3/§5."""
+        """Complete: write result, fsync, tombstone LAST. §3/§5. A tombstoned result is final:
+        a second write raises ResultImmutable and changes nothing. Before the tombstone exists
+        (crash between result and tombstone) a retry may rewrite it."""
         body = payload if isinstance(payload, bytes) else str(payload).encode()
         td = self._task_dir(tid)
-        _write_record(
-            td / "result.md",
-            {
-                "id": tid,
-                "from": agent,
-                "to": "parent",
-                "kind": "result",
-                "created": self._clock(),
-            },
-            body,
-        )
-        (self._agent_dir(agent) / "outbox" / tid).write_bytes(tid.encode())
-        _atomic_write(td / "tombstone", b"")
-        self._set_status(tid, "done")
+        with self._task_lock(tid):
+            if self._tombstoned(tid):
+                raise ResultImmutable(tid)
+            _write_record(
+                td / "result.md",
+                {
+                    "id": tid,
+                    "from": agent,
+                    "to": "parent",
+                    "kind": "result",
+                    "created": self._clock(),
+                },
+                body,
+            )
+            (self._agent_dir(agent) / "outbox" / tid).write_bytes(tid.encode())
+            _atomic_write(td / "tombstone", b"")
+            self._set_status(tid, "done")
 
     def collect(self, parent: str, tid: str):
-        """Read result iff tombstoned; byte-exact body. §5."""
+        """Read result iff tombstoned; byte-exact body. §5. `parent` identifies the caller for the
+        audit trail only: path arguments cannot enforce isolation (that is sandbox mount isolation,
+        OC-041), and the spec says so."""
         td = self._task_dir(tid)
         if not self._tombstoned(tid):
             raise NotReady(tid)
         rec = td / "result.md"
         if not self.verify(rec):
-            raise ValueError(f"{rec}: integrity check failed")
+            self.quarantine(tid)
+            raise IntegrityError(f"{rec}: integrity check failed; quarantined to .bad/")
         meta, body = _parse_record(rec)
         return body.decode()
+
+    def quarantine(self, tid: str) -> Path:
+        """Move a failed record to tasks/<id>/.bad/, withdraw the tombstone and requeue the task, so
+        a corrupt result is neither readable nor silently lost. §6."""
+        td = self._task_dir(tid)
+        bad = td / ".bad"
+        bad.mkdir(exist_ok=True)
+        with self._task_lock(tid):
+            dest = bad / f"result.md.{uuid.uuid4().hex[:8]}"
+            src = td / "result.md"
+            if src.exists():
+                os.rename(src, dest)
+            (td / "tombstone").unlink(missing_ok=True)
+            self._set_status(tid, "queued")
+        return dest
 
     def enqueue(self, consumer: str, depends_on: str) -> None:
         """Register a dependency edge; consumer waits for tombstone. §5."""
@@ -176,38 +247,41 @@ class FSAdapter:
         wanted = [l for l in deps.read_text().splitlines() if l.strip()]
         return all(self._tombstoned(t) for t in wanted)
 
-    def claim(self, agent: str, tid: str, ttl: float) -> str:
-        """Atomic O_EXCL lease; expired leases are reclaimed. §4."""
-        lf = self._lease_file(tid)
-        meta = {"holder": agent, "task": tid, "deadline": self._clock() + ttl}
-        for _ in range(2):
-            try:
-                fd = os.open(lf, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                try:
-                    valid = self._lease_valid(tid)
-                except (ValueError, OSError, json.JSONDecodeError):
-                    valid = True  # mid-write lease = live claimer; fail closed
-                if valid:
+    def claim(self, agent: str, tid: str, ttl: float | None = None) -> str:
+        """Atomic lease; expired leases are reclaimed. §4. Serialised per task by flock, so two
+        claimers that both saw an expired lease cannot both win (the old unlink/create race).
+        ttl defaults to the task envelope's ttl. Final (tombstoned/failed) tasks are refused."""
+        if ttl is None:
+            meta, _ = _parse_record(self._task_dir(tid) / "task.md")
+            ttl = meta.get("ttl")
+            if ttl is None:
+                raise ValueError(f"claim({tid}): no ttl given and the envelope has none")
+        with self._task_lock(tid):
+            status = self._task_dir(tid) / "status"
+            if self._tombstoned(tid) or (status.exists() and status.read_text().strip() == "failed"):
+                raise TaskFinal(tid)
+            lf = self._lease_file(tid)
+            if lf.exists():
+                if self._lease_valid(tid):
                     raise AlreadyLeased(tid)
-                try:
-                    lf.unlink()  # expired — reclaim
-                except FileNotFoundError:
-                    pass  # another reclaimer beat us to it; retry the create
-                continue
-            with os.fdopen(fd, "wb") as f:
-                f.write(_meta_text(meta).encode())
+                self._after_lease_check(agent, tid)
+                lf.unlink(missing_ok=True)  # expired: reclaim
+            meta = {"holder": agent, "task": tid, "deadline": self._clock() + ttl}
+            try:
+                _create_exclusive(lf, _meta_text(meta).encode())
+            except FileExistsError:  # unreachable under the lock; defence in depth
+                raise AlreadyLeased(tid) from None
             self._set_status(tid, "leased")
             return tid
-        raise AlreadyLeased(tid)
 
     def expire(self, lease_id: str) -> None:
         """Force lease expiry → task becomes pending again. §4."""
-        lf = self._lease_file(lease_id)
-        if lf.exists():
-            lf.unlink()
-        if not self._tombstoned(lease_id):
-            self._set_status(lease_id, "queued")
+        with self._task_lock(lease_id):
+            self._lease_file(lease_id).unlink(missing_ok=True)
+            status = self._task_dir(lease_id) / "status"
+            failed = status.exists() and status.read_text().strip() == "failed"
+            if not self._tombstoned(lease_id) and not failed:
+                self._set_status(lease_id, "queued")
 
     def pending(self, tid: str) -> bool:
         """Task exists, no live lease, no tombstone, not failed. §4."""

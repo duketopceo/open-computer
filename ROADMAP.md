@@ -61,7 +61,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-005 | P0 | Determinism guard: random order x20, frozen/foreign clock, matrix-vs-docs drift check | open |
 | OC-006 | P0 | U0 conformance harness (R1-R7 executable) | done (#3) |
 | OC-007 | P0 | U1 fs-protocol spec v0.1 | done (#4) |
-| OC-008 | P0 | U1 fsproto reference implementation | done (#5, on main via #8); deviations open (OC-019) |
+| OC-008 | P0 | U1 fsproto reference implementation | done (#5, on main via #8); spec deviations resolved in #20 (OC-019) |
 | OC-009 | P0 | U2 execplane CubeSandbox adapter | done (#8); lifecycle/creds/binding open |
 | OC-010 | P0 | U3 escalation gate (PII prefilter, audit, console) | done (#7, on main via #8); real enforcement open (OC-020) |
 | OC-011 | P0 | U4 router service (decider/jev/table, budget) | done (#10) |
@@ -72,7 +72,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-016 | P1 | Wire unused policy fixture into R6; resolve benign-egress contradiction | open |
 | OC-017 | P1 | Router golden replay: 180-fixture corpus through Router, fallback matrix | open |
 | OC-018 | P1 | Router/budget unit tests + negative controls | open |
-| OC-019 | P1 | fsproto: close the 8 spec deviations, fix lease race, property + crash tests | open |
+| OC-019 | P1 | fsproto: close the 8 spec deviations, fix lease race, property + crash tests | partial: 8 deviations resolved with a test each (#20), lease race fixed; property and crash-point tests open |
 | OC-020 | P1 | Gate: payload-hash-bound approval, single egress path, pending queue, decision table | partial: hash-bound, single-use, expiring approval and single send path with injected sender (#19); hash-chained audit is OC-021 |
 | OC-021 | P1 | Audit log: hash chain, fsync, file mode, `oc audit verify` | open |
 | OC-022 | P1 | PII corpus >= 300 rows + precision/recall gates | open |
