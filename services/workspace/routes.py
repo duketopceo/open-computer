@@ -24,11 +24,13 @@ from .replay import FIXTURES, Workspace
 
 STATIC = Path(__file__).resolve().parent / "static"
 STATIC_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
+WS_CSP = ("default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; "
+          "connect-src 'self'; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 GOAL = r"(?P<goal>g_[a-z0-9_]+)"
 REF = r"(?P<ref>[a-z]+_[a-z0-9_]+)"
 
 GET_ROUTES = [
-    (r"/goals\.json", "g_list"),
+    (r"/workspace", "g_page"), (rf"/workspace/{GOAL}", "g_page"), (r"/goals\.json", "g_list"),
     (rf"/goals/{GOAL}/events", "g_events"), (rf"/goals/{GOAL}/state", "g_state"),
     (rf"/goals/{GOAL}/approvals", "g_approvals"),
     (rf"/goals/{GOAL}/artifacts/{REF}", "g_artifact"), (rf"/goals/{GOAL}/artifacts/{REF}/listing", "g_listing"),
@@ -137,6 +139,14 @@ def g_approvals(h, qs, goal):
     h._json(200, {"approvals": items})
 
 
+def g_page(h, qs, goal=None):
+    from . import page
+    w = ws()
+    if goal and not w.known(goal):
+        return h._send(404, page.render(h, None, 404).encode(), page=True, csp=WS_CSP)
+    h._send(200, page.render(h, goal).encode(), page=True, csp=WS_CSP)
+
+
 def g_events(h, qs, goal):
     """Server-sent events. `Last-Event-ID` (header, or ?last_event_id=) resumes after that seq."""
     w = ws()
@@ -175,7 +185,8 @@ def g_events(h, qs, goal):
             after = ev["seq"]
         sess = w.sessions.get(goal)
         done_replay = sess is None or sess.state in ("complete", "stopped")
-        if w.log.finished(goal) and w.log.last_seq(goal) == after and (not w.replay or done_replay):
+        waiting_on_human = any(a["status"] == "pending" for a in entities(w.log.read(goal), "approval").values())
+        if w.log.finished(goal) and w.log.last_seq(goal) == after and (not w.replay or done_replay) and not waiting_on_human:
             out("event: end\ndata: {}\n\n")
             return
         if not w.log.wait(goal, after, hb) and not out(": hb\n\n"):

@@ -13,6 +13,9 @@ import json
 from dataclasses import asdict, dataclass
 
 PAGES = ("overview", "goals", "sandboxes", "runs", "approvals", "router", "audit")
+WORKSPACE = "workspace"  # the agent workspace page (/workspace); its actions have scope "workspace"
+# Global console actions that mean something else on the workspace page (`c` creates a goal there).
+NOT_ON_WORKSPACE = {"run.new", "goal.new"}
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,34 @@ ACTIONS: tuple[Action, ...] = (
     Action("audit.blocked", "Show blocked calls", "Audit", "", "audit", href="/audit?f=blocked"),
     Action("audit.allowed", "Show allowed calls", "Audit", "", "audit", href="/audit?f=allowed"),
     Action("audit.decisions", "Show human decisions", "Audit", "", "audit", href="/audit?f=decisions"),
+    # Agent workspace (docs/design/silver-lining.md section 16)
+    Action("nav.workspace", "Agent workspace", "Workspace", "g g", href="/workspace"),
+    Action("ws.new_goal", "New goal in the workspace", "Workspace", "c", WORKSPACE, note="Plays a recorded goal in replay mode"),
+    Action("ws.focus_composer", "Focus the composer", "Workspace", "/", WORKSPACE),
+    Action("ws.send", "Send message", "Workspace", "ctrl+enter", WORKSPACE),
+    Action("ws.toggle_goals", "Toggle goal list", "Workspace", "[", WORKSPACE),
+    Action("ws.toggle_side", "Toggle sidebar", "Workspace", "]", WORKSPACE),
+    Action("ws.msg_next", "Next message", "Workspace", "shift+j", WORKSPACE),
+    Action("ws.msg_prev", "Previous message", "Workspace", "shift+k", WORKSPACE),
+    Action("ws.stop", "Stop the run", "Workspace", ".", WORKSPACE, note="Press twice to confirm. The sandbox is kept."),
+    Action("ws.reveal_new", "Show new items", "Workspace", "n", WORKSPACE),
+    Action("ws.select", "Select row", "Workspace", "x", WORKSPACE),
+    Action("ws.focus_sidebar", "Focus the sidebar", "Workspace", "", WORKSPACE),
+    Action("ws.export_run", "Export run as JSON", "Workspace", "", WORKSPACE, note="Downloads the event stream. Nothing leaves the box."),
+    Action("ws.restart_replay", "Restart replay", "Workspace", "", WORKSPACE, note="Replay mode only"),
+    Action("ws.raise_cap", "Raise cap and resume", "Workspace", "", WORKSPACE, note="Only when paused at the spend cap"),
+    Action("ws.tab.progress", "Sidebar: Progress", "Sidebar", "1", WORKSPACE),
+    Action("ws.tab.sources", "Sidebar: Sources", "Sidebar", "2", WORKSPACE),
+    Action("ws.tab.artifacts", "Sidebar: Artifacts", "Sidebar", "3", WORKSPACE),
+    Action("ws.tab.changes", "Sidebar: Changes", "Sidebar", "4", WORKSPACE),
+    Action("ws.tab.outbox", "Sidebar: Outbox", "Sidebar", "5", WORKSPACE),
+    Action("ws.tab.box", "Sidebar: Box", "Sidebar", "6", WORKSPACE),
+    Action("ws.tab.cost", "Sidebar: Cost", "Sidebar", "7", WORKSPACE),
+    Action("ws.approval_focus", "Go to the pending approval", "Approvals", "y", WORKSPACE),
+    Action("ws.allow_once", "Allow once", "Approvals", "a", WORKSPACE, note="With the approval card focused. High risk needs a second press."),
+    Action("ws.allow_goal", "Allow for this goal", "Approvals", "shift+a", WORKSPACE, note="With the approval card focused"),
+    Action("ws.deny", "Deny, with an optional note", "Approvals", "r", WORKSPACE, note="With the approval card focused. Nothing leaves the box."),
+    Action("ws.view_full", "View full payload or expand artifact", "Approvals", "f", WORKSPACE),
 )
 
 BY_ID = {a.id: a for a in ACTIONS}
@@ -70,7 +101,8 @@ assert len(BY_ID) == len(ACTIONS), "duplicate action id"
 
 def for_page(page: str) -> list[Action]:
     """Everything available on a page: global actions plus that page's own."""
-    return [a for a in ACTIONS if a.scope in ("global", page)]
+    return [a for a in ACTIONS if a.scope in ("global", page)
+            and not (page == WORKSPACE and a.id in NOT_ON_WORKSPACE)]
 
 
 def nav_actions() -> list[Action]:
@@ -85,7 +117,7 @@ def payload(page: str) -> str:
 def key_conflicts() -> list[tuple[str, str]]:
     """Pairs of actions that share a key within one page's scope."""
     out = []
-    for page in PAGES:
+    for page in (*PAGES, WORKSPACE):
         seen: dict[str, str] = {}
         for a in for_page(page):
             if not a.keys or a.id.startswith("row."):

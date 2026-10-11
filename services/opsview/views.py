@@ -185,6 +185,7 @@ def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "",
   <div class="brand">open-computer</div>
   <nav aria-label="Sections"><ul class="nav">{"".join(nav)}</ul></nav>
   <div class="side-foot">
+    <a class="btn ghost" href="/workspace" data-action="nav.workspace"><span>Workspace</span><kbd>g g</kbd></a>
     <button type="button" class="btn ghost" data-action="theme">{icon("theme")}<span>Theme</span></button>
     <button type="button" class="btn ghost" data-action="help"><span>Shortcuts</span><kbd>?</kbd></button>
     <p class="muted caption">{e(who)}</p>
