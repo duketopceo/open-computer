@@ -5,18 +5,20 @@ Pure stdlib, no framework, no build step, no external resources.
 
 import json
 
-_CSS = r""":root{color-scheme:dark;--bg:#0b0e11;--fg:#d7dde3;--dim:#7d8a96;--ok:#3fb96f;--bad:#e05d5d;--pend:#c9a227;--line:#1d242b;--acc:#4d9fff}
-html,body{background:var(--bg);color:var(--fg);margin:0}
-body{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-main{max-width:380px;margin:18vh auto;padding:0 16px}
-h1{font-size:13px;font-weight:normal;color:var(--dim);text-transform:uppercase;letter-spacing:.2em;margin:0 0 24px}
+_CSS = r"""html,body{background:var(--color-canvas);color:var(--color-ink);margin:0}
+body{font:var(--text-body)/1.5 var(--font-ui)}
+main{max-width:380px;margin:18vh auto;padding:0 var(--space-16)}
+h1{font-size:var(--text-title);font-weight:500;margin:0 0 var(--space-24)}
 #status{min-height:1.5em}
-.w{font-weight:bold;letter-spacing:.1em}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.pend{color:var(--pend)}.dim{color:var(--dim)}
-button{margin-top:16px;background:transparent;color:var(--fg);border:1px solid var(--line);font:inherit;padding:4px 12px;cursor:pointer}
-button:hover{border-color:var(--acc);color:var(--acc)}
-a{color:var(--acc)}
-#done{margin-top:16px}
+.w{font-weight:600}
+.ok,.bad,.pend{color:var(--color-ink)}
+.ok::before{content:"\2713 "}.bad::before{content:"\2715 "}.pend::before{content:"! "}
+.dim{color:var(--color-ink-subtle)}
+button{margin-top:var(--space-16);min-height:var(--row-compact);background:var(--color-accent);color:var(--color-on-accent);border:1px solid var(--color-accent);border-radius:var(--radius-sm);font:inherit;font-weight:500;padding:0 var(--space-12);cursor:pointer}
+button:hover{background:var(--color-accent-hover)}
+a{color:var(--color-accent)}
+:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+#done{margin-top:var(--space-16)}
 [hidden]{display:none !important}
 """
 
@@ -174,7 +176,7 @@ def _page(title: str, body: str, script: str) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta name="robots" content="noindex">'
         '<title>open-computer · ' + title + '</title>'
-        '<style>' + _CSS + '</style></head>\n'
+        '<link rel="stylesheet" href="/static/silver-lining.css"><style>' + _CSS + '</style></head>\n'
         '<body><main>'
         '<h1>open-computer</h1>'
         '<div id="status"><span id="word"></span> <span id="msg" class="dim"></span></div>'
