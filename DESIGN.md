@@ -1,7 +1,9 @@
 # open-computer design direction: "Flight Strip"
 
-Status: proposal, 2026-10-10. The owner signs off direction and logo. The product has no UI yet;
-this fixes the look of the surfaces it will have.
+Status: proposal, 2026-10-10 (Flight Strip tokens). The owner signs off direction and logo.
+**Shipped UI:** `services/opsview/` — a passkey-gated local ops page (see [Shipped opsview](#shipped-opsview-2026-10))
+uses its own dark tokens (blue accent), not the amber Flight Strip palette below. New surfaces should
+either migrate toward Flight Strip or document a deliberate divergence.
 
 ## Method and reference lock
 
@@ -73,7 +75,41 @@ No stock icon packs. Every glyph is paired with a word.
 | **Approval console (TUI)** | The first real human surface. Shows the exact payload bound for the cloud model, diff vs redacted; keys `a` approve, `d` deny, `i` inspect, `?` help. Command palette on `:`. Every state renders explicitly (queued, leased, running, blocked, denied, tombstoned). |
 | **README / docs** | Logo lockup top, strip-style tables, one Mermaid or SVG diagram, dark-mode logo via `<picture>`. |
 | **Social card** | `assets/brand/social-card.svg`. |
-| **Later: web ops view** | Same strip list in a browser, only if the TUI proves insufficient; own design pass first. |
+| **Ops web view (shipped v0)** | Single scrollable page: matrix, route tester, sandboxes, gate audit tail — see below. |
+
+## Shipped opsview (2026-10)
+
+`python -m services.opsview.server` serves a **stdlib + inline CSS** page at `http://127.0.0.1:8791`
+(loopback only). Auth is **WebAuthn/passkey** (`fido2`): public `/login`, token-gated `/enroll?token=…`,
+then session cookie `oc_sess` (12 h). Unauthenticated GETs redirect to `/login`.
+
+**Authenticated views (one HTML page, section headers):**
+
+| Section | Behavior |
+|---|---|
+| Control plane | Links `CUBE_API_URL`; UP/DOWN dot from `/health` |
+| Determinism matrix | Last run cached in memory; **Run matrix** or **`r`** POSTs `/run` (subprocess: `uv run … pytest tests/conformance -q`) |
+| Route tester | Query `/route?q=…` → `services.router.default_router` (engine, tier, cost, ms) |
+| Sandboxes | Lists `/sandboxes` when API healthy |
+| Gate audit (tail) | Last 12 NDJSON rows from `OC_AUDIT` (default `/tmp/oc-audit/audit.ndjson`) |
+
+**Navigation:** no left-rail shell yet — that is specified in [docs/design/2026-10-11-frontend-design.md](./docs/design/2026-10-11-frontend-design.md) (F1+). Keyboard: **`r`** runs matrix when focus is not in the route input; Enter routes an utterance.
+
+**Shipped tokens (opsview, not Flight Strip):**
+
+| Role | Value |
+|---|---|
+| Background | `#0b0e11` |
+| Foreground | `#d7dde3` |
+| Muted | `#7d8a96` |
+| Accent (links, hover, focus) | `#4d9fff` |
+| OK / fail / pending | `#3fb96f` / `#e05d5d` / `#c9a227` |
+| Line / button bg | `#1d242b` / `#141a20` |
+
+Type: system monospace stack at 13 px. States render as words (`UP`, `DOWN`, `PASS`, `FAIL`, `PENDING`).
+
+**Enrollment:** `python -m services.opsview.auth mint <rp-id>` prints a one-time token (10 min TTL);
+open `/enroll?token=…` on the same host/origin so `rp_for(host)` matches.
 
 ## Decision ledger
 

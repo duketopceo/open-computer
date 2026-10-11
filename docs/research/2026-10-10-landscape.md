@@ -1,17 +1,17 @@
 # Landscape: who else does "a computer for agents", and where open-computer fits
 
-Date: 2026-10-10. Method: web research on 2026-10-10 plus the two open PRs in this
-repo ([#1](https://github.com/duketopceo/open-computer/pull/1) verified landscape,
-[#2](https://github.com/duketopceo/open-computer/pull/2) router bench). Every claim
+Date: 2026-10-10 (research); repo status updated 2026-10-11. Method: web research on 2026-10-10 plus merged PRs
+[#1](https://github.com/duketopceo/open-computer/pull/1) (landscape) and
+[#2](https://github.com/duketopceo/open-computer/pull/2) (router bench). Every claim
 carries a link. Where only a secondary source exists, that is said. Price figures are
 reported by reviewers, not by the vendor, unless noted.
 
 ## What the repo is today
 
-106 graph nodes of docs, zero runtime code. README, `ARCHITECTURE_MAP.md`, five docs
-and a roadmap. The idea: reproduce the *cloud* half of Perplexity Computer (a router
-that picks a model per subtask, a disposable sandbox per task, a privacy gate) from
-open parts and Luke's existing repos. The honest status is "research phase".
+Docs plus Python libraries/services on `main` (`oc/fsproto`, `services/execplane`, `services/gate`,
+`services/router`, `services/opsview`, `tests/conformance/`). No end-to-end `open-computer run` CLI yet.
+The idea: reproduce the *cloud* half of Perplexity Computer (a router that picks a model per subtask,
+a disposable sandbox per task, a privacy gate) from open parts and Luke's existing repos.
 
 ## What Perplexity Computer actually is
 

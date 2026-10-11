@@ -28,13 +28,13 @@ An open, self-hosted counterpart to the cloud half of Perplexity Computer, scope
 
 ### Problem Frame
 
-Reviewers' main complaint about Perplexity Computer is unbounded spend and little control (credits at roughly $0.02 each, 31-300 credits per task, runaway loops; see landscape doc). Open alternatives each cover one slice: browser-use (browser), OpenHands (coding), E2B/Cube (sandbox), decider/auto (routing). Nobody composes them under a hard cost cap and an approval gate. Luke already owns most parts. The repo today has docs only.
+Reviewers' main complaint about Perplexity Computer is unbounded spend and little control (credits at roughly $0.02 each, 31-300 credits per task, runaway loops; see landscape doc). Open alternatives each cover one slice: browser-use (browser), OpenHands (coding), E2B/Cube (sandbox), decider/auto (routing). Nobody composes them under a hard cost cap and an approval gate. Luke already owns most parts. The repo today ships conformance-tested libraries (fsproto, execplane, gate, router, ops UI) but not the full orchestrator loop.
 
 ### Scope: MVP versus ambitious
 
 | Tier | Contents | Status |
 |---|---|---|
-| **MVP (this roadmap, Now + Next)** | One command; goal to subtask DAG; per-subtask model pick; workers in CubeSandbox with egress allowlist; approval gate before any cloud escalation of flagged content; NDJSON audit + cost ledger; hard budget cap | planned |
+| **MVP (this roadmap, Now + Next)** | One command; goal to subtask DAG; per-subtask model pick; workers in CubeSandbox with egress allowlist; approval gate before any cloud escalation of flagged content; NDJSON audit + cost ledger; hard budget cap | partial — libraries/services on main; CLI/orchestrator not wired |
 | **Stretch (Later)** | Browser/desktop worker, snapshot branch/rollback exposed, durable resume, Khan MCP adapter, docketry front door | not started |
 | **Not attempted** | 400+ connectors, 19-model fleet curation, persistent cross-session memory product, multi-tenant hosting, public SaaS | out of scope |
 
@@ -49,7 +49,7 @@ Reviewers' main complaint about Perplexity Computer is unbounded spend and littl
 
 ### Scope Boundaries
 
-No router service (PR #2). No harness migration off Khan. No connectors. No hosted UI before a TUI. Actions CI minutes are exhausted, so checks run manually.
+Router service exists (`services/router/`, PR #10) despite the PR #2 "no router service" bench narrative — thin decider/jev/table chain, not a self-hosted GPU router. No harness migration off Khan. No connectors. Ops web UI is shipped locally (`services/opsview/`); full workplace shell is still planned. Actions CI minutes are exhausted, so checks run manually.
 
 ## Planning Contract
 
@@ -91,11 +91,9 @@ Status key: `done` / `in review` / `planned`. PR #1 unit names are mapped in par
 ### Now
 
 ### U1. Land the two open PRs
-- **Status:** in review. **Evidence:** PR #1 (docs, LICENSE MIT) and PR #2 (bench, ~$0.09 spend, committed `bench/router/*`).
-- **Goal:** one coherent main. Merge #1, rebase #2 and this program PR (both touch `ROADMAP.md`; PR #1 rewrote Phase 0 and 1).
-- **Dependencies:** Luke's review. **Verification:** `git log origin/main` shows both; `ROADMAP.md` lists this plan first and keeps PR #1's license decision.
-- **Difficulty:** easy. Mostly merge-conflict resolution in `ROADMAP.md`.
-- **Feasibility:** blocked only on review; PR #2 is labelled directional (n=9 loop runs).
+- **Status:** done (merged). **Evidence:** PR #1, PR #2 on `main`; follow-on code PRs #3–#12.
+- **Goal:** one coherent main — achieved.
+- **Verification:** `git log origin/main` includes bench + implementation commits.
 - **Simpler alternative:** squash docs from PR #1 into one file; delete `docs/plans/2026-10-10-phase0-plan.md` after E1-E3 close, since its gates are resolved or superseded.
 
 ### U2. Record the four open decisions
@@ -105,7 +103,7 @@ Status key: `done` / `in review` / `planned`. PR #1 unit names are mapped in par
 - **Simpler alternative:** put the four lines in `ROADMAP.md`; no new file.
 
 ### U3. Conformance harness (PR #1 U0)
-- **Status:** planned. **Evidence:** `docs/determinism.md` has the rules and matrix; no code.
+- **Status:** done. **Evidence:** `tests/conformance/` on `main` (PR #3, restacked #8); ROUTER/AUTH rows in #10/#11.
 - **Goal:** pytest checks for fail-closed, egress-deny, no-creds-in-VM, approval-before-egress first; add the others as units land.
 - **Files:** `tests/conformance/` (stdlib + pytest).
 - **Verification:** the checks fail on a deliberately broken stub, pass on the real one; run manually (no CI minutes).
