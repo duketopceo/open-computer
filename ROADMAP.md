@@ -88,7 +88,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | partial: placeholders in guest, host-side `substitute()`, R3 non-vacuous (#19); no real worker uses it yet |
 | OC-033 | P2 | Credential boundary v2: substitution at egress proxy | open |
 | OC-034 | P2 | Bind approved policy to sandbox creation + audit every apply | open |
-| OC-035 | P2 | Worker cost ledger + hard per-task cap | partial: ledger, per-run cap that pauses (never cancels), resume, orchestrator wiring (#PRN); event emission is a plain-dict hook until the UI event-stream helper lands; no real worker reports usage yet |
+| OC-035 | P2 | Worker cost ledger + hard per-task cap | partial: ledger, per-run cap that pauses (never cancels), resume, orchestrator wiring (#24); event emission is a plain-dict hook until the UI event-stream helper lands; no real worker reports usage yet |
 | OC-036 | P2 | Placement policy: one pure function | partial: rule table landed (#15), decider call and cost inputs open |
 | OC-037 | P2 | Router cleanup: seconds-vs-ms, spend-rule models, local jev path, alpha-endpoint contract test | open |
 | OC-038 | P2 | PII-Tracer model stage behind scan() | open |
