@@ -149,16 +149,51 @@ def submit(
     orch.submit(goal, engine, run_id=rid)
     orch.audit.append({"event": "goal_by", "run": rid, "by": by})
 
-    def drive():
-        try:
-            for _ in range(400):
-                res = orch.results(rid)
-                if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
-                    break
-                if not orch.work(wfn):
-                    break
-        except Exception:
-            pass  # the audit rows + task files on disk remain the truth
-
-    threading.Thread(target=drive, daemon=True, name=f"oc-goal-{rid}").start()
+    _start_drive(orch, rid, wfn)
     return rid
+
+
+def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object]) -> None:
+    try:
+        for _ in range(400):
+            res = orch.results(rid)
+            if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
+                break
+            if not orch.work(wfn):
+                break
+    except Exception:
+        pass  # the audit rows + task files on disk remain the truth
+
+
+def _start_drive(orch: Orchestrator, rid: str, wfn) -> None:
+    threading.Thread(target=_drive, args=(orch, rid, wfn), daemon=True, name=f"oc-goal-{rid}").start()
+
+
+def resume(wfn) -> int:
+    """Re-drive runs left non-terminal by a process restart. Count resumed.
+
+    Orchestrator.recover rebuilds in-memory state from plan.json + audit
+    rows; runs with no plan (pre-plan or mid-decompose crash) are left
+    literal on disk — reported, never fabricated.
+    """
+    base = runs_dir()
+    if not base.exists():
+        return 0
+    n = 0
+    for d in sorted(base.iterdir()):
+        if not d.is_dir():
+            continue
+        try:
+            orch = Orchestrator(d)
+            if not orch.recover(d.name):
+                continue
+            res = orch.results(d.name)
+            if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
+                continue
+            with _lock:
+                _live[d.name] = orch
+            _start_drive(orch, d.name, wfn)
+            n += 1
+        except Exception:
+            continue  # a corrupt run stays literal on disk
+    return n

@@ -164,6 +164,16 @@ def _submit_goal(goal: str, who: str) -> str:
     return goalruns.submit(goal, goal_engines.decompose_engine(), goal_engines.work_fn(), by=who)
 
 
+def _resume_goals() -> None:
+    """Re-drive goal runs orphaned by a restart. Fails soft — disk is truth."""
+    try:
+        n = goalruns.resume(goal_engines.work_fn())
+        if n:
+            print(f"resumed {n} goal run(s)")
+    except Exception:
+        pass
+
+
 # ----------------------------------------------------------------- routes
 # (pattern, method name). The tests enumerate these tables to prove GETs are
 # side-effect free and that every POST is CSRF-protected.
@@ -473,6 +483,7 @@ def make_server(port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
 
 def main(port: int = 8791):
     print(f"console → http://127.0.0.1:{port}")
+    _resume_goals()
     make_server(port).serve_forever()
 
 
