@@ -39,13 +39,22 @@ def decide(
     """
     decision = gate.scan(str(payload))
     output_fn(render_request(payload, decision.categories))
+    eof = False
     while True:
-        key = input_fn("> ").strip().lower()
+        try:
+            key = input_fn("> ").strip().lower()
+        except EOFError:
+            key, eof = "r", True  # no human on the line = reject
         if key in ("a", "r"):
             break
         output_fn("  (a) approve   (r) reject")
     approved = key == "a"
     gate.audit.append(
-        {"event": "human_decision", "approved": approved, "model": payload.get("model")}
+        {
+            "event": "human_decision",
+            "approved": approved,
+            "model": payload.get("model"),
+            **({"eof": True} if eof else {}),
+        }
     )
     return gate.request_cloud_call(payload, approved=approved).allowed

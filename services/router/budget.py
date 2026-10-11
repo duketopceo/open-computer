@@ -27,7 +27,7 @@ class Budget:
 
     def _append(self, row: dict) -> None:
         with open(self.path, "a") as f:
-            f.write(json.dumps({"ts": time.time(), **row}) + "\n")
+            f.write(json.dumps({**row, "ts": time.time()}) + "\n")
 
     def day_spend(self) -> float:
         if not self.path.exists():
@@ -37,10 +37,12 @@ class Budget:
         for line in self.path.read_text().splitlines():
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+                cost = float(row.get("cost", 0.0))
+            except (json.JSONDecodeError, ValueError, TypeError):
+                self._append({"event": "budget_halt", "cap": "ledger-corrupt"})
+                raise BudgetHalt("spend ledger unreadable — failing closed")
             if time.strftime("%Y-%m-%d", time.localtime(row.get("ts", 0))) == today:
-                total += float(row.get("cost", 0.0))
+                total += cost
         return total
 
     def check(self, est_cost: float = 0.0) -> None:

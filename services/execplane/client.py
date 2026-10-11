@@ -33,8 +33,14 @@ class ExecResult:
 class _FailedSandbox:
     """A sandbox that never booted: every exec refuses (fail-closed)."""
 
+    def __init__(self, err: Exception | None = None):
+        self._err = err
+
     def exec(self, cmd: str) -> ExecResult:
-        raise SandboxUnavailable("sandbox boot failed")
+        msg = "sandbox boot failed"
+        if self._err is not None:
+            msg += f": {type(self._err).__name__}: {self._err}"
+        raise SandboxUnavailable(msg)
 
 
 class _CubeSandbox:
@@ -104,6 +110,6 @@ class ExecplaneAdapter:
             payload["network"] = {"allow_out": allowlist}
         try:
             sb = self._sdk.Sandbox.create(**payload)
-        except Exception:
-            return _FailedSandbox()
+        except Exception as e:
+            return _FailedSandbox(e)
         return _CubeSandbox(sb, env_vars)

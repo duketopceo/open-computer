@@ -77,7 +77,8 @@ def session_integrity(ops) -> None:
         raise CheckFailed("valid cookie rejected")
     if auth.check_cookie("other.example", cookie) is not None:
         raise CheckFailed("cookie accepted on wrong rp")
-    if auth.check_cookie("127.0.0.1", cookie[:-4] + "ffff") is not None:
+    tampered = cookie[:-1] + ("0" if cookie[-1] != "0" else "1")
+    if auth.check_cookie("127.0.0.1", tampered) is not None:
         raise CheckFailed("tampered cookie accepted")
     code, _h, _ = _status(get, "/", headers={"Cookie": f"oc_sess={cookie}"})
     if code != 200:

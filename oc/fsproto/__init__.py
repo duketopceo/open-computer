@@ -179,16 +179,27 @@ class FSAdapter:
     def claim(self, agent: str, tid: str, ttl: float) -> str:
         """Atomic O_EXCL lease; expired leases are reclaimed. §4."""
         lf = self._lease_file(tid)
-        if lf.exists():
-            if self._lease_valid(tid):
-                raise AlreadyLeased(tid)
-            lf.unlink()  # expired — reclaim
         meta = {"holder": agent, "task": tid, "deadline": self._clock() + ttl}
-        fd = os.open(lf, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "wb") as f:
-            f.write(_meta_text(meta).encode())
-        self._set_status(tid, "leased")
-        return tid
+        for _ in range(2):
+            try:
+                fd = os.open(lf, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    valid = self._lease_valid(tid)
+                except (ValueError, OSError, json.JSONDecodeError):
+                    valid = True  # mid-write lease = live claimer; fail closed
+                if valid:
+                    raise AlreadyLeased(tid)
+                try:
+                    lf.unlink()  # expired — reclaim
+                except FileNotFoundError:
+                    pass  # another reclaimer beat us to it; retry the create
+                continue
+            with os.fdopen(fd, "wb") as f:
+                f.write(_meta_text(meta).encode())
+            self._set_status(tid, "leased")
+            return tid
+        raise AlreadyLeased(tid)
 
     def expire(self, lease_id: str) -> None:
         """Force lease expiry → task becomes pending again. §4."""
