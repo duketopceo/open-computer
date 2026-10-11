@@ -82,7 +82,7 @@ def pytest_terminal_summary(terminalreporter):
     rows: dict[str, list[str]] = {}
     for status in ("passed", "failed", "skipped", "error"):
         for rep in stats.get(status, []):
-            m = re.search(r"test_(r\d+|router|auth|place)_", getattr(rep, "nodeid", ""))
+            m = re.search(r"test_(r\d+|router|auth|place|orch)_", getattr(rep, "nodeid", ""))
             if m:
                 rows.setdefault(m.group(1).upper(), []).append(status)
     if not rows:
