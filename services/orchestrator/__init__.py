@@ -9,6 +9,8 @@ Conformance: tests/conformance/checks/orchestrator_checks.py (ORCH rows).
 
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from pathlib import Path
 
@@ -40,6 +42,7 @@ class Orchestrator:
 
     def __init__(self, root: Path | str, router=None, place_fn=None):
         root = Path(root)
+        self.root = root
         self.fs = fs_adapter(root / "run")
         self.gate = gate_adapter(root / "gate")
         self.audit = AuditLog(root / "orchestrator.ndjson")
@@ -59,8 +62,31 @@ class Orchestrator:
         self.audit.append(
             {"event": "run_submit", "run": run_id, "goal": goal, "subtasks": len(subs)}
         )
+        tmp = self.root / "plan.json.tmp"
+        tmp.write_text(json.dumps(subs))
+        os.replace(tmp, self.root / "plan.json")
         self.dispatch_ready(run_id)
         return run_id
+
+    def recover(self, run_id: str) -> bool:
+        """Rebuild run state from disk so a restarted process can re-drive it.
+
+        Reads plan.json (written atomically at submit) plus the dispatch
+        audit rows. Returns False when no plan exists — a pre-plan or
+        mid-decompose run is left literal on disk, never fabricated.
+        """
+        plan = self.root / "plan.json"
+        if not plan.exists():
+            return False
+        subs = json.loads(plan.read_text())
+        self.dispatches[run_id] = []
+        self._subtasks[run_id] = {s["id"]: s for s in subs}
+        self._tid_by_sub[run_id] = {}
+        for r in self.audit.rows():
+            if r.get("event") == "dispatch" and r.get("run") == run_id:
+                self.dispatches[run_id].append(r)
+                self._tid_by_sub[run_id][r["subtask"]] = r["task"]
+        return True
 
     def dispatch_ready(self, run_id: str) -> list[dict]:
         """Dispatch every subtask whose deps are all tombstoned."""
