@@ -34,9 +34,9 @@ def test_totals_per_run_and_subtask(ledger):
 def test_cap_is_never_exceeded_by_more_than_one_call(ledger):
     est = 0.003
     started = 0
-    while ledger.check("r", est):
+    while (tok := ledger.check("r", est)):
         started += 1
-        ledger.record("r", "s", U(est))
+        ledger.record("r", "s", U(est), token=tok)
         assert started < 20
     st = ledger.state("r")
     assert st.state == "paused_cap"
@@ -45,15 +45,16 @@ def test_cap_is_never_exceeded_by_more_than_one_call(ledger):
 
 
 def test_overrun_by_the_in_flight_call_is_recorded_and_pauses(ledger):
-    assert ledger.check("r", 0.001)
-    st = ledger.record("r", "s", U(0.0125))  # cost exceeded the estimate: truth is recorded
+    tok = ledger.check("r", 0.001)
+    assert tok
+    st = ledger.record("r", "s", U(0.0125), token=tok)  # cost exceeded the estimate: truth is recorded
     assert st.state == "paused_cap" and st.spend == pytest.approx(0.0125)
     assert [e["event"] for e in ledger.events].count("run_paused") == 1
 
 
 def test_pause_is_recorded_once_and_survives_restart(ledger, tmp_path):
     ledger.record("r", "s", U(0.011))
-    assert not ledger.check("r", 0.0) and not ledger.check("r", 0.0)
+    assert ledger.check("r", 0.0) is None and ledger.check("r", 0.0) is None
     again = CostLedger(tmp_path / "cost.ndjson", default_cap=0.010)
     assert again.state("r").state == "paused_cap"
     rows = [json.loads(line) for line in (tmp_path / "cost.ndjson").read_text().splitlines()]
@@ -67,7 +68,8 @@ def test_resume_needs_a_cap_above_spend_then_continues(ledger):
     st = ledger.resume("r", 0.05, by="luke")
     assert st.state == "running" and st.cap == 0.05
     assert ledger.check("r", 0.01)
-    assert [e["event"] for e in ledger.events][-2:] == ["cap_set", "run_resumed"]
+    names = [e["event"] for e in ledger.events]
+    assert names[names.index("run_resumed") - 1] == "cap_set"
 
 
 def test_corrupt_ledger_fails_closed(ledger, tmp_path):
@@ -75,7 +77,7 @@ def test_corrupt_ledger_fails_closed(ledger, tmp_path):
     with open(tmp_path / "cost.ndjson", "a") as f:
         f.write("not json\n")
     assert ledger.state("r").state == "paused_cap"
-    assert not ledger.check("r", 0.0)
+    assert ledger.check("r", 0.0) is None
     with pytest.raises(LedgerCorrupt):
         ledger.by_subtask("r")
 
@@ -94,8 +96,8 @@ def test_concurrent_checks_respect_the_cap(tmp_path):
     admitted, lock = [], threading.Lock()
 
     def worker():
-        if led.check("r", 0.004):
-            led.record("r", "s", U(0.004))
+        if tok := led.check("r", 0.004):
+            led.record("r", "s", U(0.004), token=tok)
             with lock:
                 admitted.append(1)
 
@@ -134,3 +136,13 @@ def test_run_pauses_at_cap_holds_the_rest_and_resumes_to_completion(tmp_path):
     orch.work(_work)
     assert orch.results(run_id)["c"]["state"] == "DONE"
     assert orch.results(run_id)["c"]["result"] == "did:c"
+
+
+def test_unsettled_reservation_holds_headroom_and_release_returns_it(tmp_path):
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.010)
+    t1 = led.check("r", 0.008)
+    assert t1 and led.check("r", 0.004) is None  # 0.008 reserved: 0.004 more does not fit
+    led2 = CostLedger(tmp_path / "c.ndjson", default_cap=0.010)
+    assert led2.state("r").state == "paused_cap"  # paused is sticky until the owner resumes
+    led2.release("r", t1)
+    assert led2.state("r").reserved == 0

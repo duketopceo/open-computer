@@ -38,25 +38,34 @@ def run_once(
         if not fs.pending(tid):  # leased, tombstoned, or failed — not ours
             continue
         task = json.loads(fs.task_body(tid))
-        if ledger is not None and not ledger.check(task["run"], float(task.get("est_cost", 0.0))):
-            audit.append({"event": "held_cost_cap", "task": tid, "run": task["run"]})
-            continue  # paused: stays queued until the owner resumes
+        token = None
+        if ledger is not None:
+            token = ledger.check(task["run"], float(task.get("est_cost", 0.0)))
+            if token is None:
+                audit.append({"event": "held_cost_cap", "task": tid, "run": task["run"]})
+                continue  # paused: stays queued until the owner resumes
         try:
             fs.claim(agent, tid, ttl=ttl)
         except AlreadyLeased:
+            if token:
+                ledger.release(task["run"], token)
             continue  # another worker won between pending() and claim()
         attempted.append(tid)
         try:
             result = work_fn(task)
         except Exception as e:
+            if token:
+                ledger.release(task["run"], token)
             fs.fail(tid)
             audit.append(
                 {"event": "worker_fail", "task": tid, "error": f"{type(e).__name__}: {e}"}
             )
             continue
+        if isinstance(result, WorkResult) and result.usage is not None and ledger is not None:
+            ledger.record(task["run"], task["subtask"], result.usage, token=token)
+        elif token:
+            ledger.release(task["run"], token)  # no usage reported: nothing was spent
         if isinstance(result, WorkResult):
-            if ledger is not None and result.usage is not None:
-                ledger.record(task["run"], task["subtask"], result.usage)
             result = result.output
         fs.outbox_write(agent, tid, result)
         audit.append({"event": "worker_done", "task": tid})

@@ -4,8 +4,10 @@ Cap semantics (the product's headline promise):
   * `check(run, est_cost)` before each unit of paid work: if spend + est would exceed the cap the run goes
     to state `paused_cap`. Paused means: nothing new is started. Work already in flight finishes and is
     recorded. Nothing is cancelled, failed or deleted, so no work is lost and the owner can resume.
-  * The run total never exceeds the cap by more than one call's cost (the call that was already in flight
-    when the cap was reached), because `check` is called with the estimate before each start.
+  * `check` RESERVES the estimate and returns a token; `record(..., token=)` or `release(token)` settles it.
+    Concurrent workers therefore cannot all pass the check on the same headroom. The run total never exceeds
+    the cap by more than the amount by which a call's real cost beat its own estimate. A worker that dies
+    without settling leaves its reservation held (fail closed); resuming with a higher cap clears the stall.
   * `resume(run, new_cap, by)` is the only way out of `paused_cap`, and must raise the cap above current spend.
   * The ledger is an append-only NDJSON file; cap, pauses and resumes are rows, so state survives restarts.
     An unreadable row fails closed: the run is treated as paused (never as free to spend).
@@ -21,6 +23,7 @@ from __future__ import annotations
 import fcntl
 import json
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +52,7 @@ class RunState:
     spend: float
     state: str
     calls: int
+    reserved: float = 0.0
 
 
 class CostLedger:
@@ -85,6 +89,7 @@ class CostLedger:
 
     def state(self, run: str) -> RunState:
         cap, spend, calls, state = self.default_cap, 0.0, 0, RUNNING
+        held: dict[str, float] = {}
         try:
             rows = self._rows()
         except LedgerCorrupt:
@@ -96,13 +101,17 @@ class CostLedger:
             if ev == "cost":
                 spend += float(r["cost"])
                 calls += 1
+            elif ev == "reserve":
+                held[r["token"]] = float(r["est"])
+            elif ev == "release":
+                held.pop(r["token"], None)
             elif ev == "cap_set":
                 cap = float(r["cap"])
             elif ev == "run_paused":
                 state = PAUSED
             elif ev == "run_resumed":
                 state = RUNNING
-        return RunState(run, cap, spend, state, calls)
+        return RunState(run, cap, spend, state, calls, sum(held.values()))
 
     def total(self, run: str) -> float:
         return self.state(run).spend
@@ -141,29 +150,39 @@ class CostLedger:
         with self._locked():
             self._notify(self._append({"event": "cap_set", "run": run, "cap": float(cap), "by": by}))
 
-    def check(self, run: str, est_cost: float = 0.0) -> bool:
-        """True if one more call of `est_cost` fits under the cap. False pauses the run (recorded once)."""
+    def check(self, run: str, est_cost: float = 0.0) -> str | None:
+        """Reserve `est_cost` under the cap. Returns a token, or None if it does not fit (run is paused,
+        recorded once). Settle the token with record(token=) or release()."""
         with self._locked():
             st = self.state(run)
             if st.state == PAUSED:
-                return False
-            if st.cap is None or st.spend + est_cost > st.cap:
+                return None
+            if st.cap is None or st.spend + st.reserved + est_cost > st.cap:
                 self._notify(self._append({
                     "event": "run_paused", "run": run, "reason": "cap",
                     "cap": st.cap, "spend": st.spend, "est_cost": est_cost,
                 }))
-                return False
-            return True
+                return None
+            token = uuid.uuid4().hex[:10]
+            self._append({"event": "reserve", "run": run, "token": token, "est": est_cost})
+            return token
 
-    def record(self, run: str, subtask: str, usage: Usage) -> RunState:
+    def release(self, run: str, token: str) -> None:
+        """Settle a reservation that produced no cost (worker failed before spending)."""
+        with self._locked():
+            self._append({"event": "release", "run": run, "token": token})
+
+    def record(self, run: str, subtask: str, usage: Usage, token: str | None = None) -> RunState:
         """Record a finished call. Always recorded, even over the cap: money already spent is truth."""
         with self._locked():
             self._notify(self._append({
                 "event": "cost", "run": run, "subtask": subtask, "model": usage.model,
                 "tokens_in": usage.tokens_in, "tokens_out": usage.tokens_out, "cost": usage.cost,
             }))
+            if token:
+                self._append({"event": "release", "run": run, "token": token})
             st = self.state(run)
-            if st.cap is not None and st.state == RUNNING and st.spend >= st.cap:
+            if st.cap is not None and st.state == RUNNING and st.spend + st.reserved >= st.cap:
                 self._notify(self._append({
                     "event": "run_paused", "run": run, "reason": "cap", "cap": st.cap, "spend": st.spend,
                 }))
@@ -176,6 +195,6 @@ class CostLedger:
             st = self.state(run)
             if new_cap <= st.spend:
                 raise ValueError(f"new cap {new_cap} must exceed current spend {st.spend:.6f}")
-            self._append({"event": "cap_set", "run": run, "cap": float(new_cap), "by": by})
+            self._notify(self._append({"event": "cap_set", "run": run, "cap": float(new_cap), "by": by}))
             self._notify(self._append({"event": "run_resumed", "run": run, "by": by, "cap": float(new_cap)}))
             return self.state(run)
