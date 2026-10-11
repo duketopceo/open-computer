@@ -16,6 +16,7 @@ import hmac
 import json
 import os
 import secrets
+import subprocess
 import threading
 import time
 from collections.abc import Mapping
@@ -37,6 +38,7 @@ DATA_DIR = Path.home() / ".local" / "share" / "oc"
 CREDS_PATH = DATA_DIR / "credentials.json"
 KEY_PATH = DATA_DIR / "session-key"
 ENROLL_DIR = DATA_DIR / "enroll"
+OMASEAL_KEY = ("open-computer", "session-key")
 SESSION_TTL = 12 * 3600
 STATE_TTL = 300
 TOKEN_TTL = 600
@@ -120,24 +122,70 @@ class CredentialStore:
         return out
 
 
+def _omaseal_get(service: str, account: str) -> str | None:
+    try:
+        p = subprocess.run(
+            ["omaseal", "get", service, account],
+            capture_output=True, text=True, timeout=4,
+        )
+        return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
+    except Exception:
+        return None
+
+
+def _omaseal_set(service: str, account: str, value: str) -> bool:
+    try:
+        p = subprocess.run(
+            ["omaseal", "set", service, account],
+            input=value, capture_output=True, text=True, timeout=4,
+        )
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
 class Auth:
     """WebAuthn ceremonies + session cookies + enroll tokens."""
 
     def __init__(self, store: CredentialStore | None = None, key_path: Path = KEY_PATH):
         self.store = store or CredentialStore()
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        if not key_path.exists():
-            fd = os.open(key_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            try:
-                os.write(fd, secrets.token_bytes(32))
-            finally:
-                os.close(fd)
-        key = key_path.read_bytes()
-        if len(key) != 32:
-            raise RuntimeError(f"session key corrupt: {key_path}")
-        self._key = key
+        self._key = self._load_key(key_path)
         self._pending: dict[str, tuple[Any, str, str, float]] = {}
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _load_key(key_path: Path) -> bytes:
+        """Session signing key: omaseal primary, file as fallback cache.
+
+        Order: omaseal → existing file (migrated into omaseal, then kept
+        as a 0600 cache for keyring-locked boots) → generate (omaseal +
+        file). A locked/unreachable keyring never blocks the service —
+        it degrades to the file, never to a weaker secret.
+        """
+        svc, acct = OMASEAL_KEY
+        got = _omaseal_get(svc, acct)
+        if got:
+            try:
+                key = base64.b64decode(got)
+                if len(key) == 32:
+                    return key
+            except Exception:
+                pass
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        if key_path.exists():
+            key = key_path.read_bytes()
+            if len(key) == 32:
+                _omaseal_set(svc, acct, base64.b64encode(key).decode())
+                return key
+            raise RuntimeError(f"session key corrupt: {key_path}")
+        key = secrets.token_bytes(32)
+        _omaseal_set(svc, acct, base64.b64encode(key).decode())
+        fd = os.open(key_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(fd, key)
+        finally:
+            os.close(fd)
+        return key
 
     # -- ceremonies --------------------------------------------------
 
