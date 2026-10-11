@@ -20,6 +20,9 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from services.opsview.auth import Auth, rp_for
+from services.opsview.webauthn_page import enroll_page, login_page
+
 REPO = Path(__file__).resolve().parents[2]
 MATRIX_RE = re.compile(r"^(R\d+): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
 
@@ -181,6 +184,31 @@ addEventListener('keydown',e=>{{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey&&document
 
 class Handler(BaseHTTPRequestHandler):
     state: dict = {}
+    auth = Auth()
+
+    def _rp(self) -> str:
+        return rp_for(self.headers.get("Host", "localhost"))
+
+    def _identity(self) -> str | None:
+        raw = self.headers.get("Cookie", "")
+        cookie = next(
+            (p.split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("oc_sess=")),
+            None,
+        )
+        return self.auth.check_cookie(self._rp(), cookie)
+
+    def _json_body(self) -> dict:
+        try:
+            return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+        except Exception:
+            return {}
+
+    def _set_session(self, cookie: str):
+        secure = "" if self._rp() == "localhost" else "; Secure"
+        self.send_header(
+            "Set-Cookie",
+            f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age=43200",
+        )
 
     def _state(self) -> dict:
         api = os.environ.get("CUBE_API_URL", "").rstrip("/")
@@ -206,7 +234,28 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def do_GET(self):
-        if self.path.startswith("/route"):
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        # --- public: auth surface ------------------------------------
+        if path == "/login":
+            self._send(200, login_page().encode())
+            return
+        if path == "/enroll":
+            token = (parse_qs(parsed.query).get("token") or [""])[0]
+            self._send(200, enroll_page(token).encode())
+            return
+
+        # --- gate -----------------------------------------------------
+        if not self._identity():
+            self.send_response(302)
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return
+
+        if path == "/route":
             from urllib.parse import parse_qs, urlparse
 
             q = (parse_qs(urlparse(self.path).query).get("q") or [""])[0]
@@ -240,6 +289,58 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, body, "application/json")
             return
         self._send(200, _page(self._state()).encode())
+
+    def do_POST(self):
+        from urllib.parse import urlparse
+
+        path = urlparse(self.path).path
+        if not path.startswith("/webauthn/"):
+            self._send(404, b'{"error":"not found"}', "application/json")
+            return
+        body = self._json_body()
+        rp = self._rp()
+
+        if path == "/webauthn/login/begin":
+            opts, tok = self.auth.begin_auth(rp)
+            self._send(200, json.dumps({"publicKey": opts["publicKey"], "tok": tok}).encode(), "application/json")
+            return
+        if path == "/webauthn/login/complete":
+            try:
+                got = self.auth.complete_auth(body.get("tok", ""), json.dumps(body.get("credential", {})))
+            except Exception:
+                got = None
+            if not got:
+                self._send(401, b'{"error":"denied"}', "application/json")
+                return
+            label, cookie = got
+            self.send_response(200)
+            self._set_session(cookie)
+            self.send_header("Content-Type", "application/json")
+            payload = json.dumps({"ok": True, "who": label}).encode()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if path == "/webauthn/register/begin":
+            if not self.auth.consume_token(rp, body.get("token", "")):
+                self._send(403, b'{"error":"invalid or expired enroll token"}', "application/json")
+                return
+            opts, tok = self.auth.begin_register(rp, "luke")
+            self._send(200, json.dumps({"publicKey": opts["publicKey"], "tok": tok}).encode(), "application/json")
+            return
+        if path == "/webauthn/register/complete":
+            try:
+                cred_id = self.auth.complete_register(
+                    body.get("tok", ""), json.dumps(body.get("credential", {}))
+                )
+            except Exception:
+                cred_id = None
+            if not cred_id:
+                self._send(401, b'{"error":"enrollment failed"}', "application/json")
+                return
+            self._send(200, b'{"ok":true}', "application/json")
+            return
+        self._send(404, b'{"error":"not found"}', "application/json")
 
     def _send(self, code, body, ctype="text/html"):
         self.send_response(code)

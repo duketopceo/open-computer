@@ -43,13 +43,46 @@ def gate(tmp_path):
     return mod.adapter(tmp_path)
 
 
+@pytest.fixture
+def ops(tmp_path):
+    mod = pytest.importorskip("services.opsview.server", reason="awaiting F-AUTH")
+    auth_mod = pytest.importorskip("services.opsview.auth", reason="awaiting F-AUTH")
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    auth = auth_mod.Auth(
+        store=auth_mod.CredentialStore(tmp_path / "creds.json"),
+        key_path=tmp_path / "session-key",
+    )
+    mod.Handler.auth = auth
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **kw):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+
+    def get(path, method="GET", data=None, headers=None):
+        req = urllib.request.Request(
+            base + path, method=method, data=data, headers=headers or {}
+        )
+        return opener.open(req, timeout=5)
+
+    yield base, auth, get
+    srv.shutdown()
+
+
 def pytest_terminal_summary(terminalreporter):
     """Print the determinism matrix: rule -> PASS / FAIL / PENDING."""
     stats = terminalreporter.stats
     rows: dict[str, list[str]] = {}
     for status in ("passed", "failed", "skipped", "error"):
         for rep in stats.get(status, []):
-            m = re.search(r"test_(r\d+|router)_", getattr(rep, "nodeid", ""))
+            m = re.search(r"test_(r\d+|router|auth)_", getattr(rep, "nodeid", ""))
             if m:
                 rows.setdefault(m.group(1).upper(), []).append(status)
     if not rows:
