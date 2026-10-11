@@ -110,12 +110,14 @@ Server-sent events, same session and CSP as the console. No GET has a side effec
 retry: 2000
 
 id: 12
-event: source
-data: {"id":"g_research01:12", ...}
+data: {"id":"g_research01:12","type":"source", ...}
 
 : hb
 ```
 
+* **Unnamed events.** Every data event is a plain `message` (no `event:` line); the type is in the payload. Naming them
+  by type would make `error` events indistinguishable from `EventSource`'s own connection-error event. Only the control
+  events `reset` and `end` are named.
 * **Resume.** Send `Last-Event-ID: <seq>` (the browser's `EventSource` does this on reconnect) or `?last_event_id=<seq>`.
   The server replays every event with a higher `seq`, then tails. A reconnect never loses or duplicates events; clients
   also drop any `seq <= last seen`.

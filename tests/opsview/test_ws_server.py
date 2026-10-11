@@ -77,9 +77,9 @@ class Client:
                     break
                 ln = raw.decode().rstrip("\n")
                 if ln == "":
-                    if "event" in cur:
-                        out.append((cur.get("id"), cur["event"], json.loads(cur.get("data", "{}"))))
-                        if len(out) >= max_events or cur["event"] == "end":
+                    if "data" in cur or "event" in cur:
+                        out.append((cur.get("id"), cur.get("event", "message"), json.loads(cur.get("data", "{}"))))
+                        if len(out) >= max_events or cur.get("event") == "end":
                             break
                     cur = {}
                 elif ln.startswith(":"):
@@ -133,13 +133,20 @@ def last_status(c, goal):
 # ---- SSE + resume ---------------------------------------------------------------------------------------------
 
 
+def sse_all(c, goal):
+    start(c, goal, hold=False)
+    wait_for(lambda: routes.ws().log.finished(goal), "recording")
+    return c.sse(f"/goals/{goal}/events")[0][:-1]
+
+
 def test_sse_streams_every_event_in_order_then_ends(wsx):
     start(wsx, "g_research01", hold=False)
     evs, _ = wsx.sse("/goals/g_research01/events")
     assert evs[-1][1] == "end"
     body = evs[:-1]
     assert [int(i) for i, _, _ in body] == list(range(1, len(body) + 1))
-    assert all(name == d["type"] and i == str(d["seq"]) for i, name, d in body)
+    assert all(name == "message" and i == str(d["seq"]) for i, name, d in body), "data events are unnamed"
+    assert any(d["type"] == "error" for _, _, d in sse_all(wsx, "g_coding01")), "an error-typed event must not be an SSE event named error"
     assert len(body) == len([ln for ln in (FIX / "g_research01.ndjson").read_text().splitlines()])
 
 

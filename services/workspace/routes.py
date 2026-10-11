@@ -170,7 +170,7 @@ def g_events(h, qs, goal):
                 return
             after = 0
         for ev in w.log.read(goal, after):
-            if not out(f"id: {ev['seq']}\nevent: {ev['type']}\ndata: {json.dumps(ev, separators=(',', ':'))}\n\n"):
+            if not out(f"id: {ev['seq']}\ndata: {json.dumps(ev, separators=(',', ':'))}\n\n"):
                 return
             after = ev["seq"]
         sess = w.sessions.get(goal)
