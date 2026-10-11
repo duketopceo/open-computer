@@ -49,7 +49,7 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
-      - name: console e2e (fixture data only: no microVMs, no models, 127.0.0.1)
+      - name: console e2e (fixture data only, no microVMs, no models, loopback)
         working-directory: tests/e2e
         env:
           OC_PYTHON: uv run --locked python
