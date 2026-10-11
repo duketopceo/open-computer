@@ -1,13 +1,20 @@
 # Roadmap
 
 ## Phase 0 — Decisions (now)
-- [ ] License: AGPLv3 vs BSL (same open question as wisp — decide once, apply to both)
-- [ ] Router: bench **Jev vs pplx-decider-v1-27b** in `orchestral` (quality-per-dollar,
-      reproducible) — cheapest experiment, answers the biggest question with data
-- [ ] CubeVM: verify license and maturity on TencentCloud/CubeSandbox before committing
+- [x] License: **MIT** — decided 2026-10-10, matches fleet norm (wisp, docketry, kurultai all MIT)
+- [~] Router: bench **Jev vs pplx-decider vs `openrouter/auto`** in `orchestral` (quality-per-dollar,
+      reproducible) — running; `auto` leg done (81.7% route-exact), Jev + decider legs in flight.
+      Baselines widened to include hosted decider + `openrouter/auto` after verification.
+- [x] CubeVM: TencentCloud/CubeSandbox is **Apache-2.0** (verified 2026-10-10); E2B-compatible API,
+      auto-pause/resume, aarch64 bare-metal. Adopted as execution-plane candidate; local deploy exists
 
-## Phase 1 — Router service
+## Phase 1 — Conformance harness first, then router service
+- [ ] **Deterministic conformance harness** (`tests/conformance/`): every rule in `docs/determinism.md`
+      becomes an executable pytest check BEFORE feature code lands. Tests-as-spec — no unit merges
+      without its matrix rows green (fail-closed, egress-deny, no-creds-in-VM, fsproto-only comms,
+      per-step escalation approval, dry-run policy diffs, queue-never-fabricates)
 - [ ] Unified fleet-wide router: task type × complexity × latency → model via OpenRouter
+      (decider primary per bench, Jev local fallback — `openrouter/auto` rejected)
 - [ ] Port wisp's router+budget-gate pattern out of the voice agent into a shared service
 - [ ] Extend wisp-route-fuzz golden set to model selection; exact-match fixtures
 
@@ -30,6 +37,13 @@
 ## Phase 5 — Knowledge and memory
 - [ ] Local index: pplx-embed-v2-late (index with 9B, query with 0.6B) or keep kurultai
 - [ ] jev-compact wired as the mid-run compactor for long tasks
+
+## Quality bar (cross-cutting, non-negotiable)
+- [ ] Any human-facing surface (gate approval console, ops/audit views, docketry front door):
+      keyboard-complete, command-palette interaction where it fits, information density over
+      decoration, every state renders deterministically (queued/leased/running/blocked/denied/
+      tombstoned), zero fake buttons or unverified metrics. TUI-first acceptable if it meets the
+      bar; any future GUI gets a real design pass — no AI slop
 
 ## Later
 - [ ] docketry `services/dispatch` as the human front door for long-running tasks
