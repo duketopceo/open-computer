@@ -49,13 +49,13 @@ def pytest_terminal_summary(terminalreporter):
     rows: dict[str, list[str]] = {}
     for status in ("passed", "failed", "skipped", "error"):
         for rep in stats.get(status, []):
-            m = re.search(r"test_r(\d+)_", getattr(rep, "nodeid", ""))
+            m = re.search(r"test_(r\d+|router)_", getattr(rep, "nodeid", ""))
             if m:
-                rows.setdefault(f"R{m.group(1)}", []).append(status)
+                rows.setdefault(m.group(1).upper(), []).append(status)
     if not rows:
         return
     terminalreporter.write_sep("=", "determinism matrix")
-    for rule in sorted(rows, key=lambda r: int(r[1:])):
+    for rule in sorted(rows, key=lambda r: (0, int(r[1:])) if r[1:].isdigit() else (1, r)):
         s = rows[rule]
         state = (
             "FAIL"

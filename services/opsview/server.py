@@ -88,6 +88,23 @@ def _run_matrix() -> str:
         return f"matrix run failed: {e}"
 
 
+def _route(q: str) -> dict:
+    sys.path.insert(0, str(REPO))
+    from services.router import default_router
+
+    r = default_router("/tmp/oc-audit/router-ledger.jsonl")
+    t0 = time.time()
+    d = r.route(q)
+    return {
+        "route": d.route,
+        "tier": d.tier,
+        "engine": d.engine,
+        "confidence": d.confidence,
+        "cost": d.cost,
+        "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms),
+    }
+
+
 def _page(state: dict) -> str:
     api = state["api_url"] or "<unset>"
     up = state["health"] == 200
@@ -135,6 +152,12 @@ def _page(state: dict) -> str:
 <div id=status></div>
 <div id=matrix>{matrix_html}</div>
 
+<h2>route tester</h2>
+<input id=q placeholder='utterance…' style="background:#141a20;border:1px solid var(--line);color:var(--fg);font:inherit;padding:4px 10px;width:340px">
+<button id=route>Route&nbsp;<span class=dim>[enter]</span></button>
+<div id=routestatus class=dim></div>
+<div id=routeresult></div>
+
 <h2>sandboxes ({len(state['sandboxes'])})</h2>{sb_html}
 
 <h2>gate audit (tail)</h2>{audit_html}
@@ -145,7 +168,14 @@ document.getElementById('status').textContent='running conformance (boots real m
 const r=await fetch('/run');const j=await r.json();
 document.getElementById('matrix').innerHTML=j.matrix;document.getElementById('status').textContent=j.status;b.disabled=0;}};
 document.getElementById('run').onclick=run;
-addEventListener('keydown',e=>{{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey)run();}});
+const routeIt=async()=>{{const q=document.getElementById('q').value.trim();if(!q)return;
+document.getElementById('routestatus').textContent='routing…';
+const r=await fetch('/route?q='+encodeURIComponent(q));const j=await r.json();
+document.getElementById('routestatus').textContent='';
+document.getElementById('routeresult').innerHTML=j.html;}};
+document.getElementById('route').onclick=routeIt;
+document.getElementById('q').addEventListener('keydown',e=>{{if(e.key==='Enter')routeIt();}});
+addEventListener('keydown',e=>{{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey&&document.activeElement.id!=='q')run();}});
 </script>"""
 
 
@@ -176,6 +206,25 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def do_GET(self):
+        if self.path.startswith("/route"):
+            from urllib.parse import parse_qs, urlparse
+
+            q = (parse_qs(urlparse(self.path).query).get("q") or [""])[0]
+            try:
+                d = _route(q)
+                row = (
+                    f"<table><tr><td>route</td><td>{d['route']}</td></tr>"
+                    f"<tr><td>tier</td><td>{d['tier']}</td></tr>"
+                    f"<tr><td>engine</td><td class='dim'>{d['engine']}</td></tr>"
+                    f"<tr><td>confidence</td><td>{d['confidence']}</td></tr>"
+                    f"<tr><td>cost</td><td class='dim'>${d['cost']:.5f}</td></tr>"
+                    f"<tr><td>ms</td><td class='dim'>{d['ms']}</td></tr></table>"
+                )
+            except Exception as e:
+                row = f"<span class='fail'>{html.escape(str(e))}</span>"
+            body = json.dumps({"html": row}).encode()
+            self._send(200, body, "application/json")
+            return
         if self.path == "/run":
             out = _run_matrix()
             matrix = {m[0]: (m[1], m[2]) for m in MATRIX_RE.findall(out)}
