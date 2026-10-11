@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from services.gate.audit import AuditLog
-from services.gate.gate import Gate
+from services.gate.gate import Approval, Gate
 from services.gate.queue import ApprovalQueue
 from services.opsview import runs
 
@@ -39,6 +39,8 @@ def seed(base: Path, now: float | None = None) -> dict:
     done = q.submit(who="docs-agent", session="sess-4f21", ts=now - 86400 * 2, est_cost=0.0004,
                     what="Translate README intro", payload={"model": "google/gemini-flash", "egress": "openrouter.ai", "prompt": "Translate."})
     q.decide(done, approve=True, by="luke", note="")
+    gate.request_cloud_call(q.get(done)["payload"], Approval(done, q.get(done)["payload_hash"]),
+                            sender=lambda p: len(str(p)))  # a real, consumed send: the audit shows both rows
     qf = base / "approvals.ndjson"
     evs = [json.loads(line) for line in qf.read_text().splitlines()]
     for ev in evs:

@@ -5,21 +5,22 @@ File-backed NDJSON (one event per line, append-only like the audit log):
    "est_cost", "pii", "payload_hash", "payload_bytes", "payload"}
   {"event": "decision", "id", "ts", "decision": "approved"|"sent_back", "by", "note"}
 
-Status is derived, never stored. Deciding writes the audit rows through Gate
-(human_decision, then cloud_call_allowed / cloud_call_blocked), so the audit
-log stays the single record of what was allowed to leave.
+Status is derived, never stored. Deciding goes through Gate: approve writes a
+human_decision that is an approval bound to this payload's hash (single use,
+expiring); send-back writes human_decision then cloud_call_blocked. Approving
+does NOT send: the caller that owns the payload later presents the approval to
+Gate.request_cloud_call, which is the only path that lets bytes leave.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
 import uuid
 from pathlib import Path
 
-from .gate import Gate
+from .gate import Gate, payload_hash  # noqa: F401  (payload_hash re-exported: the one binding hash)
 
 
 class QueueError(Exception):
@@ -28,11 +29,6 @@ class QueueError(Exception):
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
         self.status = status
-
-
-def payload_hash(payload: dict) -> str:
-    blob = json.dumps(payload, sort_keys=True, default=str).encode()
-    return hashlib.sha256(blob).hexdigest()
 
 
 class ApprovalQueue:
@@ -114,17 +110,13 @@ class ApprovalQueue:
         if not approve and not note:
             raise QueueError("Add a note so the agent knows what to change.", 422)
         payload = item["payload"]
-        self.gate.audit.append({
-            "event": "human_decision", "approved": approve, "model": item["model"],
-            "approval_id": item_id, "by": by, "payload_hash": item["payload_hash"],
-            **({"note": note} if note else {}),
-        })
-        # The gate writes cloud_call_allowed / cloud_call_blocked and is the only
-        # thing that may authorise bytes leaving the box.
-        result = self.gate.request_cloud_call(payload, approved=approve)
+        if approve:
+            self.gate.grant(payload, by=by, approval_id=item_id, note=note)
+        else:
+            self.gate.deny(payload, by=by, approval_id=item_id, note=note)
         self._append({
             "event": "decision", "id": item_id, "ts": time.time(),
             "decision": "approved" if approve else "sent_back", "by": by, "note": note,
         })
-        return {"id": item_id, "allowed": result.allowed,
+        return {"id": item_id, "approved": approve, "allowed": approve, "sent": False,
                 "decision": "approved" if approve else "sent_back"}
