@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
-MATRIX_RE = re.compile(r"^(R\d+|ROUTER|AUTH): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
+MATRIX_RE = re.compile(r"^(R\d+|ROUTER|AUTH|PLACE|ORCH|WORK): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
 SUMMARY_RE = re.compile(r"(\d+) (passed|failed|skipped|error)", re.I)
 
 

@@ -26,7 +26,7 @@ def test_keys_match_tallyline():
 
 
 def test_sidebar_sections_in_order():
-    assert [a.label for a in registry.nav_actions()] == ["Overview", "Sandboxes", "Runs", "Approvals", "Router", "Audit"]
+    assert [a.label for a in registry.nav_actions()] == ["Overview", "Goals", "Sandboxes", "Runs", "Approvals", "Router", "Audit"]
     assert tuple(a.id.split(".")[1] for a in registry.nav_actions()) == registry.PAGES
 
 
@@ -69,4 +69,4 @@ def test_overlay_and_palette_are_generated_not_hardcoded():
 def test_help_overlay_lists_every_keyed_action():
     keyed = [a for a in registry.ACTIONS if a.keys]
     assert len(keyed) >= 15
-    assert all(a.group in ("Global", "Navigate", "Lists", "Approvals", "Router", "Audit") for a in keyed)
+    assert all(a.group in ("Global", "Navigate", "Lists", "Goals", "Approvals", "Router", "Audit") for a in keyed)

@@ -299,6 +299,13 @@
   }
   $("#menu").addEventListener("click", function () { toggleDrawer(!document.body.classList.contains("drawer")); });
 
+  // ---- live section: reload while a run is active --------------------------
+  var live = $("[data-refresh]");
+  if (live) {
+    var every = parseInt(live.dataset.refresh, 10) || 3;
+    setInterval(function () { if (!document.hidden) location.reload(); }, every * 1000);
+  }
+
   // ---- skeleton fragments -------------------------------------------------
   $$("[data-frag]").forEach(function (host) {
     fetch(host.dataset.frag, { credentials: "same-origin", headers: { "Accept": "text/html" } })

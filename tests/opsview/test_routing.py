@@ -10,6 +10,7 @@ SAMPLE_ARGS = {"id": "x"}
 def concrete(pattern: str) -> str:
     return (pattern.replace("(?P<id>[^/]+)", "sbx-7f3a91c2")
             .replace("(?P<id>run_[0-9a-f]{8})", "run_00000000")
+            .replace("(?P<id>goal_[0-9a-f]{8})", "goal_00000000")
             .replace("(?P<id>ap_[0-9a-f]{8})", "ap_00000000"))
 
 
@@ -27,7 +28,7 @@ def test_every_sidebar_section_has_a_route(console):
     for a in registry.nav_actions():
         assert console.get(a.href)[0] == 200, a.href
     _, _, html = console.get("/")
-    for label in ("Overview", "Sandboxes", "Runs", "Approvals", "Router", "Audit"):
+    for label in ("Overview", "Goals", "Sandboxes", "Runs", "Approvals", "Router", "Audit"):
         assert f"<span>{label}</span>" in html
 
 
@@ -72,7 +73,7 @@ def test_route_tables_are_disjoint_and_named():
         assert hasattr(server.Handler, name)
     for _, name in server.POST_ROUTES:
         assert name.startswith("p_") and hasattr(server.Handler, name)
-    assert {p for p, _ in server.GET_ROUTES}.isdisjoint({p for p, _ in server.POST_ROUTES} - {"/runs"})
+    assert {p for p, _ in server.GET_ROUTES}.isdisjoint({p for p, _ in server.POST_ROUTES} - {"/runs", "/goals"})
 
 
 def test_api_down_is_honest(console, monkeypatch):
