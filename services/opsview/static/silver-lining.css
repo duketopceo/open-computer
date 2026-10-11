@@ -1,0 +1,163 @@
+/*
+ * silver-lining.css — Silver Lining design tokens (dark default, light, follow system).
+ *
+ * !! REPLACE WITH GENERATED !!
+ * This file is a hand-port of Tallyline's DESIGN.md / apps/web/app/globals.css
+ * values. The real file is generated in Tallyline (branch feat/silver-lining-tokens)
+ * and vendored here by a sync script; the token-parity gate hashes it. Variable
+ * names follow Tallyline's `--color-<token>` convention so the swap is drop-in.
+ * Deviations from the DESIGN.md values, forced by the section 3 contrast gate
+ * (tests/opsview/test_tokens.py): dark ink #eef1f6 -> #e4e8ef (was 17.3:1 on
+ * canvas, ceiling is 16:1); dark ink-tertiary #7c8593 -> #858d9d (was 4.28:1 on
+ * surface-3, floor 4.5:1). Feed these back into Tallyline's generator.
+ * Do not add component styling here — that lives in console.css.
+ */
+
+:root {
+  /* surfaces + linings */
+  --color-canvas: #0a0c10;
+  --color-surface-1: #10141b;
+  --color-surface-2: #161b24;
+  --color-surface-3: #1c222e;
+  --color-surface-4: #232a38;
+  --color-lining-faint: #1f232b;
+  --color-lining: #39404c;
+  --color-lining-strong: #5a6270;
+  --color-lining-bright: #c9cdd4;
+  --color-control: #5a6270;
+  /* text */
+  --color-ink: #e4e8ef;
+  --color-ink-muted: #c3c9d4;
+  --color-ink-subtle: #8b93a3;
+  --color-ink-tertiary: #858d9d;
+  /* accent + glint */
+  --color-accent: #3ea1f7;
+  --color-accent-hover: #6eb9fb;
+  --color-accent-soft: rgba(62, 161, 247, 0.14);
+  --color-on-accent: #06080c;
+  --color-glint: #3ea1f7;
+  /* status (fixed meaning, never generated) */
+  --color-urgent: #ef4444;
+  --color-attention: #f59e0b;
+  --color-healthy: #10b981;
+  --color-neutral: #9ca3af;
+  --color-urgent-soft: rgba(239, 68, 68, 0.14);
+  --color-attention-soft: rgba(245, 158, 11, 0.14);
+  --color-healthy-soft: rgba(16, 185, 129, 0.14);
+  --color-neutral-soft: rgba(156, 163, 175, 0.14);
+  --color-overlay: rgba(3, 4, 6, 0.72);
+  --shadow-overlay: 0 8px 28px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(90, 98, 112, 0.9);
+  color-scheme: dark;
+
+  /* typography */
+  --font-ui: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-micro: 11px;
+  --text-caption: 12px;
+  --text-body: 13px;
+  --text-body-lg: 14px;
+  --text-title: 15px;
+  --text-headline: 17px;
+  --text-display: 24px;
+
+  /* spacing (4px grid) */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-64: 64px;
+
+  /* radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-pill: 9999px;
+
+  /* density + layout */
+  --row-compact: 32px;
+  --row: 36px;
+  --row-comfortable: 40px;
+  --sidebar-width: 232px;
+  --header-height: 48px;
+  --palette-width: 640px;
+
+  /* motion */
+  --duration-fast: 90ms;
+  --duration-base: 140ms;
+  --duration-overlay: 200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0.38, 0.9);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Light theme: explicit, or follow system unless dark is forced. */
+:root[data-theme="light"],
+html.light {
+  --color-canvas: #f4f5f8;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #eef0f4;
+  --color-surface-3: #e4e7ec;
+  --color-surface-4: #dde1e8;
+  --color-lining-faint: #e8eaef;
+  --color-lining: #c9cdd4;
+  --color-lining-strong: #a3aab6;
+  --color-lining-bright: #5f6879;
+  --color-control: #5f6879;
+  --color-ink: #151923;
+  --color-ink-muted: #3f4756;
+  --color-ink-subtle: #566070;
+  --color-ink-tertiary: #566070;
+  --color-accent: #0b66cc;
+  --color-accent-hover: #0a56ad;
+  --color-accent-soft: rgba(11, 102, 204, 0.12);
+  --color-on-accent: #ffffff;
+  --color-glint: #0b66cc;
+  --color-urgent: #b91c1c;
+  --color-attention: #b45309;
+  --color-healthy: #047857;
+  --color-neutral: #4b5563;
+  --color-urgent-soft: rgba(185, 28, 28, 0.1);
+  --color-attention-soft: rgba(180, 83, 9, 0.12);
+  --color-healthy-soft: rgba(4, 120, 87, 0.12);
+  --color-neutral-soft: rgba(75, 85, 99, 0.12);
+  --color-overlay: rgba(21, 25, 35, 0.45);
+  --shadow-overlay: 0 8px 28px rgba(21, 25, 35, 0.16), 0 0 0 1px rgba(163, 170, 182, 0.6);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --color-canvas: #f4f5f8;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #eef0f4;
+    --color-surface-3: #e4e7ec;
+    --color-surface-4: #dde1e8;
+    --color-lining-faint: #e8eaef;
+    --color-lining: #c9cdd4;
+    --color-lining-strong: #a3aab6;
+    --color-lining-bright: #5f6879;
+    --color-control: #5f6879;
+    --color-ink: #151923;
+    --color-ink-muted: #3f4756;
+    --color-ink-subtle: #566070;
+    --color-ink-tertiary: #566070;
+    --color-accent: #0b66cc;
+    --color-accent-hover: #0a56ad;
+    --color-accent-soft: rgba(11, 102, 204, 0.12);
+    --color-on-accent: #ffffff;
+    --color-glint: #0b66cc;
+    --color-urgent: #b91c1c;
+    --color-attention: #b45309;
+    --color-healthy: #047857;
+    --color-neutral: #4b5563;
+    --color-urgent-soft: rgba(185, 28, 28, 0.1);
+    --color-attention-soft: rgba(180, 83, 9, 0.12);
+    --color-healthy-soft: rgba(4, 120, 87, 0.12);
+    --color-neutral-soft: rgba(75, 85, 99, 0.12);
+    --color-overlay: rgba(21, 25, 35, 0.45);
+    --shadow-overlay: 0 8px 28px rgba(21, 25, 35, 0.16), 0 0 0 1px rgba(163, 170, 182, 0.6);
+    color-scheme: light;
+  }
+}

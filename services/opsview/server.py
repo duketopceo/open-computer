@@ -1,94 +1,83 @@
-"""open-computer workplace — rail + pane shell over real-data views.
+"""open-computer operator console (Silver Lining).
 
-stdlib only. Every number is live (probed on request or on matrix run);
-nothing is stubbed. States render explicitly as words.
+stdlib only, no build step. Every number is live (probed on request); nothing
+is stubbed. Sections: Overview, Sandboxes, Runs, Approvals, Router, Audit.
+Gate: passkey (auth.py).
 
-Views: / (work — task rail, ops body until U6), /matrix, /fleet, /gate,
-/router, /ops (legacy standalone page). Gate: passkey (auth.py).
+Safety rules (docs/design/silver-lining.md section 14):
+  * No GET has side effects. GET handlers only read; anything that boots a
+    microVM, spends money, decides an approval or writes a log is POST.
+  * Every POST needs the session, a CSRF token bound to that session, and a
+    same-origin Origin header. Spending or leaving-the-box actions also need
+    an explicit confirm step that names the destination and cost.
 
 Run:  CUBE_API_URL=... CUBE_API_KEY=... python -m services.opsview.server
-Keys: g+w/g/m/f/r/o views · ? help · / palette · r run matrix (matrix view)
 """
 
 from __future__ import annotations
 
-import html
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
+from services.gate.gate import Gate
+from services.gate.queue import ApprovalQueue, QueueError
+from services.opsview import runs as runstore
+from services.opsview import views
 from services.opsview.auth import Auth, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 
 REPO = Path(__file__).resolve().parents[2]
-MATRIX_RE = re.compile(r"^(R\d+|ROUTER|AUTH): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
-LEDGER_PATH = Path(os.environ.get("OC_ROUTER_LEDGER", "/tmp/oc-audit/router-ledger.jsonl"))
+STATIC = Path(__file__).resolve().parent / "static"
+STATIC_TYPES = {
+    "silver-lining.css": "text/css", "console.css": "text/css",
+    "console.js": "text/javascript", "theme-init.js": "text/javascript",
+}
+CSP = ("default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
+       "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+CSRF_SECRET = secrets.token_bytes(32)
 
-CSS = """
-:root{color-scheme:dark;--bg:#0b0e11;--fg:#d7dde3;--dim:#7d8a96;--ok:#3fb96f;
---bad:#e05d5d;--pend:#c9a227;--line:#1d242b;--acc:#4d9fff}
-*{box-sizing:border-box;margin:0}
-body{background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
-display:flex;min-height:100vh}
-aside{width:210px;min-width:210px;border-right:1px solid var(--line);padding:16px 14px;
-display:flex;flex-direction:column;gap:2px}
-main{flex:1;padding:20px 24px;max-width:1100px}
-.brand{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
-margin-bottom:14px}
-.sect{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
-margin:14px 0 4px}
-.nav a{display:flex;justify-content:space-between;color:var(--fg);text-decoration:none;
-padding:3px 8px;border:1px solid transparent;border-radius:3px}
-.nav a:hover{border-color:var(--line)}
-.nav a.on{background:#141a20;border-color:var(--line)}
-.nav a .k{color:var(--dim)}
-.tl{color:var(--dim);padding:3px 8px;font-size:12px}
-h1{font-size:14px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
-margin-bottom:2px}
-.sub{color:var(--dim);margin-bottom:18px}
-h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
-margin:18px 0 6px;border-bottom:1px solid var(--line);padding-bottom:4px}
-table{border-collapse:collapse;width:100%}
-td,th{padding:3px 10px 3px 0;text-align:left;vertical-align:top;white-space:nowrap}
-th{color:var(--dim);font-weight:normal}
-td:last-child,th:last-child{white-space:normal}
-.pass{color:var(--ok)}.fail{color:var(--bad)}.pending{color:var(--pend)}
-.dim{color:var(--dim)}
-button{background:#141a20;color:var(--fg);border:1px solid var(--line);
-font:inherit;padding:4px 14px;cursor:pointer}
-button:hover{border-color:var(--acc);color:var(--acc)}
-button:disabled{opacity:.4;cursor:default}
-input{background:#141a20;border:1px solid var(--line);color:var(--fg);font:inherit;
-padding:4px 10px;width:340px}
-#status{white-space:pre;color:var(--dim);margin-top:8px}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-.up{background:var(--ok)}.down{background:var(--bad)}
-a{color:var(--acc);text-decoration:none}
-#pal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-start;
-justify-content:center;padding-top:18vh}
-#pal.on{display:flex}
-#pal .box{background:var(--bg);border:1px solid var(--line);min-width:380px}
-#pal .box a{display:block;padding:6px 14px;color:var(--fg)}
-#pal .box a:hover{background:#141a20}
-#pal .box .h{color:var(--dim);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
-padding:6px 14px 2px}
-#help{position:fixed;right:14px;bottom:12px;color:var(--dim)}
-"""
 
-VIEWS = [
-    ("/", "work", "w"),
-    ("/gate", "gate", "g"),
-    ("/matrix", "matrix", "m"),
-    ("/fleet", "fleet", "f"),
-    ("/router", "router", "r"),
-    ("/ops", "ops", "o"),
-]
+# ------------------------------------------------------------------ config
+
+
+def ledger_path() -> Path:
+    return Path(os.environ.get("OC_ROUTER_LEDGER", "/tmp/oc-audit/router-ledger.jsonl"))
+
+
+def audit_path() -> Path:
+    return Path(os.environ.get("OC_AUDIT", "/tmp/oc-audit/audit.ndjson"))
+
+
+def approvals_path() -> Path:
+    return Path(os.environ.get("OC_APPROVALS", "/tmp/oc-audit/approvals.ndjson"))
+
+
+def daily_cap() -> float:
+    return float(os.environ.get("OC_DAILY_CAP", "1.0"))
+
+
+def router_base() -> str:
+    return os.environ.get("OPENROUTER_BASE", "https://openrouter.ai/api")
+
+
+def paid_router() -> bool:
+    return bool(os.environ.get("OPENROUTER_API_KEY"))
+
+
+# ------------------------------------------------------------- read helpers
+# Everything below GET-reachable must not create, write or spend. Tests patch
+# the mutation paths and fail if a GET touches one.
 
 
 def _get(url: str, key: str, timeout: float = 3.0) -> tuple[int, str]:
@@ -102,15 +91,55 @@ def _get(url: str, key: str, timeout: float = 3.0) -> tuple[int, str]:
         return 0, str(e)
 
 
+def fleet_state() -> dict:
+    api = os.environ.get("CUBE_API_URL", "").rstrip("/")
+    key = os.environ.get("CUBE_API_KEY", "")
+    st = {"configured": bool(api), "up": False, "sandboxes": [], "api_host": views.host_of(api) if api else ""}
+    if not api:
+        return st
+    code, _ = _get(f"{api}/health", key)
+    if code != 200:
+        return st
+    st["up"] = True
+    _, body = _get(f"{api}/sandboxes", key)
+    try:
+        data = json.loads(body)
+        st["sandboxes"] = data if isinstance(data, list) else []
+    except ValueError:
+        pass
+    return st
+
+
+def read_ndjson(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def day_spend() -> float:
+    today = time.strftime("%Y-%m-%d")
+    return sum(
+        float(r.get("cost", 0) or 0) for r in read_ndjson(ledger_path())
+        if time.strftime("%Y-%m-%d", time.localtime(r.get("ts", 0))) == today
+    )
+
+
+# --------------------------------------------------------- mutation paths
+
+
 def _run_matrix() -> str:
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     try:
         p = subprocess.run(
-            [
-                "uv", "run", "--with", "pytest", "--with", "fido2",
-                "--with-editable", str(Path.home() / "src/cubesandbox/sdk/python"),
-                "pytest", "tests/conformance", "-q",
-            ],
+            ["uv", "run", "--with", "pytest", "--with", "fido2",
+             "--with-editable", str(Path.home() / "src/cubesandbox/sdk/python"),
+             "pytest", "tests/conformance", "-q"],
             cwd=REPO, env=env, capture_output=True, text=True, timeout=180,
         )
         return p.stdout + p.stderr
@@ -122,312 +151,266 @@ def _route(q: str) -> dict:
     sys.path.insert(0, str(REPO))
     from services.router import default_router
 
-    r = default_router("/tmp/oc-audit/router-ledger.jsonl")
-    t0 = time.time()
+    r = default_router(str(ledger_path()), daily_cap=daily_cap())
     d = r.route(q)
-    return {
-        "route": d.route, "tier": d.tier, "engine": d.engine,
-        "confidence": d.confidence, "cost": d.cost,
-        "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms),
-    }
+    return {"route": d.route, "tier": d.tier, "engine": d.engine, "confidence": d.confidence,
+            "cost": d.cost, "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms)}
 
 
-def _matrix_table(matrix: dict) -> str:
-    rows = "".join(
-        f'<tr><td>{rule}</td><td class="{st.lower()}">{st}</td><td class="dim">{n} checks</td></tr>'
-        for rule, (st, n) in sorted(
-            matrix.items(), key=lambda kv: (0, int(kv[0][1:])) if kv[0][1:].isdigit() else (1, kv[0])
-        )
-    )
-    return f"<table>{rows}</table>" if rows else '<span class="dim">not run — press r or Run matrix</span>'
+# ----------------------------------------------------------------- routes
+# (pattern, method name). The tests enumerate these tables to prove GETs are
+# side-effect free and that every POST is CSRF-protected.
+
+GET_ROUTES = [
+    (r"/", "g_overview"), (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
+    (r"/runs", "g_runs"), (r"/runs/new", "g_run_new"), (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
+    (r"/approvals", "g_approvals"), (r"/router", "g_router"), (r"/audit", "g_audit"),
+    (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"),
+]
+REDIRECTS = {"/fleet": "/sandboxes", "/matrix": "/runs", "/gate": "/approvals", "/ops": "/"}
+POST_ROUTES = [
+    (r"/runs", "p_runs"), (r"/router/test", "p_router_test"),
+    (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
+    (r"/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_sendback"),
+]
+# Old side-effecting GET URLs now answer 405 instead of acting.
+POST_ONLY_LEGACY = {"/run", "/route"}
 
 
-def _sec_matrix(state: dict) -> str:
-    return f"""<h2>determinism matrix</h2>
-<button id=run>Run matrix&nbsp;<span class=dim>[r]</span></button>
-<div id=status></div>
-<div id=matrix>{_matrix_table(state["matrix"])}</div>"""
-
-
-def _sec_fleet(state: dict) -> str:
-    sb = state["sandboxes"]
-    if state["health"] != 200:
-        return '<h2>fleet</h2><span class="dim">control plane DOWN — inventory unknown</span>'
-    rows = "".join(
-        f'<tr><td>{html.escape(str(s.get("sandboxID", "?"))[:12])}</td>'
-        f'<td>{html.escape(str(s.get("templateID", "?"))[:16])}</td>'
-        f'<td>{html.escape(str(s.get("status", "?")))}</td></tr>'
-        for s in sb
-    )
-    return (
-        f"<h2>fleet ({len(sb)})</h2><table><tr><th>sandbox</th><th>template</th><th>status</th></tr>{rows}</table>"
-        if rows
-        else "<h2>fleet (0)</h2><span class=dim>none running</span>"
-    )
-
-
-def _sec_gate(state: dict) -> str:
-    rows = "".join(
-        f'<tr><td class="dim">{html.escape(str(r.get("ts", ""))[:19])}</td>'
-        f'<td>{html.escape(str(r.get("event", "")))}</td>'
-        f'<td class="dim">{html.escape(json.dumps({k: v for k, v in r.items() if k not in ("ts", "event")}))}</td></tr>'
-        for r in state["audit"][-12:]
-    )
-    return f"<h2>gate audit (tail)</h2>{'<table>' + rows + '</table>' if rows else '<span class=dim>empty</span>'}"
-
-
-def _sec_router(state: dict) -> str:
-    ledger = []
-    if LEDGER_PATH.exists():
-        for line in LEDGER_PATH.read_text().splitlines()[-14:]:
-            try:
-                ledger.append(json.loads(line))
-            except Exception:
-                pass
-    lrows = "".join(
-        f'<tr><td class="dim">{time.strftime("%H:%M:%S", time.localtime(r.get("ts", 0)))}</td>'
-        f'<td>{html.escape(str(r.get("event", "")))}</td>'
-        f'<td>{html.escape(str(r.get("route", "")))}</td>'
-        f'<td class="dim">{html.escape(str(r.get("engine", "")))}</td>'
-        f'<td class="dim">${float(r.get("cost", 0)):.5f}</td></tr>'
-        for r in reversed(ledger)
-    )
-    return f"""<h2>route tester</h2>
-<input id=q placeholder='utterance…'>
-<button id=route>Route&nbsp;<span class=dim>[enter]</span></button>
-<div id=routestatus class=dim></div>
-<div id=routeresult></div>
-<h2>decision ledger</h2>{'<table><tr><th>ts</th><th>event</th><th>route</th><th>engine</th><th>cost</th></tr>' + lrows + '</table>' if lrows else '<span class=dim>empty</span>'}"""
-
-
-def _sec_health(state: dict) -> str:
-    api = state["api_url"] or "<unset>"
-    up = state["health"] == 200
-    return (
-        f'<div class=sub>control plane at <a href="{api}">{api}</a>'
-        f'&nbsp;<span class="dot {"up" if up else "down"}"></span>{"UP" if up else "DOWN"}</div>'
-    )
-
-
-def _shell(title: str, active: str, body: str) -> str:
-    nav = "".join(
-        f'<a href="{path}" class="{"on" if label == active else ""}"><span>{label}</span><span class=k>g {key}</span></a>'
-        for path, label, key in VIEWS
-    )
-    pal = "".join(
-        f'<a href="{path}" data-k="{key}">{label}</a>' for path, label, key in VIEWS
-    )
-    return f"""<!doctype html><meta charset=utf-8><title>open-computer · {title}</title>
-<style>{CSS}</style>
-<aside>
-<div class=brand>open-computer</div>
-<div class=sect>tasks</div>
-<div class=tl>no orchestrator yet — U6</div>
-<div class=sect>views</div>
-<nav class=nav>{nav}</nav>
-<div style="margin-top:auto" class=tl>press / for palette<br>press ? for keys</div>
-</aside>
-<main>{body}</main>
-<div id=pal><div class=box><div class=h>views</div>{pal}</div></div>
-<div id=help>g&lt;key&gt; views · / palette</div>
-<script>
-const pal=document.getElementById('pal');
-let gArm=0;
-addEventListener('keydown',e=>{{
-  const tag=document.activeElement&&document.activeElement.tagName;
-  if(e.key==='Escape'){{pal.classList.remove('on');return;}}
-  if(tag==='INPUT')return;
-  if(e.key==='/'||e.key==='?'){{pal.classList.toggle('on');e.preventDefault();return;}}
-  if(e.key==='g'){{gArm=Date.now();return;}}
-  if(gArm&&Date.now()-gArm<900){{
-    const map={{w:'/',g:'/gate',m:'/matrix',f:'/fleet',r:'/router',o:'/ops'}};
-    if(map[e.key]){{location.href=map[e.key];}}
-    gArm=0;return;
-  }}
-}});
-</script>"""
-
-
-def _page_work(state: dict) -> str:
-    body = (
-        "<h1>work</h1>"
-        + _sec_health(state)
-        + _sec_matrix(state)
-        + _sec_fleet(state)
-        + _sec_gate(state)
-    )
-    return _shell("work", "work", body + _SCRIPTS)
-
-
-def _page_matrix(state: dict) -> str:
-    return _shell("matrix", "matrix", "<h1>matrix</h1>" + _sec_health(state) + _sec_matrix(state) + _SCRIPTS)
-
-
-def _page_fleet(state: dict) -> str:
-    return _shell("fleet", "fleet", "<h1>fleet</h1>" + _sec_health(state) + _sec_fleet(state))
-
-
-def _page_gate(state: dict) -> str:
-    return _shell("gate", "gate", "<h1>gate</h1>" + _sec_health(state) + _sec_gate(state))
-
-
-def _page_router(state: dict) -> str:
-    return _shell("router", "router", "<h1>router</h1>" + _sec_router(state) + _SCRIPTS)
-
-
-_SCRIPTS = """<script>
-const run=async()=>{const b=document.getElementById('run');if(!b)return;b.disabled=1;
-document.getElementById('status').textContent='running conformance (boots real microVMs, ~7s)…';
-const r=await fetch('/run');const j=await r.json();
-document.getElementById('matrix').innerHTML=j.matrix;document.getElementById('status').textContent=j.status;b.disabled=0;};
-const rb=document.getElementById('run');if(rb)rb.onclick=run;
-const routeIt=async()=>{const q=document.getElementById('q').value.trim();if(!q)return;
-document.getElementById('routestatus').textContent='routing…';
-const r=await fetch('/route?q='+encodeURIComponent(q));const j=await r.json();
-document.getElementById('routestatus').textContent='';
-document.getElementById('routeresult').innerHTML=j.html;};
-const rt=document.getElementById('route');if(rt)rt.onclick=routeIt;
-const qi=document.getElementById('q');if(qi)qi.addEventListener('keydown',e=>{if(e.key==='Enter')routeIt();});
-addEventListener('keydown',e=>{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey&&document.activeElement.tagName!=='INPUT'&&document.getElementById('run'))run();});
-</script>"""
+def match(table, path):
+    for pat, name in table:
+        m = re.fullmatch(pat, path)
+        if m:
+            return name, m.groupdict()
+    return None, {}
 
 
 class Handler(BaseHTTPRequestHandler):
-    state: dict = {}
     auth = Auth()
 
+    # --- plumbing ---------------------------------------------------------
     def _rp(self) -> str:
         return rp_for(self.headers.get("Host", "localhost"))
 
-    def _identity(self) -> str | None:
+    def _cookie(self) -> str | None:
         raw = self.headers.get("Cookie", "")
-        cookie = next(
-            (p.split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("oc_sess=")),
-            None,
-        )
-        return self.auth.check_cookie(self._rp(), cookie)
+        return next((p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("oc_sess=")), None)
 
-    def _json_body(self) -> dict:
-        try:
-            return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
-        except Exception:
-            return {}
+    def _identity(self) -> str | None:
+        return self.auth.check_cookie(self._rp(), self._cookie())
+
+    def _csrf(self) -> str:
+        return hmac.new(CSRF_SECRET, (self._cookie() or "").encode(), hashlib.sha256).hexdigest()
+
+    def _body(self) -> dict:
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(min(n, 1_000_000)) if n else b""
+        if "json" in self.headers.get("Content-Type", "") or raw.lstrip()[:1] == b"{":
+            try:
+                d = json.loads(raw or b"{}")
+                return d if isinstance(d, dict) else {}
+            except ValueError:
+                return {}
+        return {k: v[0] for k, v in parse_qs(raw.decode(errors="replace")).items()}
 
     def _set_session(self, cookie: str):
         secure = "" if self._rp() == "localhost" else "; Secure"
-        self.send_header(
-            "Set-Cookie",
-            f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age=43200",
-        )
+        self.send_header("Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age=43200")
 
-    def _state(self) -> dict:
-        api = os.environ.get("CUBE_API_URL", "").rstrip("/")
-        key = os.environ.get("CUBE_API_KEY", "")
-        code, body = _get(f"{api}/health", key) if api else (0, "no api url")
-        _, sbody = _get(f"{api}/sandboxes", key) if code == 200 else (0, "[]")
-        try:
-            sandboxes = json.loads(sbody)
-        except Exception:
-            sandboxes = []
-        audit_file = Path(os.environ.get("OC_AUDIT", "/tmp/oc-audit/audit.ndjson"))
-        audit = []
-        if audit_file.exists():
-            audit = [
-                json.loads(l) for l in audit_file.read_text().splitlines() if l.strip()
-            ]
-        return {
-            "api_url": api,
-            "health": code,
-            "sandboxes": sandboxes,
-            "audit": audit,
-            "matrix": Handler.state.get("matrix", {}),
-        }
+    def _send(self, code, body: bytes, ctype="text/html; charset=utf-8", extra: dict | None = None, page=False):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "same-origin")
+        if page:
+            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
 
+    def _redirect(self, to: str, code: int = 302):
+        self.send_response(code)
+        self.send_header("Location", to)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _json(self, code: int, obj: dict):
+        self._send(code, json.dumps(obj).encode(), "application/json")
+
+    def _wants_json(self) -> bool:
+        return "application/json" in self.headers.get("Accept", "") or "json" in self.headers.get("Content-Type", "")
+
+    def log_message(self, *a):
+        pass
+
+    # --- page assembly -----------------------------------------------------
+    def _page(self, page: str, body: str, code=200, conn="", sub=""):
+        pending = len(ApprovalQueue(approvals_path()).pending())
+        self._send(code, views.shell(page, body, csrf=self._csrf(), pending=pending,
+                                     who=self._identity() or "", conn=conn, sub=sub).encode(), page=True)
+
+    # --- GET ---------------------------------------------------------------
     def do_GET(self):
-        from urllib.parse import parse_qs, urlparse
-
         parsed = urlparse(self.path)
-        path = parsed.path
+        path, qs = parsed.path, parse_qs(parsed.query)
 
-        # --- public: auth surface ------------------------------------
         if path == "/login":
-            self._send(200, login_page().encode())
-            return
+            return self._send(200, login_page().encode())
         if path == "/enroll":
-            token = (parse_qs(parsed.query).get("token") or [""])[0]
-            self._send(200, enroll_page(token).encode())
-            return
-
-        # --- gate -----------------------------------------------------
+            return self._send(200, enroll_page((qs.get("token") or [""])[0]).encode())
+        if path.startswith("/static/"):
+            name = path[len("/static/"):]
+            if name not in STATIC_TYPES:
+                return self._send(404, b"not found", "text/plain")
+            return self._send(200, (STATIC / name).read_bytes(), STATIC_TYPES[name] + "; charset=utf-8",
+                              {"Cache-Control": "no-cache"})
         if not self._identity():
-            self.send_response(302)
-            self.send_header("Location", "/login")
-            self.end_headers()
-            return
+            return self._redirect("/login")
+        if path in REDIRECTS:
+            return self._redirect(REDIRECTS[path])
+        if path in POST_ONLY_LEGACY:
+            return self._send(405, b"This action is POST-only and needs a confirm step.", "text/plain",
+                              {"Allow": "POST"})
+        name, args = match(GET_ROUTES, path)
+        if name is None:
+            if match(POST_ROUTES, path)[0]:
+                return self._send(405, b"POST only", "text/plain", {"Allow": "POST"})
+            return self._page("overview", views.not_found(), 404)
+        getattr(self, name)(qs, **args)
 
-        if path == "/route":
-            q = (parse_qs(parsed.query).get("q") or [""])[0]
-            try:
-                d = _route(q)
-                row = (
-                    f"<table><tr><td>route</td><td>{d['route']}</td></tr>"
-                    f"<tr><td>tier</td><td>{d['tier']}</td></tr>"
-                    f"<tr><td>engine</td><td class='dim'>{d['engine']}</td></tr>"
-                    f"<tr><td>confidence</td><td>{d['confidence']}</td></tr>"
-                    f"<tr><td>cost</td><td class='dim'>${d['cost']:.5f}</td></tr>"
-                    f"<tr><td>ms</td><td class='dim'>{d['ms']}</td></tr></table>"
-                )
-            except Exception as e:
-                row = f"<span class='fail'>{html.escape(str(e))}</span>"
-            self._send(200, json.dumps({"html": row}).encode(), "application/json")
-            return
-        if path == "/run":
-            out = _run_matrix()
-            matrix = {m[0]: (m[1], m[2]) for m in MATRIX_RE.findall(out)}
-            Handler.state["matrix"] = matrix
-            tail = out.strip().splitlines()[-1] if out.strip() else ""
-            body = json.dumps(
-                {"matrix": _matrix_table(matrix), "status": html.escape(tail)}
-            ).encode()
-            self._send(200, body, "application/json")
-            return
+    def g_overview(self, qs):
+        now = time.time()
+        q = ApprovalQueue(approvals_path())
+        audit = list(reversed(read_ndjson(audit_path())))[:8]
+        body = views.page_overview(q.pending(), runstore.list_runs(), audit, day_spend(), daily_cap(), now)
+        self._page("overview", body, sub="What needs you, and what is running")
 
-        state = self._state()
-        page = {
-            "/": _page_work,
-            "/matrix": _page_matrix,
-            "/fleet": _page_fleet,
-            "/gate": _page_gate,
-            "/router": _page_router,
-            "/ops": _page_work,  # legacy: same content, in-shell
-        }.get(path)
-        if page is None:
-            self._send(404, b"not found")
-            return
-        self._send(200, page(state).encode())
+    def g_sandboxes(self, qs):
+        inline = (qs.get("inline") or [""])[0] == "1"
+        fleet = fleet_state() if inline else {"configured": bool(os.environ.get("CUBE_API_URL")), "up": False,
+                                              "sandboxes": [], "api_host": views.host_of(os.environ.get("CUBE_API_URL", ""))}
+        self._page("sandboxes", views.page_sandboxes(fleet, inline), conn=views.conn_pill(fleet) if inline else "")
 
+    def g_sandbox(self, qs, id):
+        sid = unquote(id)
+        row = next((s for s in fleet_state()["sandboxes"] if str(s.get("sandboxID")) == sid), None)
+        self._page("sandboxes", views.page_sandbox_detail(sid, row), 200 if row else 404, sub=views.e(sid))
+
+    def g_runs(self, qs):
+        self._page("runs", views.page_runs(runstore.list_runs(), time.time()),
+                   sub='<a class="btn primary" href="/runs/new" data-action="run.new">New matrix run</a>')
+
+    def g_run_new(self, qs):
+        self._page("runs", views.page_run_confirm(self._csrf(), fleet_state()), sub="Confirm before anything boots")
+
+    def g_run(self, qs, id):
+        got = runstore.get_run(id)
+        if not got:
+            return self._page("runs", views.not_found(), 404)
+        self._page("runs", views.page_run_detail(got[0], got[1], time.time()), sub=got[0]["id"])
+
+    def g_approvals(self, qs):
+        items = ApprovalQueue(approvals_path()).items()
+        self._page("approvals", views.page_approvals(items, time.time()), sub="Oldest first")
+
+    def g_router(self, qs):
+        self._page("router", self._router_body(), sub="Route tester and decision ledger")
+
+    def _router_body(self, result: str = "") -> str:
+        return views.page_router(self._csrf(), read_ndjson(ledger_path())[-14:], day_spend(), daily_cap(),
+                                 paid_router(), router_base(), time.time(), result)
+
+    def g_audit(self, qs):
+        f = (qs.get("f") or ["all"])[0]
+        f = f if f in dict(views.AUDIT_FILTERS) else "all"
+        q = (qs.get("q") or [""])[0][:200]
+        rows = [r for r in read_ndjson(audit_path()) if views.audit_match(r, f, q)]
+        self._page("audit", views.page_audit(list(reversed(rows))[:200], len(rows), f, q, time.time()),
+                   sub="Append-only")
+
+    def g_frag_fleet(self, qs):
+        self._send(200, views.fleet_rows(fleet_state()).encode(), page=True)
+
+    def g_frag_status(self, qs):
+        self._send(200, views.status_cell(fleet_state()).encode(), page=True)
+
+    # --- POST --------------------------------------------------------------
     def do_POST(self):
-        from urllib.parse import urlparse
-
         path = urlparse(self.path).path
-        if not path.startswith("/webauthn/"):
-            self._send(404, b'{"error":"not found"}', "application/json")
-            return
-        body = self._json_body()
-        rp = self._rp()
+        if path.startswith("/webauthn/"):
+            return self._webauthn(path)
+        who = self._identity()
+        if not who:
+            return self._json(401, {"error": "Sign in again."})
+        name, args = match(POST_ROUTES, path)
+        if name is None:
+            return self._json(404, {"error": "not found"})
+        origin = self.headers.get("Origin")
+        if origin and urlparse(origin).netloc != self.headers.get("Host", ""):
+            return self._json(403, {"error": "Cross-origin request refused."})
+        body = self._body()
+        token = self.headers.get("X-CSRF-Token") or str(body.get("csrf", ""))
+        if not hmac.compare_digest(token, self._csrf()):
+            return self._json(403, {"error": "Missing or invalid CSRF token. Reload the page and try again."})
+        getattr(self, name)(who, body, **args)
 
+    def p_runs(self, who, body):
+        if body.get("confirm") != "1":
+            return self._json(400, {"error": "Confirm the run first."})
+        t0 = time.time()
+        out = _run_matrix()
+        row = runstore.record(out, by=who, duration_s=time.time() - t0)
+        self._redirect(f"/runs/{row['id']}", 303)
+
+    def p_router_test(self, who, body):
+        q = str(body.get("q", "")).strip()[:500]
+        if not q:
+            return self._page("router", self._router_body(), 400)
+        if paid_router() and body.get("confirm") != "1":
+            return self._page("router", views.router_confirm(self._csrf(), q, router_base()), sub="Confirm before it leaves")
+        try:
+            result = views.route_result(_route(q))
+        except Exception as e:  # BudgetHalt, engine failure
+            result = f'<p class="err" role="alert">Routing failed: {views.e(str(e))}. Nothing was sent.</p>'
+        self._page("router", self._router_body(result), sub="Route tester and decision ledger")
+
+    def _decide(self, who, body, id, approve: bool):
+        gate = Gate(audit_path())
+        try:
+            res = ApprovalQueue(approvals_path(), gate).decide(
+                id, approve=approve, by=who, note=str(body.get("note", "")),
+                expect_hash=str(body["hash"]) if body.get("hash") else None)
+        except QueueError as e:
+            if self._wants_json():
+                return self._json(e.status, {"error": str(e)})
+            return self._page("approvals", f'<p class="err" role="alert">{views.e(str(e))}</p>', e.status)
+        if self._wants_json():
+            return self._json(200, {"ok": True, **res})
+        self._redirect("/approvals", 303)
+
+    def p_approve(self, who, body, id):
+        self._decide(who, body, id, True)
+
+    def p_sendback(self, who, body, id):
+        self._decide(who, body, id, False)
+
+    def _webauthn(self, path):
+        body = self._body()
+        rp = self._rp()
         if path == "/webauthn/login/begin":
             opts, tok = self.auth.begin_auth(rp)
-            self._send(200, json.dumps({"publicKey": opts["publicKey"], "tok": tok}).encode(), "application/json")
-            return
+            return self._json(200, {"publicKey": opts["publicKey"], "tok": tok})
         if path == "/webauthn/login/complete":
             try:
                 got = self.auth.complete_auth(body.get("tok", ""), json.dumps(body.get("credential", {})))
             except Exception:
                 got = None
             if not got:
-                self._send(401, b'{"error":"denied"}', "application/json")
-                return
+                return self._json(401, {"error": "denied"})
             label, cookie = got
             self.send_response(200)
             self._set_session(cookie)
@@ -439,39 +422,27 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/webauthn/register/begin":
             if not self.auth.consume_token(rp, body.get("token", "")):
-                self._send(403, b'{"error":"invalid or expired enroll token"}', "application/json")
-                return
+                return self._json(403, {"error": "invalid or expired enroll token"})
             opts, tok = self.auth.begin_register(rp, "luke")
-            self._send(200, json.dumps({"publicKey": opts["publicKey"], "tok": tok}).encode(), "application/json")
-            return
+            return self._json(200, {"publicKey": opts["publicKey"], "tok": tok})
         if path == "/webauthn/register/complete":
             try:
-                cred_id = self.auth.complete_register(
-                    body.get("tok", ""), json.dumps(body.get("credential", {}))
-                )
+                cred_id = self.auth.complete_register(body.get("tok", ""), json.dumps(body.get("credential", {})))
             except Exception:
                 cred_id = None
             if not cred_id:
-                self._send(401, b'{"error":"enrollment failed"}', "application/json")
-                return
-            self._send(200, b'{"ok":true}', "application/json")
-            return
-        self._send(404, b'{"error":"not found"}', "application/json")
+                return self._json(401, {"error": "enrollment failed"})
+            return self._json(200, {"ok": True})
+        self._json(404, {"error": "not found"})
 
-    def _send(self, code, body, ctype="text/html"):
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
-    def log_message(self, *a):
-        pass
+def make_server(port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
+    return ThreadingHTTPServer((host, port), Handler)
 
 
 def main(port: int = 8791):
-    print(f"ops view → http://127.0.0.1:{port}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    print(f"console → http://127.0.0.1:{port}")
+    make_server(port).serve_forever()
 
 
 if __name__ == "__main__":
