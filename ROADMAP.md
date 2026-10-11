@@ -1,5 +1,46 @@
 # Roadmap
 
+## Program roadmap (2026-10-10, current)
+
+Full plan with difficulty, feasibility and simpler alternatives per unit:
+[docs/plans/2026-10-10-program-roadmap-plan.md](docs/plans/2026-10-10-program-roadmap-plan.md).
+Research: [docs/research/2026-10-10-landscape.md](docs/research/2026-10-10-landscape.md).
+Builds on open PR [#1](https://github.com/duketopceo/open-computer/pull/1) (verdict, phase-0 plan, MIT licence)
+and PR [#2](https://github.com/duketopceo/open-computer/pull/2) (router bench: no router service; hosted decider inside a placement function).
+
+**Scope:** MVP = one command, cheap routed workers, sandbox per subtask with default-deny egress, approval gate, cost ledger with a hard cap, on Luke's own machines. Not attempted: connectors, hosted SaaS, persistent memory product.
+
+| Now | Difficulty |
+|---|---|
+| U1 Land PRs #1 and #2, resolve ROADMAP conflicts | easy |
+| U2 Record the four open decisions (personal-first, Khan, dev topology, MIT) | easy |
+| U3 Conformance harness: 4 rules first | medium |
+| U4 Cost ledger and per-task cap | easy |
+| U5 Sandbox spike: egress, clone/rollback, aarch64 | medium |
+
+| Next | Difficulty |
+|---|---|
+| U6 Sandbox worker adapter (E2B SDK against CubeSandbox) | medium |
+| U7 Escalation gate (rules first, PII-Tracer next) | medium |
+| U8 Vertical slice: goal to artifact via orchestral + agentflow | medium |
+| U9 Placement policy: one function calling the hosted decider | easy |
+| U12 Golden-task eval with replicates, spend via `orch` | medium |
+
+| Later | Difficulty |
+|---|---|
+| U10 Credential boundary | hard |
+| U11 jev-compact for long runs | medium |
+| U13 Browser worker (browser-use in a sandbox) | hard |
+| U14 Snapshots, branch, rollback | medium |
+| U15 Khan adapter / MCP | medium |
+| U16 docketry front door | medium |
+| U17 numbat / bumblebee / OpenShell enforcement | hard |
+| U18 Knowledge index (keep kurultai) | medium |
+
+---
+
+# Earlier roadmap (kept for history; superseded where the plan above differs)
+
 ## Phase 0 — Decisions (now)
 - [x] License: **MIT** — decided 2026-10-10, matches fleet norm (wisp, docketry, kurultai all MIT)
 - [~] Router: bench **Jev vs pplx-decider vs `openrouter/auto`** in `orchestral` (quality-per-dollar,
