@@ -25,7 +25,10 @@ def fsproto(tmp_path):
 @pytest.fixture
 def make_sandbox(tmp_path):
     mod = pytest.importorskip("services.execplane", reason="awaiting U2")
-    return mod.adapter(tmp_path).make_sandbox
+    a = mod.adapter(tmp_path)
+    if not a.sandboxes_available():
+        pytest.skip("CubeSandbox unreachable — sandbox rows stay PENDING")
+    return a.make_sandbox
 
 
 @pytest.fixture
