@@ -16,14 +16,71 @@ the user decides when local is proven (U12 eval gate).
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 import urllib.request
+from pathlib import Path
 from typing import Callable
 
 
 class SandboxWorkerUnavailable(RuntimeError):
     pass
+
+
+OR_CHAT = "https://openrouter.ai/api/v1/chat/completions"
+
+_plane_instance = None
+
+
+def _plane():
+    """Lazy execplane singleton — constructed per-process, probed per task."""
+    global _plane_instance
+    if _plane_instance is None:
+        from services.execplane import adapter as plane_adapter
+
+        _plane_instance = plane_adapter(
+            Path(os.environ.get("OC_EXECPLANE_DIR", str(Path.home() / ".local/share/oc/execplane")))
+        )
+    return _plane_instance
+
+
+_SCRIPT_PROMPT = (
+    "You are executing a task inside an isolated Linux microVM with no network access. "
+    "Write ONE self-contained bash script that performs the task and prints the result to stdout. "
+    "Rules: output ONLY the script (no markdown fences, no commentary); coreutils and python3 are available; "
+    "keep stdout under 4000 characters; exit nonzero on failure.\nTask: "
+)
+
+
+def sandbox_work(
+    task: dict,
+    model: str = "z-ai/glm-5.3-flash",
+    api_key: str | None = None,
+    plane=None,
+) -> str:
+    """cloud-sandbox placement: model writes a single-shot script, a fresh
+    microVM runs it under deny-all egress, stdout becomes the result.
+    Unavailable control plane and nonzero exits fail CLOSED — never faked."""
+    plane = plane or _plane()
+    if not plane.sandboxes_available():
+        raise SandboxWorkerUnavailable("CubeSandbox control plane unreachable")
+    key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
+    script, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
+    script = re.sub(r"^```\w*\n?|\n?```$", "", script.strip()).strip()
+    if not script:
+        raise RuntimeError("script planner emitted empty output")
+    sb = plane.make_sandbox(egress_allowlist=[], timeout=300)
+    try:
+        b64 = base64.b64encode(script.encode()).decode()
+        res = sb.exec(f"echo {b64} | base64 -d | bash")
+    finally:
+        sb.close()
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or "").strip()[:400]
+        raise RuntimeError(f"sandbox exec rc={res.returncode}: {detail}")
+    return res.stdout[:64_000]
 
 
 def _post(url: str, payload: dict, key: str = "", timeout: float = 60.0) -> dict:
@@ -108,9 +165,7 @@ def work_fn(
         if target.startswith("local"):
             return local_work(task)
         if target == "cloud-sandbox":
-            raise SandboxWorkerUnavailable(
-                "sandbox worker path not wired — needs U2 live execution"
-            )
+            return sandbox_work(task, model=or_model, api_key=key)
         # cloud-OpenRouter and anything unrecognized-but-cloud
         text, _ = _chat(
             "https://openrouter.ai/api/v1/chat/completions",
