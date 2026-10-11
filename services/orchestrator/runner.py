@@ -11,21 +11,41 @@ from __future__ import annotations
 import json
 from typing import Callable
 
+from dataclasses import dataclass
+
 from oc.fsproto import AlreadyLeased
+from services.cost import CostLedger, Usage
 
 
-def run_once(fs, audit, agent: str, work_fn: Callable[[dict], object], ttl: float = 60) -> list[str]:
-    """One sweep of agent's inbox. Returns the task ids attempted."""
+@dataclass
+class WorkResult:
+    """What a metering-aware work_fn returns: the output plus the provider-reported usage."""
+
+    output: object
+    usage: Usage | None = None
+
+
+def run_once(
+    fs, audit, agent: str, work_fn: Callable[[dict], object], ttl: float = 60,
+    ledger: CostLedger | None = None,
+) -> list[str]:
+    """One sweep of agent's inbox. Returns the task ids attempted.
+
+    With a ledger: a task whose run is over its cap is NOT started (left queued, never failed or
+    cancelled), and usage returned via WorkResult is recorded."""
     attempted = []
     for tid in fs.inbox_ids(agent):
         if not fs.pending(tid):  # leased, tombstoned, or failed — not ours
             continue
+        task = json.loads(fs.task_body(tid))
+        if ledger is not None and not ledger.check(task["run"], float(task.get("est_cost", 0.0))):
+            audit.append({"event": "held_cost_cap", "task": tid, "run": task["run"]})
+            continue  # paused: stays queued until the owner resumes
         try:
             fs.claim(agent, tid, ttl=ttl)
         except AlreadyLeased:
             continue  # another worker won between pending() and claim()
         attempted.append(tid)
-        task = json.loads(fs.task_body(tid))
         try:
             result = work_fn(task)
         except Exception as e:
@@ -34,6 +54,10 @@ def run_once(fs, audit, agent: str, work_fn: Callable[[dict], object], ttl: floa
                 {"event": "worker_fail", "task": tid, "error": f"{type(e).__name__}: {e}"}
             )
             continue
+        if isinstance(result, WorkResult):
+            if ledger is not None and result.usage is not None:
+                ledger.record(task["run"], task["subtask"], result.usage)
+            result = result.output
         fs.outbox_write(agent, tid, result)
         audit.append({"event": "worker_done", "task": tid})
     return attempted

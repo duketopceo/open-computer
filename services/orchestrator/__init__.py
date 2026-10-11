@@ -21,7 +21,7 @@ from services.router import adapter as router_adapter
 from .collect import collect_run, task_state
 from .decompose import DecomposeError, decompose
 from .dispatch import dispatch
-from .runner import run_once
+from .runner import WorkResult, run_once
 
 __all__ = [
     "DecomposeError",
@@ -30,6 +30,7 @@ __all__ = [
     "collect_run",
     "decompose",
     "dispatch",
+    "WorkResult",
     "run_once",
     "task_state",
 ]
@@ -38,13 +39,14 @@ __all__ = [
 class Orchestrator:
     """goal -> dispatched subtask DAG -> collected results."""
 
-    def __init__(self, root: Path | str, router=None, place_fn=None):
+    def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None):
         root = Path(root)
         self.fs = fs_adapter(root / "run")
         self.gate = gate_adapter(root / "gate")
         self.audit = AuditLog(root / "orchestrator.ndjson")
         self.router = router or router_adapter(root)
         self.place = place_fn or place
+        self.ledger = ledger  # services.cost.CostLedger | None
         self.dispatches: dict[str, list[dict]] = {}  # run_id -> records
         self._subtasks: dict[str, dict[str, dict]] = {}  # run_id -> id -> sub
         self._tid_by_sub: dict[str, dict[str, str]] = {}  # run_id -> sid -> tid
@@ -82,7 +84,7 @@ class Orchestrator:
 
     def work(self, work_fn, agent: str = "worker", ttl: float = 60) -> list[str]:
         """One worker sweep, then dispatch the newly-unblocked wave."""
-        done = run_once(self.fs, self.audit, agent, work_fn, ttl=ttl)
+        done = run_once(self.fs, self.audit, agent, work_fn, ttl=ttl, ledger=self.ledger)
         for run_id in self.dispatches:
             self.dispatch_ready(run_id)
         return done
