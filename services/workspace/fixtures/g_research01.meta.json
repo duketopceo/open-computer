@@ -1,0 +1,15 @@
+{
+  "title": "Compare pgvector and Qdrant for a 5M-vector workload",
+  "summary": "Research report with web sources, a markdown report and a csv of timings",
+  "id": "g_research01",
+  "holds": {},
+  "on_deny": [],
+  "files": {
+    "art_csv": "results.csv",
+    "art_chart": "latency-chart.svg",
+    "art_report": "report.md",
+    "art_html": "summary.html",
+    "art_pdf": "report.pdf"
+  },
+  "events": 59
+}
