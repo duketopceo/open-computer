@@ -49,9 +49,9 @@ class Orchestrator:
         self._subtasks: dict[str, dict[str, dict]] = {}  # run_id -> id -> sub
         self._tid_by_sub: dict[str, dict[str, str]] = {}  # run_id -> sid -> tid
 
-    def submit(self, goal: str, engine) -> str:
+    def submit(self, goal: str, engine, run_id: str | None = None) -> str:
         """Decompose + validate + dispatch every ready subtask. Returns run id."""
-        run_id = uuid.uuid4().hex[:12]
+        run_id = run_id or uuid.uuid4().hex[:12]
         subs = decompose(goal, engine)
         self.dispatches[run_id] = []
         self._subtasks[run_id] = {s["id"]: s for s in subs}

@@ -62,6 +62,7 @@ def seed(base: Path, now: float | None = None) -> dict:
     return {
         "OC_AUDIT": str(audit), "OC_APPROVALS": str(base / "approvals.ndjson"),
         "OC_ROUTER_LEDGER": str(ledger), "OC_RUNS_DIR": str(base / "runs"),
+        "OC_GOALS_DIR": str(base / "goals"),
         "pending": 3,
     }
 

@@ -18,7 +18,7 @@ from . import registry
 e = html.escape
 
 PAGE_TITLES = {
-    "overview": "Overview", "sandboxes": "Sandboxes", "runs": "Runs",
+    "overview": "Overview", "goals": "Goals", "sandboxes": "Sandboxes", "runs": "Runs",
     "approvals": "Approvals", "router": "Router", "audit": "Audit",
 }
 NAV_PAGE = {a.id.split(".", 1)[1]: a for a in registry.nav_actions()}
@@ -117,6 +117,8 @@ STATES = {
     "sent back": ("neutral", "back"), "sent_back": ("neutral", "back"),
     "not configured": ("neutral", "neutral"), "low": ("neutral", "neutral"),
     "unknown": ("neutral", "neutral"),
+    "queued": ("neutral", "neutral"), "leased": ("attention", "attention"),
+    "done": ("healthy", "ok"), "awaiting-approval": ("attention", "attention"),
 }
 
 
@@ -478,6 +480,113 @@ def route_result(d: dict) -> str:
         ("Confidence", e(str(d["confidence"]))), ("Cost", money(d["cost"])), ("Took", f'{d["ms"]} ms'),
     ])
     return f'<table class="kv dense result" aria-label="Route result"><tbody>{rows}</tbody></table>'
+
+
+# ------------------------------------------------------------------- goals
+
+
+def _state_chips(states: dict) -> str:
+    chips = " ".join(
+        f'{status(s)}<span class="muted caption">&nbsp;×{n}</span>' for s, n in states.items() if n
+    )
+    return chips or '<span class="muted">—</span>'
+
+
+def page_goals(goals: list[dict], now: float) -> str:
+    rows = "".join(
+        f'<tr><td class="mono"><a href="/goals/{e(g["run"])}">{e(g["run"])}</a></td>'
+        f'<td class="goal">{e(g["goal"])}</td><td>{_state_chips(g["states"])}</td>'
+        f'<td class="num">{time_tag(g["ts"], now)}</td></tr>'
+        for g in goals
+    )
+    table = (f'<table class="dense"><caption class="sr">Goal runs, newest first</caption><thead>'
+             '<tr><th scope="col">Run</th><th scope="col">Goal</th><th scope="col">Subtasks</th>'
+             '<th scope="col" class="num">Started</th></tr></thead>'
+             f'<tbody>{rows}</tbody></table>') if rows else empty(
+        "No goals yet",
+        "Submit a goal and it decomposes into subtasks — each routed, placed, gated and worked.",
+        action='<a class="btn primary" href="/goals/new">New goal</a>')
+    return f"<section>{table}</section>"
+
+
+def page_goal_new(csrf: str, error: str = "") -> str:
+    err = f'<p class="err" role="alert">{e(error)}</p>' if error else ""
+    return f"""<section aria-labelledby="gf"><h2 id="gf">New goal</h2>
+<p class="muted note">One sentence. It decomposes into a subtask graph — each subtask is routed,
+placed on this box or cloud, gated, then worked. Nothing runs until you confirm on the next step.</p>
+{err}
+<form method="post" action="/goals" class="goal-form">
+<input type="hidden" name="csrf" value="{e(csrf)}">
+<label for="goal" class="sr">Goal</label>
+<textarea id="goal" name="goal" class="input" rows="3" maxlength="4000" required aria-keyshortcuts="n"
+  placeholder="e.g. Compare three local embedding models and write up the winner"></textarea>
+<button type="submit" class="btn primary">Decompose and review</button>
+</form></section>"""
+
+
+def page_goal_confirm(csrf: str, goal: str, cap: float) -> str:
+    return f"""<section class="confirm" aria-labelledby="ct"><h2 id="ct">Run this goal?</h2>
+<table class="kv dense"><tbody>
+<tr><th scope="row">What happens</th><td>A planner call decomposes the goal into subtasks; each is routed,
+placed, gated, then worked by the engine its placement picks. States update on the run page.</td></tr>
+<tr><th scope="row">Leaves this box</th><td>Subtasks placed <span class="mono">cloud-*</span> go to
+<span class="mono">openrouter.ai</span>. Anything the scanner flags as private stays local or waits
+for approval — it never leaves unapproved.</td></tr>
+<tr><th scope="row">Model spend</th><td>Planner plus one worker call per subtask, metered against the
+{money(cap)} daily ledger cap.</td></tr>
+<tr><th scope="row">Goal</th><td class="goal">{e(goal)}</td></tr>
+</tbody></table>
+<form method="post" action="/goals" class="actions" data-busy-form>
+<input type="hidden" name="csrf" value="{e(csrf)}">
+<input type="hidden" name="confirm" value="1">
+<input type="hidden" name="goal" value="{e(goal)}">
+<button type="submit" class="btn primary" id="go">Run it</button>
+<a class="btn" href="/goals">Cancel</a>
+</form>
+<div class="busy" hidden data-busy>{skeleton_rows(4, 1)}<p class="muted caption">Decomposing and
+dispatching. The run page fills in as subtasks settle.</p></div>
+</section>"""
+
+
+def page_goal_detail(run: dict, now: float) -> str:
+    subs = run["subtasks"]
+    active = (any(s["state"] not in ("DONE", "FAILED") for s in subs)
+              or len(subs) < run["declared"])
+    items = []
+    for s in subs:
+        meta = []
+        if s.get("route"):
+            meta.append(f'route {e(str(s["route"]))}')
+        if s.get("engine"):
+            meta.append(f'engine {e(str(s["engine"]))}')
+        if s.get("placement"):
+            meta.append(f'→ {e(str(s["placement"]))}')
+        if s.get("reason"):
+            meta.append(f'({e(str(s["reason"]))})')
+        if s.get("gate_required"):
+            meta.append("gate: approval required")
+        if s.get("pii"):
+            meta.append("pii: " + e(", ".join(map(str, s["pii"]))))
+        if s.get("cost") is not None:
+            meta.append(money(s["cost"]))
+        res = (f'<pre class="mono result">{e(str(s["result"]))}</pre>'
+               if s.get("result") else "")
+        title = s.get("title") or str(s.get("subtask") or "")
+        items.append(
+            f'<li class="task"><header>{status(s["state"])} <span class="task-title">{e(title)}</span></header>'
+            f'<p class="muted caption">{" · ".join(meta)}</p>{res}</li>')
+    fails = "".join(
+        f'<li><span class="mono">{e(str(f.get("task", "")))}</span> — {e(str(f.get("error", "")))}</li>'
+        for f in run["worker_failures"])
+    fails_t = (f'<h2>Worker failures</h2><ul class="task-list">{fails}</ul>' if fails else "")
+    refresh = ' data-refresh="3"' if active else ""
+    pending_note = (f'<p class="muted caption">{run["declared"] - len(subs)} subtask(s) still queued '
+                    'behind dependencies.</p>' if len(subs) < run["declared"] else "")
+    head = (f'<p class="muted note">{e(run["goal"])}'
+            + (f' · started {time_tag(run["started"], now)}' if run.get("started") else "")
+            + '</p>')
+    return (f'<section{refresh}>{head}<ul class="task-list">{"".join(items)}</ul>'
+            f'{pending_note}{fails_t}</section>')
 
 
 # ------------------------------------------------------------------- audit

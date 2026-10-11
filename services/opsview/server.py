@@ -32,10 +32,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
+from services.opsview import goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
+from services.orchestrator import engines as goal_engines
 
 REPO = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
@@ -157,19 +159,25 @@ def _route(q: str) -> dict:
             "cost": d.cost, "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms)}
 
 
+def _submit_goal(goal: str, who: str) -> str:
+    """Spending path behind POST /goals confirm. Tests patch this."""
+    return goalruns.submit(goal, goal_engines.decompose_engine(), goal_engines.work_fn(), by=who)
+
+
 # ----------------------------------------------------------------- routes
 # (pattern, method name). The tests enumerate these tables to prove GETs are
 # side-effect free and that every POST is CSRF-protected.
 
 GET_ROUTES = [
     (r"/", "g_overview"), (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
+    (r"/goals", "g_goals"), (r"/goals/new", "g_goal_new"), (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
     (r"/runs", "g_runs"), (r"/runs/new", "g_run_new"), (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
     (r"/approvals", "g_approvals"), (r"/router", "g_router"), (r"/audit", "g_audit"),
     (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"),
 ]
 REDIRECTS = {"/fleet": "/sandboxes", "/matrix": "/runs", "/gate": "/approvals", "/ops": "/"}
 POST_ROUTES = [
-    (r"/runs", "p_runs"), (r"/router/test", "p_router_test"),
+    (r"/runs", "p_runs"), (r"/goals", "p_goals"), (r"/router/test", "p_router_test"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_sendback"),
 ]
@@ -300,6 +308,19 @@ class Handler(BaseHTTPRequestHandler):
         row = next((s for s in fleet_state()["sandboxes"] if str(s.get("sandboxID")) == sid), None)
         self._page("sandboxes", views.page_sandbox_detail(sid, row), 200 if row else 404, sub=views.e(sid))
 
+    def g_goals(self, qs):
+        self._page("goals", views.page_goals(goalruns.list_runs(), time.time()),
+                   sub='<a class="btn primary" href="/goals/new" data-action="goal.new">New goal</a>')
+
+    def g_goal_new(self, qs):
+        self._page("goals", views.page_goal_new(self._csrf()), sub="Decomposed into subtasks before it runs")
+
+    def g_goal(self, qs, id):
+        run = goalruns.get_run(id)
+        if not run:
+            return self._page("goals", views.not_found(), 404)
+        self._page("goals", views.page_goal_detail(run, time.time()), sub=id)
+
     def g_runs(self, qs):
         self._page("runs", views.page_runs(runstore.list_runs(), time.time()),
                    sub='<a class="btn primary" href="/runs/new" data-action="run.new">New matrix run</a>')
@@ -365,6 +386,16 @@ class Handler(BaseHTTPRequestHandler):
         out = _run_matrix()
         row = runstore.record(out, by=who, duration_s=time.time() - t0)
         self._redirect(f"/runs/{row['id']}", 303)
+
+    def p_goals(self, who, body):
+        goal = str(body.get("goal", "")).strip()
+        if not goal or len(goal) > 4000:
+            return self._page("goals", views.page_goal_new(self._csrf(), "A goal is required (max 4000 chars)."), 400)
+        if body.get("confirm") != "1":
+            return self._page("goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()),
+                              sub="Confirm before it runs")
+        rid = _submit_goal(goal, who)
+        self._redirect(f"/goals/{rid}", 303)
 
     def p_router_test(self, who, body):
         q = str(body.get("q", "")).strip()[:500]
