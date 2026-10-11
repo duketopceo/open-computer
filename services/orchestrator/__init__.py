@@ -75,7 +75,8 @@ class Orchestrator:
                 continue  # already dispatched
             if all(d in tids and self.fs.done(tids[d]) for d in sub["deps"]):
                 rec = dispatch(
-                    self.fs, self.router, self.gate, self.place, self.audit, run_id, sub
+                    self.fs, self.router, self.gate, self.place, self.audit, run_id, sub,
+                    ledger=self.ledger,
                 )
                 tids[sid] = rec["task"]
                 sent.append(rec)

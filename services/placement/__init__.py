@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .rules import TARGETS, Placement, place
+from .rules import TARGETS, Placement, headroom_from, place
 
-__all__ = ["TARGETS", "Placement", "place", "adapter"]
+__all__ = ["TARGETS", "Placement", "headroom_from", "place", "adapter"]
 
 
 def adapter(root: Path | str, **_: object):
