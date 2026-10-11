@@ -180,6 +180,7 @@ class Auth:
             raise RuntimeError(f"session key corrupt: {key_path}")
         key = secrets.token_bytes(32)
         _omaseal_set(svc, acct, base64.b64encode(key).decode())
+        key_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd = os.open(key_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             os.write(fd, key)
