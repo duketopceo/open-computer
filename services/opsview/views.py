@@ -198,7 +198,7 @@ def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "",
   <span class="head-sub muted">{sub}</span>
   <span class="grow"></span>
   {conn}
-  <button type="button" class="btn palette-btn" data-action="palette" aria-label="Open command palette">{icon("search")}<span class="hide-sm">Search or run a command</span><kbd>ctrl+k</kbd></button>
+  <button type="button" class="btn palette-btn" data-action="palette">{icon("search")}<span class="hide-sm">Search or run a command</span><kbd aria-hidden="true">ctrl+k</kbd></button>
 </header>
 <main id="main" tabindex="-1">
 {body}

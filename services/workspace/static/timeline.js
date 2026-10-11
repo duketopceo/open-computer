@@ -146,7 +146,8 @@ function runEntry(seq) {
     const d = el("div", "run-line run-" + r.status, null, { "data-run-line": r.status });
     const ic = r.status === "done" ? "ok" : r.status === "paused" ? "pause" : r.status === "running" ? "dot" : r.status === "failed" ? "urgent" : "stop";
     const g = el("span", "st st-" + cls); g.appendChild(icon(ic)); d.appendChild(g);
-    const word = r.status === "done" ? "Run completed" : r.status === "paused" ? (r.reason === "cap" ? "Paused at the spend cap" : "Paused") : r.status === "running" ? "Resumed" + (r.capUsd ? " with a " + money(r.capUsd) + " cap" : "") : r.status === "failed" ? "Run failed" : "Run stopped";
+    const PAUSE = { cap: "Paused at the spend cap", loop_guard: "Paused: the same call ran 3 times in a row, so the agent is asking", plan_approval: "Waiting for you to approve the plan before anything is spent", user: "Paused by you" };
+    const word = r.status === "done" ? "Run completed" : r.status === "paused" ? (PAUSE[r.reason] || "Paused") : r.status === "running" ? "Resumed" + (r.capUsd ? " with a " + money(r.capUsd) + " cap" : "") : r.status === "failed" ? "Run failed" : "Run stopped";
     d.appendChild(el("strong", "", word));
     if (r.summary) d.appendChild(el("span", "muted", r.summary));
     if (r.status === "done" || r.status === "failed" || r.status === "cancelled") d.appendChild(el("span", "caption muted num", "after " + dur(elapsed(s))));

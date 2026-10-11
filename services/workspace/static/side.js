@@ -246,7 +246,7 @@ function box(panel) {
   panel.appendChild(sectionHead("Limits")); panel.appendChild(kv);
   panel.appendChild(sectionHead("Network allow-list", (b.network_allow || []).length + " hosts"));
   const ul = el("ul", "rows plain", null, { "aria-label": "Allowed network destinations" });
-  (b.network_allow || []).forEach((h) => { const li = el("li", "kv-row"); li.appendChild(icon("globe")); li.appendChild(el("span", "mono", h)); ul.appendChild(li); });
+  (b.network_allow || []).forEach((h) => { const li = el("li", "kv-row start"); li.appendChild(icon("globe")); li.appendChild(el("span", "mono", h)); ul.appendChild(li); });
   if (!(b.network_allow || []).length) ul.appendChild(el("li", "kv-row muted", "No outbound network."));
   panel.appendChild(ul);
   const lines = [];
