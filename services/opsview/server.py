@@ -1,10 +1,13 @@
-"""Local ops view — one dense page: matrix, sandboxes, gate audit.
+"""open-computer workplace — rail + pane shell over real-data views.
 
 stdlib only. Every number is live (probed on request or on matrix run);
-nothing is stubbed. States render explicitly: UP/DOWN, PASS/FAIL/PENDING.
+nothing is stubbed. States render explicitly as words.
+
+Views: / (work — task rail, ops body until U6), /matrix, /fleet, /gate,
+/router, /ops (legacy standalone page). Gate: passkey (auth.py).
 
 Run:  CUBE_API_URL=... CUBE_API_KEY=... python -m services.opsview.server
-Open: http://127.0.0.1:8791   (r = run matrix, ↓/j scroll)
+Keys: g+w/g/m/f/r/o views · ? help · / palette · r run matrix (matrix view)
 """
 
 from __future__ import annotations
@@ -24,14 +27,28 @@ from services.opsview.auth import Auth, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 
 REPO = Path(__file__).resolve().parents[2]
-MATRIX_RE = re.compile(r"^(R\d+): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
+MATRIX_RE = re.compile(r"^(R\d+|ROUTER|AUTH): (PASS|FAIL|PENDING) \((\d+) checks\)", re.M)
+LEDGER_PATH = Path(os.environ.get("OC_ROUTER_LEDGER", "/tmp/oc-audit/router-ledger.jsonl"))
 
 CSS = """
 :root{color-scheme:dark;--bg:#0b0e11;--fg:#d7dde3;--dim:#7d8a96;--ok:#3fb96f;
 --bad:#e05d5d;--pend:#c9a227;--line:#1d242b;--acc:#4d9fff}
 *{box-sizing:border-box;margin:0}
 body{background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
-padding:20px 24px;max-width:1100px}
+display:flex;min-height:100vh}
+aside{width:210px;min-width:210px;border-right:1px solid var(--line);padding:16px 14px;
+display:flex;flex-direction:column;gap:2px}
+main{flex:1;padding:20px 24px;max-width:1100px}
+.brand{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
+margin-bottom:14px}
+.sect{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+margin:14px 0 4px}
+.nav a{display:flex;justify-content:space-between;color:var(--fg);text-decoration:none;
+padding:3px 8px;border:1px solid transparent;border-radius:3px}
+.nav a:hover{border-color:var(--line)}
+.nav a.on{background:#141a20;border-color:var(--line)}
+.nav a .k{color:var(--dim)}
+.tl{color:var(--dim);padding:3px 8px;font-size:12px}
 h1{font-size:14px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
 margin-bottom:2px}
 .sub{color:var(--dim);margin-bottom:18px}
@@ -47,11 +64,31 @@ button{background:#141a20;color:var(--fg);border:1px solid var(--line);
 font:inherit;padding:4px 14px;cursor:pointer}
 button:hover{border-color:var(--acc);color:var(--acc)}
 button:disabled{opacity:.4;cursor:default}
+input{background:#141a20;border:1px solid var(--line);color:var(--fg);font:inherit;
+padding:4px 10px;width:340px}
 #status{white-space:pre;color:var(--dim);margin-top:8px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
 .up{background:var(--ok)}.down{background:var(--bad)}
 a{color:var(--acc);text-decoration:none}
+#pal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-start;
+justify-content:center;padding-top:18vh}
+#pal.on{display:flex}
+#pal .box{background:var(--bg);border:1px solid var(--line);min-width:380px}
+#pal .box a{display:block;padding:6px 14px;color:var(--fg)}
+#pal .box a:hover{background:#141a20}
+#pal .box .h{color:var(--dim);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+padding:6px 14px 2px}
+#help{position:fixed;right:14px;bottom:12px;color:var(--dim)}
 """
+
+VIEWS = [
+    ("/", "work", "w"),
+    ("/gate", "gate", "g"),
+    ("/matrix", "matrix", "m"),
+    ("/fleet", "fleet", "f"),
+    ("/router", "router", "r"),
+    ("/ops", "ops", "o"),
+]
 
 
 def _get(url: str, key: str, timeout: float = 3.0) -> tuple[int, str]:
@@ -70,21 +107,11 @@ def _run_matrix() -> str:
     try:
         p = subprocess.run(
             [
-                "uv",
-                "run",
-                "--with",
-                "pytest",
-                "--with-editable",
-                str(Path.home() / "src/cubesandbox/sdk/python"),
-                "pytest",
-                "tests/conformance",
-                "-q",
+                "uv", "run", "--with", "pytest", "--with", "fido2",
+                "--with-editable", str(Path.home() / "src/cubesandbox/sdk/python"),
+                "pytest", "tests/conformance", "-q",
             ],
-            cwd=REPO,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=180,
+            cwd=REPO, env=env, capture_output=True, text=True, timeout=180,
         )
         return p.stdout + p.stderr
     except Exception as e:
@@ -99,86 +126,169 @@ def _route(q: str) -> dict:
     t0 = time.time()
     d = r.route(q)
     return {
-        "route": d.route,
-        "tier": d.tier,
-        "engine": d.engine,
-        "confidence": d.confidence,
-        "cost": d.cost,
+        "route": d.route, "tier": d.tier, "engine": d.engine,
+        "confidence": d.confidence, "cost": d.cost,
         "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms),
     }
 
 
-def _page(state: dict) -> str:
-    api = state["api_url"] or "<unset>"
-    up = state["health"] == 200
-    rows = []
-    for rule, (st, n) in sorted(state["matrix"].items()):
-        cls = st.lower()
-        rows.append(f'<tr><td>{rule}</td><td class="{cls}">{st}</td><td class="dim">{n} checks</td></tr>')
-    matrix_html = (
-        "<table>" + "".join(rows) + "</table>"
-        if rows
-        else '<span class="dim">not run — press r or Run matrix</span>'
-    )
-    sb_rows = []
-    for sb in state["sandboxes"]:
-        sb_rows.append(
-            f'<tr><td>{html.escape(str(sb.get("sandboxID", "?"))[:12])}</td>'
-            f'<td>{html.escape(str(sb.get("templateID", "?"))[:16])}</td>'
-            f'<td>{html.escape(str(sb.get("status", "?")))}</td></tr>'
+def _matrix_table(matrix: dict) -> str:
+    rows = "".join(
+        f'<tr><td>{rule}</td><td class="{st.lower()}">{st}</td><td class="dim">{n} checks</td></tr>'
+        for rule, (st, n) in sorted(
+            matrix.items(), key=lambda kv: (0, int(kv[0][1:])) if kv[0][1:].isdigit() else (1, kv[0])
         )
-    sb_html = (
-        "<table><tr><th>sandbox</th><th>template</th><th>status</th></tr>"
-        + "".join(sb_rows)
-        + "</table>"
-        if sb_rows
-        else '<span class="dim">none running</span>'
     )
-    audit_rows = "".join(
-        f'<tr><td class="dim">{html.escape(str(r.get("ts",""))[:19])}</td>'
-        f'<td>{html.escape(str(r.get("event","")))}</td>'
-        f'<td class="dim">{html.escape(json.dumps({k:v for k,v in r.items() if k not in ("ts","event")}))}</td></tr>'
-        for r in state["audit"][-12:]
-    )
-    audit_html = (
-        "<table>" + audit_rows + "</table>" if audit_rows else '<span class="dim">empty</span>'
-    )
-    dot = "up" if up else "down"
-    return f"""<!doctype html><meta charset=utf-8><title>open-computer · ops</title>
-<style>{CSS}</style>
-<h1>open-computer · ops</h1>
-<div class=sub>control plane at <a href="{api}">{api}</a>
-&nbsp;<span class="dot {dot}"></span>{'UP' if up else 'DOWN'}</div>
+    return f"<table>{rows}</table>" if rows else '<span class="dim">not run — press r or Run matrix</span>'
 
-<h2>determinism matrix</h2>
+
+def _sec_matrix(state: dict) -> str:
+    return f"""<h2>determinism matrix</h2>
 <button id=run>Run matrix&nbsp;<span class=dim>[r]</span></button>
 <div id=status></div>
-<div id=matrix>{matrix_html}</div>
+<div id=matrix>{_matrix_table(state["matrix"])}</div>"""
 
-<h2>route tester</h2>
-<input id=q placeholder='utterance…' style="background:#141a20;border:1px solid var(--line);color:var(--fg);font:inherit;padding:4px 10px;width:340px">
+
+def _sec_fleet(state: dict) -> str:
+    sb = state["sandboxes"]
+    if state["health"] != 200:
+        return '<h2>fleet</h2><span class="dim">control plane DOWN — inventory unknown</span>'
+    rows = "".join(
+        f'<tr><td>{html.escape(str(s.get("sandboxID", "?"))[:12])}</td>'
+        f'<td>{html.escape(str(s.get("templateID", "?"))[:16])}</td>'
+        f'<td>{html.escape(str(s.get("status", "?")))}</td></tr>'
+        for s in sb
+    )
+    return (
+        f"<h2>fleet ({len(sb)})</h2><table><tr><th>sandbox</th><th>template</th><th>status</th></tr>{rows}</table>"
+        if rows
+        else "<h2>fleet (0)</h2><span class=dim>none running</span>"
+    )
+
+
+def _sec_gate(state: dict) -> str:
+    rows = "".join(
+        f'<tr><td class="dim">{html.escape(str(r.get("ts", ""))[:19])}</td>'
+        f'<td>{html.escape(str(r.get("event", "")))}</td>'
+        f'<td class="dim">{html.escape(json.dumps({k: v for k, v in r.items() if k not in ("ts", "event")}))}</td></tr>'
+        for r in state["audit"][-12:]
+    )
+    return f"<h2>gate audit (tail)</h2>{'<table>' + rows + '</table>' if rows else '<span class=dim>empty</span>'}"
+
+
+def _sec_router(state: dict) -> str:
+    ledger = []
+    if LEDGER_PATH.exists():
+        for line in LEDGER_PATH.read_text().splitlines()[-14:]:
+            try:
+                ledger.append(json.loads(line))
+            except Exception:
+                pass
+    lrows = "".join(
+        f'<tr><td class="dim">{time.strftime("%H:%M:%S", time.localtime(r.get("ts", 0)))}</td>'
+        f'<td>{html.escape(str(r.get("event", "")))}</td>'
+        f'<td>{html.escape(str(r.get("route", "")))}</td>'
+        f'<td class="dim">{html.escape(str(r.get("engine", "")))}</td>'
+        f'<td class="dim">${float(r.get("cost", 0)):.5f}</td></tr>'
+        for r in reversed(ledger)
+    )
+    return f"""<h2>route tester</h2>
+<input id=q placeholder='utterance…'>
 <button id=route>Route&nbsp;<span class=dim>[enter]</span></button>
 <div id=routestatus class=dim></div>
 <div id=routeresult></div>
+<h2>decision ledger</h2>{'<table><tr><th>ts</th><th>event</th><th>route</th><th>engine</th><th>cost</th></tr>' + lrows + '</table>' if lrows else '<span class=dim>empty</span>'}"""
 
-<h2>sandboxes ({len(state['sandboxes'])})</h2>{sb_html}
 
-<h2>gate audit (tail)</h2>{audit_html}
-<div class=sub style="margin-top:18px">refreshed {time.strftime('%H:%M:%S')}</div>
+def _sec_health(state: dict) -> str:
+    api = state["api_url"] or "<unset>"
+    up = state["health"] == 200
+    return (
+        f'<div class=sub>control plane at <a href="{api}">{api}</a>'
+        f'&nbsp;<span class="dot {"up" if up else "down"}"></span>{"UP" if up else "DOWN"}</div>'
+    )
+
+
+def _shell(title: str, active: str, body: str) -> str:
+    nav = "".join(
+        f'<a href="{path}" class="{"on" if label == active else ""}"><span>{label}</span><span class=k>g {key}</span></a>'
+        for path, label, key in VIEWS
+    )
+    pal = "".join(
+        f'<a href="{path}" data-k="{key}">{label}</a>' for path, label, key in VIEWS
+    )
+    return f"""<!doctype html><meta charset=utf-8><title>open-computer · {title}</title>
+<style>{CSS}</style>
+<aside>
+<div class=brand>open-computer</div>
+<div class=sect>tasks</div>
+<div class=tl>no orchestrator yet — U6</div>
+<div class=sect>views</div>
+<nav class=nav>{nav}</nav>
+<div style="margin-top:auto" class=tl>press / for palette<br>press ? for keys</div>
+</aside>
+<main>{body}</main>
+<div id=pal><div class=box><div class=h>views</div>{pal}</div></div>
+<div id=help>g&lt;key&gt; views · / palette</div>
 <script>
-const run=async()=>{{const b=document.getElementById('run');b.disabled=1;
+const pal=document.getElementById('pal');
+let gArm=0;
+addEventListener('keydown',e=>{{
+  const tag=document.activeElement&&document.activeElement.tagName;
+  if(e.key==='Escape'){{pal.classList.remove('on');return;}}
+  if(tag==='INPUT')return;
+  if(e.key==='/'||e.key==='?'){{pal.classList.toggle('on');e.preventDefault();return;}}
+  if(e.key==='g'){{gArm=Date.now();return;}}
+  if(gArm&&Date.now()-gArm<900){{
+    const map={{w:'/',g:'/gate',m:'/matrix',f:'/fleet',r:'/router',o:'/ops'}};
+    if(map[e.key]){{location.href=map[e.key];}}
+    gArm=0;return;
+  }}
+}});
+</script>"""
+
+
+def _page_work(state: dict) -> str:
+    body = (
+        "<h1>work</h1>"
+        + _sec_health(state)
+        + _sec_matrix(state)
+        + _sec_fleet(state)
+        + _sec_gate(state)
+    )
+    return _shell("work", "work", body + _SCRIPTS)
+
+
+def _page_matrix(state: dict) -> str:
+    return _shell("matrix", "matrix", "<h1>matrix</h1>" + _sec_health(state) + _sec_matrix(state) + _SCRIPTS)
+
+
+def _page_fleet(state: dict) -> str:
+    return _shell("fleet", "fleet", "<h1>fleet</h1>" + _sec_health(state) + _sec_fleet(state))
+
+
+def _page_gate(state: dict) -> str:
+    return _shell("gate", "gate", "<h1>gate</h1>" + _sec_health(state) + _sec_gate(state))
+
+
+def _page_router(state: dict) -> str:
+    return _shell("router", "router", "<h1>router</h1>" + _sec_router(state) + _SCRIPTS)
+
+
+_SCRIPTS = """<script>
+const run=async()=>{const b=document.getElementById('run');if(!b)return;b.disabled=1;
 document.getElementById('status').textContent='running conformance (boots real microVMs, ~7s)…';
 const r=await fetch('/run');const j=await r.json();
-document.getElementById('matrix').innerHTML=j.matrix;document.getElementById('status').textContent=j.status;b.disabled=0;}};
-document.getElementById('run').onclick=run;
-const routeIt=async()=>{{const q=document.getElementById('q').value.trim();if(!q)return;
+document.getElementById('matrix').innerHTML=j.matrix;document.getElementById('status').textContent=j.status;b.disabled=0;};
+const rb=document.getElementById('run');if(rb)rb.onclick=run;
+const routeIt=async()=>{const q=document.getElementById('q').value.trim();if(!q)return;
 document.getElementById('routestatus').textContent='routing…';
 const r=await fetch('/route?q='+encodeURIComponent(q));const j=await r.json();
 document.getElementById('routestatus').textContent='';
-document.getElementById('routeresult').innerHTML=j.html;}};
-document.getElementById('route').onclick=routeIt;
-document.getElementById('q').addEventListener('keydown',e=>{{if(e.key==='Enter')routeIt();}});
-addEventListener('keydown',e=>{{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey&&document.activeElement.id!=='q')run();}});
+document.getElementById('routeresult').innerHTML=j.html;};
+const rt=document.getElementById('route');if(rt)rt.onclick=routeIt;
+const qi=document.getElementById('q');if(qi)qi.addEventListener('keydown',e=>{if(e.key==='Enter')routeIt();});
+addEventListener('keydown',e=>{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey&&document.activeElement.tagName!=='INPUT'&&document.getElementById('run'))run();});
 </script>"""
 
 
@@ -256,9 +366,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/route":
-            from urllib.parse import parse_qs, urlparse
-
-            q = (parse_qs(urlparse(self.path).query).get("q") or [""])[0]
+            q = (parse_qs(parsed.query).get("q") or [""])[0]
             try:
                 d = _route(q)
                 row = (
@@ -271,24 +379,32 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except Exception as e:
                 row = f"<span class='fail'>{html.escape(str(e))}</span>"
-            body = json.dumps({"html": row}).encode()
-            self._send(200, body, "application/json")
+            self._send(200, json.dumps({"html": row}).encode(), "application/json")
             return
-        if self.path == "/run":
+        if path == "/run":
             out = _run_matrix()
             matrix = {m[0]: (m[1], m[2]) for m in MATRIX_RE.findall(out)}
             Handler.state["matrix"] = matrix
-            rows = "".join(
-                f'<tr><td>{r}</td><td class="{s.lower()}">{s}</td><td class="dim">{n} checks</td></tr>'
-                for r, (s, n) in sorted(matrix.items())
-            )
             tail = out.strip().splitlines()[-1] if out.strip() else ""
             body = json.dumps(
-                {"matrix": f"<table>{rows}</table>", "status": html.escape(tail)}
+                {"matrix": _matrix_table(matrix), "status": html.escape(tail)}
             ).encode()
             self._send(200, body, "application/json")
             return
-        self._send(200, _page(self._state()).encode())
+
+        state = self._state()
+        page = {
+            "/": _page_work,
+            "/matrix": _page_matrix,
+            "/fleet": _page_fleet,
+            "/gate": _page_gate,
+            "/router": _page_router,
+            "/ops": _page_work,  # legacy: same content, in-shell
+        }.get(path)
+        if page is None:
+            self._send(404, b"not found")
+            return
+        self._send(200, page(state).encode())
 
     def do_POST(self):
         from urllib.parse import urlparse
