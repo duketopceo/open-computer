@@ -89,7 +89,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-033 | P2 | Credential boundary v2: substitution at egress proxy | open |
 | OC-034 | P2 | Bind approved policy to sandbox creation + audit every apply | open |
 | OC-035 | P2 | Worker cost ledger + hard per-task cap | partial: ledger, per-run cap that pauses (never cancels), resume, orchestrator wiring (#24); event emission is a plain-dict hook until the UI event-stream helper lands; no real worker reports usage yet |
-| OC-036 | P2 | Placement policy: one pure function | partial: pure function with headroom input from the run cost ledger, 1,152-case invariant table with mutants (#PRN); the router's decider chain already supplies the tier at dispatch, no new decider call |
+| OC-036 | P2 | Placement policy: one pure function | partial: pure function with headroom input from the run cost ledger, 1,152-case invariant table with mutants (#25); the router's decider chain already supplies the tier at dispatch, no new decider call |
 | OC-037 | P2 | Router cleanup: seconds-vs-ms, spend-rule models, local jev path, alpha-endpoint contract test | open |
 | OC-038 | P2 | PII-Tracer model stage behind scan() | open |
 | OC-039 | P2 | `oc` CLI: run, matrix, ledger, approve, audit verify, ops; exit-code contract | open |
