@@ -21,6 +21,11 @@ from typing import Callable
 from oc.fsproto import adapter as fs_adapter
 from services.orchestrator import Orchestrator
 
+try:  # temporalio is an optional dep — opsview runs without it
+    from services.durable import client as durable
+except ImportError:
+    durable = None
+
 _STATES = ("QUEUED", "LEASED", "RUNNING", "DONE", "FAILED", "AWAITING-APPROVAL")
 
 
@@ -149,7 +154,11 @@ def submit(
     orch.submit(goal, engine, run_id=rid)
     orch.audit.append({"event": "goal_by", "run": rid, "by": by})
 
-    _start_drive(orch, rid, wfn)
+    wf = durable.start_durable(run_dir, rid) if durable else None
+    if wf:
+        orch.audit.append({"event": "durable_start", "run": rid, "workflow": wf})
+    else:
+        _start_drive(orch, rid, wfn)
     return rid
 
 
@@ -183,6 +192,10 @@ def resume(wfn) -> int:
     for d in sorted(base.iterdir()):
         if not d.is_dir():
             continue
+        if durable and durable.enabled() and any(
+            r.get("event") == "durable_start" for r in _audit_rows(d)
+        ):
+            continue  # Temporal owns this run's drive loop
         try:
             orch = Orchestrator(d)
             if not orch.recover(d.name):
