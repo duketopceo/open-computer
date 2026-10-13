@@ -29,6 +29,9 @@ class FakeAuth:
     def local_session(self, rp):
         return "test"
 
+    def access_session(self, rp, email):
+        return "test"
+
 
 class Console:
     def __init__(self, port: int, base: Path, env: dict):

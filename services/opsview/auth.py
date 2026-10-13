@@ -41,6 +41,7 @@ ENROLL_DIR = DATA_DIR / "enroll"
 OMASEAL_KEY = ("open-computer", "session-key")
 SESSION_TTL = 30 * 86400
 LOCAL_CRED = b"local"
+ACCESS_CRED = b"access"  # sessions minted from a verified Cloudflare Access identity
 STATE_TTL = 300
 TOKEN_TTL = 600
 
@@ -284,6 +285,12 @@ class Auth:
         """
         return self._cookie(rp, "local", LOCAL_CRED)
 
+    def access_session(self, rp: str, email: str) -> str:
+        """Session for a Cloudflare Access-verified identity — the perimeter
+        already authenticated the human; the app consumes it instead of
+        re-running a second (flaky) passkey ceremony."""
+        return self._cookie(rp, email, ACCESS_CRED)
+
     def _cookie(self, rp: str, identity: str, cred_id: bytes) -> str:
         exp = int(time.time()) + SESSION_TTL
         body = ".".join(
@@ -312,7 +319,7 @@ class Auth:
             if base64.urlsafe_b64decode(rp_b64.encode()).decode() != rp:
                 return None
             cred = base64.urlsafe_b64decode(cred_b64.encode())
-            if cred != LOCAL_CRED and not self.store.by_id(rp, cred):
+            if cred not in (LOCAL_CRED, ACCESS_CRED) and not self.store.by_id(rp, cred):
                 return None  # credential deleted → session dead
             return base64.urlsafe_b64decode(id_b64.encode()).decode()
         except Exception:
