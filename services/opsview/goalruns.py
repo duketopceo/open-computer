@@ -106,6 +106,7 @@ def get_run(run_id: str) -> dict | None:
     fs = fs_adapter(d / "run")
     fails = [r for r in rows if r.get("event") == "worker_fail"]
     fails_by_task = {f.get("task"): f for f in fails}
+    done_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_done"}
     subs = []
     for r in rows:
         if r.get("event") != "dispatch":
@@ -138,6 +139,10 @@ def get_run(run_id: str) -> dict | None:
             rec["error"] = f.get("error", "")
             rec["error_kind"] = f.get("kind", "")
             rec["hint"] = f.get("hint", "")
+            rec["finished_ts"] = f.get("ts")
+        elif tid in done_ts:
+            rec["finished_ts"] = done_ts[tid]
+        rec["ts"] = r.get("ts")
         subs.append(rec)
     out = {
         "run": run_id,
@@ -146,6 +151,7 @@ def get_run(run_id: str) -> dict | None:
         "declared": (submit or {}).get("subtasks", 0),
         "worker_failures": fails,
         "started": (submit or {}).get("ts"),
+        "ended": rows[-1].get("ts") if rows else None,
     }
     if failed is not None:
         out["error"] = failed.get("error", "")

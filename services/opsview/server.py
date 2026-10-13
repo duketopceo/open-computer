@@ -424,7 +424,7 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         payload = {
             "rail": views.work_rail(runs, now, rid if run else ""),
-            "main": views.work_main(run, now),
+            "main": views.work_main(run, now, sel),
             "inspect": views.work_inspect(run, sel, pend, now),
             "active": views.work_active(runs, run),
         }
