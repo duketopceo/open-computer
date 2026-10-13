@@ -486,6 +486,16 @@ def route_result(d: dict) -> str:
 # ------------------------------------------------------------------- goals
 
 
+def _fail_item(f: dict) -> str:
+    """One worker_fail audit row as an inspector item: kind, detail, hint."""
+    kind = f.get("kind")
+    kind_t = f'<span class="chip err-chip mono">{e(str(kind))}</span> ' if kind else ""
+    hint = f.get("hint")
+    hint_t = f'<p class="muted caption w-hint">{e(str(hint))}</p>' if hint else ""
+    return (f'<li><span class="mono">{e(str(f.get("task", "")))}</span> {kind_t}'
+            f'{e(str(f.get("error", "")))}{hint_t}</li>')
+
+
 def _state_chips(states: dict) -> str:
     chips = " ".join(
         f'{status(s)}<span class="muted caption">&nbsp;×{n}</span>' for s, n in states.items() if n
@@ -576,9 +586,7 @@ def page_goal_detail(run: dict, now: float) -> str:
         items.append(
             f'<li class="task"><header>{status(s["state"])} <span class="task-title">{e(title)}</span></header>'
             f'<p class="muted caption">{" · ".join(meta)}</p>{res}</li>')
-    fails = "".join(
-        f'<li><span class="mono">{e(str(f.get("task", "")))}</span> — {e(str(f.get("error", "")))}</li>'
-        for f in run["worker_failures"])
+    fails = "".join(_fail_item(f) for f in run["worker_failures"])
     fails_t = (f'<h2>Worker failures</h2><ul class="task-list">{fails}</ul>' if fails else "")
     refresh = ' data-refresh="3"' if active else ""
     pending_note = (f'<p class="muted caption">{run["declared"] - len(subs)} subtask(s) still queued '
@@ -586,7 +594,12 @@ def page_goal_detail(run: dict, now: float) -> str:
     head = (f'<p class="muted note">{e(run["goal"])}'
             + (f' · started {time_tag(run["started"], now)}' if run.get("started") else "")
             + '</p>')
-    return (f'<section{refresh}>{head}<ul class="task-list">{"".join(items)}</ul>'
+    run_err = ""
+    if run.get("error"):
+        kind = f'<span class="chip err-chip mono">{e(str(run["error_kind"]))}</span> ' if run.get("error_kind") else ""
+        hint = f'<p class="muted caption w-hint">{e(str(run["hint"]))}</p>' if run.get("hint") else ""
+        run_err = f'<div class="w-err" role="alert">{kind}{e(str(run["error"]))}{hint}</div>'
+    return (f'<section{refresh}>{head}{run_err}<ul class="task-list">{"".join(items)}</ul>'
             f'{pending_note}{fails_t}</section>')
 
 
@@ -655,9 +668,7 @@ Nothing spends without your confirm.</p></div>"""
     queued = run["declared"] - len(run["subtasks"])
     if queued > 0:
         items.append(f'<li class="w-task-ghost muted caption">+ {queued} queued behind dependencies</li>')
-    fails = "".join(
-        f'<li><span class="mono">{e(str(f.get("task", "")))}</span> — {e(str(f.get("error", "")))}</li>'
-        for f in run["worker_failures"])
+    fails = "".join(_fail_item(f) for f in run["worker_failures"])
     fails_t = f'<h2>Worker failures</h2><ul class="w-fails">{fails}</ul>' if fails else ""
     head = (f'<div class="w-run-head"><h2 class="w-goal">{e(run["goal"] or run["run"])}</h2>'
             f'<p class="muted caption">{e(run["run"])}'
@@ -692,9 +703,14 @@ def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> st
             ("Cost", money(sub["cost"]) if sub.get("cost") is not None else ""),
         ] if v)
         res = str(sub["result"]) if sub.get("result") else "No result yet — the worker has not finished."
+        err_t = ""
+        if sub.get("error"):
+            kind = f'<span class="chip err-chip mono">{e(str(sub["error_kind"]))}</span> ' if sub.get("error_kind") else ""
+            hint = f'<p class="muted caption w-hint">{e(str(sub["hint"]))}</p>' if sub.get("hint") else ""
+            err_t = f'<div class="w-err" role="alert">{kind}{e(str(sub["error"]))}{hint}</div>'
         title = sub.get("title") or str(sub.get("subtask") or "")
         out.append(f'<h2>Subtask</h2><div class="w-card"><p class="w-card-t">{e(title)}</p>'
-                   f'<table class="kv dense"><tbody>{rows}</tbody></table>'
+                   f'<table class="kv dense"><tbody>{rows}</tbody></table>{err_t}'
                    f'<pre class="w-result mono">{e(res)}</pre></div>')
     elif run is not None:
         counts = {s["state"]: 0 for s in run["subtasks"]}
@@ -703,11 +719,14 @@ def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> st
         queued = run["declared"] - len(run["subtasks"])
         if queued > 0:
             counts["QUEUED"] = counts.get("QUEUED", 0) + queued
-        fails = "".join(
-            f'<li><span class="mono">{e(str(f.get("task", "")))}</span> — {e(str(f.get("error", "")))}</li>'
-            for f in run["worker_failures"])
+        fails = "".join(_fail_item(f) for f in run["worker_failures"])
+        run_err = ""
+        if run.get("error"):
+            kind = f'<span class="chip err-chip mono">{e(str(run["error_kind"]))}</span> ' if run.get("error_kind") else ""
+            hint = f'<p class="muted caption w-hint">{e(str(run["hint"]))}</p>' if run.get("hint") else ""
+            run_err = f'<div class="w-err" role="alert">{kind}{e(str(run["error"]))}{hint}</div>'
         out.append(f'<h2>Run summary</h2><div class="w-card"><p class="w-card-t">{e(run["run"])}</p>'
-                   f'<p class="w-chips">{_state_chips(counts)}</p>'
+                   f'<p class="w-chips">{_state_chips(counts)}</p>' + run_err
                    + (f'<h3 class="w-sub-h">Worker failures</h3><ul class="w-fails">{fails}</ul>' if fails else "")
                    + "</div>")
     else:

@@ -11,11 +11,12 @@ from temporalio import activity
 
 from services.orchestrator import Orchestrator
 from services.orchestrator.engines import work_fn as _engine_work_fn
+from services.placement import place_live
 
 
 def _recover(run_dir: str) -> tuple[Orchestrator, str | None]:
     """Fresh-process view of a run: plan.json + audit rows on disk."""
-    orch = Orchestrator(run_dir)
+    orch = Orchestrator(run_dir, place_fn=place_live)
     rid = next(
         (r["run"] for r in reversed(orch.audit.rows()) if r.get("event") == "run_submit"),
         None,
@@ -36,7 +37,7 @@ def work_sweep(run_dir: str) -> int:
 @activity.defn
 def run_status(run_dir: str, run_id: str) -> dict:
     """Literal collected state — the workflow's terminal check."""
-    orch = Orchestrator(run_dir)
+    orch = Orchestrator(run_dir, place_fn=place_live)
     orch.recover(run_id)
     res = orch.results(run_id)
     return {

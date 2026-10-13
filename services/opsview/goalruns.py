@@ -20,6 +20,7 @@ from typing import Callable
 
 from oc.fsproto import adapter as fs_adapter
 from services.orchestrator import Orchestrator
+from services.placement import place_live
 
 try:  # temporalio is an optional dep — opsview runs without it
     from services.durable import client as durable
@@ -67,22 +68,26 @@ def list_runs() -> list[dict]:
             continue
         rows = _audit_rows(d)
         submit = next((r for r in rows if r.get("event") == "run_submit"), None)
-        if submit is None:
+        failed = next((r for r in rows if r.get("event") == "run_failed"), None)
+        if submit is None and failed is None:
             continue
         states = {s: 0 for s in _STATES}
+        if failed is not None:
+            states["FAILED"] = 1
         for r in rows:
             if r.get("event") == "dispatch":
                 st = _task_state(d, r["task"])
                 states[st] = states.get(st, 0) + 1
-        undispatched = submit.get("subtasks", 0) - sum(states.values())
+        undispatched = (submit or {}).get("subtasks", 0) - sum(states.values())
         states["QUEUED"] += max(0, undispatched)
+        anchor = submit or failed
         out.append(
             {
                 "run": d.name,
-                "goal": submit.get("goal", ""),
-                "subtasks": submit.get("subtasks", 0),
+                "goal": anchor.get("goal", ""),
+                "subtasks": (submit or {}).get("subtasks", 0),
                 "states": states,
-                "ts": submit.get("ts", d.stat().st_mtime),
+                "ts": anchor.get("ts", d.stat().st_mtime),
             }
         )
         if len(out) >= 30:
@@ -97,7 +102,10 @@ def get_run(run_id: str) -> dict | None:
         return None
     rows = _audit_rows(d)
     submit = next((r for r in rows if r.get("event") == "run_submit"), None)
+    failed = next((r for r in rows if r.get("event") == "run_failed"), None)
     fs = fs_adapter(d / "run")
+    fails = [r for r in rows if r.get("event") == "worker_fail"]
+    fails_by_task = {f.get("task"): f for f in fails}
     subs = []
     for r in rows:
         if r.get("event") != "dispatch":
@@ -125,16 +133,25 @@ def get_run(run_id: str) -> dict | None:
                 rec["result"] = fs.collect("orchestrator", tid)
             except Exception:
                 rec["state"] = "FAILED"  # tombstoned but unreadable = corrupted
+        if tid in fails_by_task:
+            f = fails_by_task[tid]
+            rec["error"] = f.get("error", "")
+            rec["error_kind"] = f.get("kind", "")
+            rec["hint"] = f.get("hint", "")
         subs.append(rec)
-    fails = [r for r in rows if r.get("event") == "worker_fail"]
-    return {
+    out = {
         "run": run_id,
-        "goal": (submit or {}).get("goal", ""),
+        "goal": (submit or failed or {}).get("goal", ""),
         "subtasks": subs,
         "declared": (submit or {}).get("subtasks", 0),
         "worker_failures": fails,
         "started": (submit or {}).get("ts"),
     }
+    if failed is not None:
+        out["error"] = failed.get("error", "")
+        out["error_kind"] = failed.get("kind", "")
+        out["hint"] = failed.get("hint", "")
+    return out
 
 
 def submit(
@@ -148,10 +165,15 @@ def submit(
     rid = "goal_" + uuid.uuid4().hex[:8]
     run_dir = runs_dir() / rid
     run_dir.mkdir(parents=True, exist_ok=True)
-    orch = Orchestrator(run_dir)
+    orch = Orchestrator(run_dir, place_fn=place_live)
     with _lock:
         _live[rid] = orch
-    orch.submit(goal, engine, run_id=rid)
+    try:
+        orch.submit(goal, engine, run_id=rid)
+    except Exception:
+        # run_failed audit row is already on disk — the run renders FAILED
+        # with the real error; no driver, nothing to resume.
+        return rid
     orch.audit.append({"event": "goal_by", "run": rid, "by": by})
 
     wf = durable.start_durable(run_dir, rid) if durable else None
@@ -197,7 +219,7 @@ def resume(wfn) -> int:
         ):
             continue  # Temporal owns this run's drive loop
         try:
-            orch = Orchestrator(d)
+            orch = Orchestrator(d, place_fn=place_live)
             if not orch.recover(d.name):
                 continue
             res = orch.results(d.name)

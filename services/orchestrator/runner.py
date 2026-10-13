@@ -31,7 +31,13 @@ def run_once(fs, audit, agent: str, work_fn: Callable[[dict], object], ttl: floa
         except Exception as e:
             fs.fail(tid)
             audit.append(
-                {"event": "worker_fail", "task": tid, "error": f"{type(e).__name__}: {e}"}
+                {
+                    "event": "worker_fail",
+                    "task": tid,
+                    "kind": type(e).__name__,
+                    "error": str(e),
+                    "hint": getattr(e, "hint", ""),
+                }
             )
             continue
         fs.outbox_write(agent, tid, result)

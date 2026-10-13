@@ -224,6 +224,9 @@ h2.w-goal { font-size: var(--text-headline); font-weight: 600; text-transform: n
 .w-chips { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: center; }
 h3.w-sub-h { font-size: var(--text-micro); font-weight: 500; letter-spacing: 0.4px; text-transform: uppercase; color: var(--color-ink-muted); margin: var(--space-12) 0 var(--space-4); }
 .w-fails { margin: 0; padding-left: var(--space-16); }
+.w-err { border-left: 2px solid var(--color-urgent); padding: var(--space-4) var(--space-8); margin: var(--space-8) 0; font-size: var(--text-caption); }
+.err-chip { border-color: var(--color-urgent); color: var(--color-urgent); min-height: 0; padding: 0 var(--space-8); font-size: var(--text-micro); }
+.w-hint { margin: var(--space-4) 0 0; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; scroll-behavior: auto !important; }

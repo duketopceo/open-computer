@@ -102,3 +102,51 @@ def test_resume_leaves_preplan_runs_literal(console, monkeypatch, tmp_path):
         '{"event":"run_submit","run":"goal_deadbeef","goal":"x","subtasks":1}\n')
     assert goalruns.resume(lambda task: None) == 0
     assert goalruns.list_runs()[0]["states"]["QUEUED"] == 1
+
+
+def test_failed_decompose_renders_visible_run(console, monkeypatch, tmp_path):
+    """A planner exception must not vanish: run_failed row, FAILED rail
+    chip, and the real error on the run page — never a silent 500."""
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+
+    def boom(prompt):
+        raise RuntimeError("planner endpoint unreachable")
+
+    rid = goalruns.submit("Will fail", boom, lambda task: "x", by="test")
+    got = goalruns.get_run(rid)
+    assert got["error"] == "planner endpoint unreachable"
+    assert got["error_kind"] == "RuntimeError"
+    listing = goalruns.list_runs()
+    assert listing[0]["run"] == rid and listing[0]["states"]["FAILED"] == 1
+    status, _, html = console.get(f"/goals/{rid}")
+    assert status == 200 and "planner endpoint unreachable" in html
+    status, _, html = console.get("/goals")
+    assert "Will fail" in html and "FAILED" in html
+
+
+def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
+    import time
+    from services.orchestrator.engines import LocalModelUnavailable
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+
+    def wfn(task):
+        raise LocalModelUnavailable("local model endpoints unreachable: :8080 refused",
+                                    hint="start llama-local.service")
+
+    rid = goalruns.submit(
+        "One task",
+        lambda prompt: '[{"id":"a","title":"t","prompt":"p"}]',
+        wfn, by="test",
+    )
+    got = None
+    for _ in range(200):
+        got = goalruns.get_run(rid)
+        if got and got["subtasks"] and got["subtasks"][0]["state"] == "FAILED":
+            break
+        time.sleep(0.05)
+    sub = got["subtasks"][0]
+    assert sub["state"] == "FAILED"
+    assert sub["error_kind"] == "LocalModelUnavailable"
+    assert ":8080 refused" in sub["error"] and sub["hint"] == "start llama-local.service"
+    status, _, html = console.get(f"/goals/{rid}")
+    assert "LocalModelUnavailable" in html and "start llama-local.service" in html
