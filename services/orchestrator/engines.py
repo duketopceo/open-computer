@@ -20,12 +20,26 @@ import base64
 import json
 import os
 import re
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable
 
 
-class SandboxWorkerUnavailable(RuntimeError):
+class WorkerUnavailable(RuntimeError):
+    """An execution surface is down. `hint` is an operator remediation
+    line — the audit row and the inspector render it verbatim."""
+
+    def __init__(self, msg: str, hint: str = ""):
+        super().__init__(msg)
+        self.hint = hint
+
+
+class SandboxWorkerUnavailable(WorkerUnavailable):
+    pass
+
+
+class LocalModelUnavailable(WorkerUnavailable):
     pass
 
 
@@ -93,12 +107,25 @@ def _post(url: str, payload: dict, key: str = "", timeout: float = 60.0) -> dict
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        raise RuntimeError(f"{url} -> HTTP {e.code}: {body or e.reason}") from e
 
 
 def _chat(url: str, model: str, prompt: str, key: str = "", timeout: float = 60.0) -> tuple[str, float]:
     """OpenAI-compatible chat call -> (text, est_cost_usd)."""
+    if url == OR_CHAT and not key:
+        raise WorkerUnavailable(
+            "OPENROUTER_API_KEY is not set — cloud calls cannot run",
+            hint="export a key in ~/.config/oc/opsview.env and restart oc-opsview",
+        )
     out = _post(
         url,
         {"model": model, "messages": [{"role": "user", "content": prompt}]},
@@ -135,13 +162,14 @@ def local_work(task: dict) -> str:
     """Execute on this machine's local servers — GPU llama.cpp, then Ollama."""
     prompt = task["prompt"]
     model = os.environ.get("OC_LOCAL_MODEL", "qwen3-4b")
+    attempts = []
     try:
         text, _ = _chat(
             "http://127.0.0.1:8080/v1/chat/completions", model, prompt, timeout=90
         )
         return text
-    except OSError:
-        pass
+    except (OSError, RuntimeError) as e:
+        attempts.append(f"llama.cpp :8080 — {e}")
     try:
         out = _post(
             "http://127.0.0.1:11434/api/generate",
@@ -149,8 +177,12 @@ def local_work(task: dict) -> str:
             timeout=120,
         )
         return out["response"]
-    except OSError as e:
-        raise SandboxWorkerUnavailable(f"local model servers unreachable: {e}") from e
+    except (OSError, RuntimeError) as e:
+        attempts.append(f"ollama :11434 — {e}")
+    raise LocalModelUnavailable(
+        "local model endpoints unreachable: " + "; ".join(attempts),
+        hint="start llama-local.service or ollama.service, or let placement demote to cloud",
+    )
 
 
 def work_fn(

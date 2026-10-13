@@ -46,6 +46,7 @@ def place(
     pii_flagged: bool = False,
     approved: bool = False,
     budget=None,
+    local_up: bool = True,
 ) -> Placement:
     """Where this subtask's model/execution lands.
 
@@ -66,8 +67,14 @@ def place(
             "pii-flagged and unapproved — cloud targets closed",
         )
 
-    # 2. Latency-critical work never waits on a network round trip.
+    # 2. Latency-critical work never waits on a network round trip — but a
+    #    dead local surface demotes to cloud rather than fail the run.
     if latency == "crit":
+        if not local_up:
+            return Placement(
+                "cloud-OpenRouter",
+                "latency=crit but local endpoints down — cloud fallback",
+            )
         return Placement(
             "local-llamacpp", "latency=crit — GPU local, no network RTT"
         )
@@ -101,8 +108,14 @@ def place(
             gate_required=True,
         )
 
-    # 6. Cheap tier has a competent local home — don't spend on it.
+    # 6. Cheap tier has a competent local home — don't spend on it. When
+    #    no local endpoint is alive, a cheap task still deserves a result.
     if tier == "cheap":
+        if not local_up:
+            return Placement(
+                "cloud-OpenRouter",
+                "cheap tier but local endpoints down — cloud fallback",
+            )
         return Placement(
             "local-llamacpp", "cheap tier — local model suffices"
         )

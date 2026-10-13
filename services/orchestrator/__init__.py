@@ -55,7 +55,20 @@ class Orchestrator:
     def submit(self, goal: str, engine, run_id: str | None = None) -> str:
         """Decompose + validate + dispatch every ready subtask. Returns run id."""
         run_id = run_id or uuid.uuid4().hex[:12]
-        subs = decompose(goal, engine)
+        try:
+            subs = decompose(goal, engine)
+        except Exception as e:
+            self.audit.append(
+                {
+                    "event": "run_failed",
+                    "run": run_id,
+                    "goal": goal,
+                    "kind": type(e).__name__,
+                    "error": str(e),
+                    "hint": getattr(e, "hint", ""),
+                }
+            )
+            raise
         self.dispatches[run_id] = []
         self._subtasks[run_id] = {s["id"]: s for s in subs}
         self._tid_by_sub[run_id] = {}

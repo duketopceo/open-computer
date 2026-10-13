@@ -469,7 +469,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"needs_confirm": True, "cap": daily_cap()})
             return self._page("goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()),
                               sub="Confirm before it runs")
-        rid = _submit_goal(goal, who)
+        try:
+            rid = _submit_goal(goal, who)
+        except Exception as e:
+            if self._wants_json():
+                return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+            return self._page("goals", views.page_goal_new(self._csrf(), f"{type(e).__name__}: {e}"), 500)
         if self._wants_json():
             return self._json(200, {"run": rid})
         self._redirect(f"/goals/{rid}", 303)
