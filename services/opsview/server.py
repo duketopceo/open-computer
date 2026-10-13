@@ -49,6 +49,24 @@ STATIC_TYPES = {
 CSP = ("default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
        "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 CSRF_SECRET = secrets.token_bytes(32)
+ACCESS_IDENTITY_URL = "https://duketopceo.cloudflareaccess.com/cdn-cgi/access/get-identity"
+
+
+def access_identity(cf_token: str) -> str | None:
+    """Ask Cloudflare who a CF_Authorization token belongs to. Server-verified
+    (no local crypto to get wrong); only called when no app session exists —
+    once per login. Any failure returns None → the passkey gate stays."""
+    if not cf_token:
+        return None
+    url = os.environ.get("OC_ACCESS_IDENTITY_URL", ACCESS_IDENTITY_URL)
+    try:
+        req = urllib.request.Request(url, headers={"Cookie": f"CF_Authorization={cf_token}"})
+        with urllib.request.urlopen(req, timeout=4) as r:
+            d = json.loads(r.read().decode())
+        email = str(d.get("email") or "").strip().lower()
+        return email or None
+    except Exception:
+        return None
 
 
 # ------------------------------------------------------------------ config
@@ -216,6 +234,10 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.headers.get("Cookie", "")
         return next((p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("oc_sess=")), None)
 
+    def _cf_cookie(self) -> str | None:
+        raw = self.headers.get("Cookie", "")
+        return next((p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("CF_Authorization=")), None)
+
     _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
     def _identity(self) -> str | None:
@@ -223,6 +245,13 @@ class Handler(BaseHTTPRequestHandler):
         if who is None and self._rp() in self._LOOPBACK:
             self._local_cookie = self.auth.local_session(self._rp())
             who = "local"
+        if who is None:
+            cf = self._cf_cookie()
+            if cf:
+                email = access_identity(cf)
+                if email:
+                    self._local_cookie = self.auth.access_session(self._rp(), email)
+                    who = email
         return who
 
     def _csrf(self) -> str:
