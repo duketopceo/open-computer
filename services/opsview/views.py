@@ -18,8 +18,8 @@ from . import registry
 e = html.escape
 
 PAGE_TITLES = {
-    "overview": "Overview", "goals": "Goals", "sandboxes": "Sandboxes", "runs": "Runs",
-    "approvals": "Approvals", "router": "Router", "audit": "Audit",
+    "work": "Work", "overview": "Overview", "goals": "Goals", "sandboxes": "Sandboxes",
+    "runs": "Runs", "approvals": "Approvals", "router": "Router", "audit": "Audit",
 }
 NAV_PAGE = {a.id.split(".", 1)[1]: a for a in registry.nav_actions()}
 
@@ -163,7 +163,7 @@ def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "",
         )
     bottom = "".join(
         f'<a href="{NAV_PAGE[k].href}"{" aria-current=page" if k == page else ""}>{e(NAV_PAGE[k].label)}</a>'
-        for k in ("overview", "approvals", "runs", "sandboxes")
+        for k in ("work", "overview", "approvals", "runs")
     )
     title = PAGE_TITLES[page]
     return f"""<!doctype html>
@@ -210,6 +210,7 @@ def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "",
 <div id="alerts" class="toasts" role="alert" aria-live="assertive"></div>
 <script type="application/json" id="oc-actions">{registry.payload(page)}</script>
 <script src="/static/console.js?v={ASSET_V}" defer></script>
+{f'<script src="/static/work.js?v={ASSET_V}" defer></script>' if page == "work" else ""}
 </body>
 </html>"""
 
@@ -587,6 +588,144 @@ def page_goal_detail(run: dict, now: float) -> str:
             + '</p>')
     return (f'<section{refresh}>{head}<ul class="task-list">{"".join(items)}</ul>'
             f'{pending_note}{fails_t}</section>')
+
+
+# -------------------------------------------------------------------- work
+# The workplace surface (/work): three panes, all server-rendered and swapped
+# live by work.js from /_frag/work. Selection rides in location.hash so a
+# refresh restores it. Approvals reuse approval_row — console.js's delegated
+# approve/send-back handlers work unmodified inside the inspector.
+
+
+def page_work(csrf: str) -> str:
+    """Static skeleton; the panes fill in from the fragment endpoint. The
+    composer is a real form — without JS it posts to /goals like /goals/new."""
+    return f"""<div class="work" id="work">
+<aside class="w-rail" aria-label="Goal composer and runs">
+<form method="post" action="/goals" class="composer" id="composer">
+<input type="hidden" name="csrf" value="{e(csrf)}">
+<label for="wg" class="sr">New goal</label>
+<textarea id="wg" name="goal" class="input" rows="3" maxlength="4000" required aria-keyshortcuts="/"
+  placeholder="Describe a goal — it decomposes, routes, places and runs"></textarea>
+<button type="submit" class="btn primary">Run</button>
+</form>
+<div id="w-rail" aria-live="polite">{skeleton_rows(6, 1)}</div>
+</aside>
+<section class="w-main" id="w-main" aria-label="Plan and results">{skeleton_rows(8, 1)}</section>
+<aside class="w-inspect" id="w-inspect" aria-label="Inspector">{skeleton_rows(5, 1)}</aside>
+</div>"""
+
+
+def work_rail(runs: list[dict], now: float, sel: str) -> str:
+    if not runs:
+        return ('<h2>Runs</h2><p class="muted caption">No goal runs yet. '
+                'Describe a goal above and it becomes one.</p>')
+    items = []
+    for r in runs:
+        cur = ' cur" aria-current="true' if r["run"] == sel else ""
+        items.append(
+            f'<li><button type="button" class="w-run{cur}" data-run="{e(r["run"])}">'
+            f'<span class="w-run-goal">{e(r["goal"] or r["run"])}</span>'
+            f'<span class="w-run-meta">{_state_chips(r["states"])}</span></button></li>')
+    return f'<h2>Runs</h2><ul class="w-runs">{"".join(items)}</ul>'
+
+
+def work_main(run: dict | None, now: float) -> str:
+    if run is None:
+        return """<div class="w-hero">
+<h2 class="w-hero-t">What should the computer do?</h2>
+<p class="muted note">A goal decomposes into a subtask graph — each subtask routed, placed
+on this box or cloud, gated, then worked. Pick a run on the left, or start one above.
+Nothing spends without your confirm.</p></div>"""
+    items = []
+    for i, s in enumerate(run["subtasks"]):
+        meta = " · ".join(m for m in (
+            f'route {e(str(s["route"]))}' if s.get("route") else "",
+            e(str(s["engine"])) if s.get("engine") else "",
+            f'→ {e(str(s["placement"]))}' if s.get("placement") else "",
+            money(s["cost"]) if s.get("cost") is not None else "",
+            "gate" if s.get("gate_required") else "",
+            "pii" if s.get("pii") else "",
+        ) if m)
+        title = s.get("title") or str(s.get("subtask") or "")
+        items.append(
+            f'<li><button type="button" class="w-task" data-sub="{i}">'
+            f'<span class="w-task-head">{status(s["state"])}<span class="w-task-title">{e(title)}</span></span>'
+            f'<span class="w-task-meta muted caption">{meta}</span></button></li>')
+    queued = run["declared"] - len(run["subtasks"])
+    if queued > 0:
+        items.append(f'<li class="w-task-ghost muted caption">+ {queued} queued behind dependencies</li>')
+    fails = "".join(
+        f'<li><span class="mono">{e(str(f.get("task", "")))}</span> — {e(str(f.get("error", "")))}</li>'
+        for f in run["worker_failures"])
+    fails_t = f'<h2>Worker failures</h2><ul class="w-fails">{fails}</ul>' if fails else ""
+    head = (f'<div class="w-run-head"><h2 class="w-goal">{e(run["goal"] or run["run"])}</h2>'
+            f'<p class="muted caption">{e(run["run"])}'
+            + (f' · started {time_tag(run["started"], now)}' if run.get("started") else "")
+            + f' · <a href="/goals/{e(run["run"])}">full page</a></p></div>')
+    return f'{head}<ul class="w-tasks">{"".join(items)}</ul>{fails_t}'
+
+
+def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> str:
+    out = []
+    if pend:
+        head = ('<thead><tr><th scope="col">Who</th><th scope="col">What</th><th scope="col">Goes to</th>'
+                '<th scope="col" class="num">Cost</th><th scope="col">Risk</th><th scope="col" class="num">Asked</th>'
+                '<th scope="col"><span class="sr">Actions</span></th></tr></thead>')
+        table = ('<table class="dense approvals" data-table><caption class="sr">Pending approvals</caption>'
+                 + head + "".join(approval_row(i, now) for i in pend) + "</table>")
+        out.append(f'<h2>Needs you ({len(pend)})</h2>{table}')
+    sub = None
+    if run is not None and sel.isdigit():
+        i = int(sel)
+        if 0 <= i < len(run["subtasks"]):
+            sub = run["subtasks"][i]
+    if sub is not None:
+        rows = "".join(f'<tr><th scope="row">{e(k)}</th><td>{v}</td></tr>' for k, v in [
+            ("State", status(sub["state"])),
+            ("Route", f'<span class="mono">{e(str(sub["route"]))}</span>' if sub.get("route") else ""),
+            ("Engine", f'<span class="mono">{e(str(sub["engine"]))}</span>' if sub.get("engine") else ""),
+            ("Placement", f'<span class="mono">{e(str(sub["placement"]))}</span>' if sub.get("placement") else ""),
+            ("Why placed", e(str(sub["reason"])) if sub.get("reason") else ""),
+            ("Gate", "approval required" if sub.get("gate_required") else ""),
+            ("PII", e(", ".join(map(str, sub["pii"]))) if sub.get("pii") else ""),
+            ("Cost", money(sub["cost"]) if sub.get("cost") is not None else ""),
+        ] if v)
+        res = str(sub["result"]) if sub.get("result") else "No result yet — the worker has not finished."
+        title = sub.get("title") or str(sub.get("subtask") or "")
+        out.append(f'<h2>Subtask</h2><div class="w-card"><p class="w-card-t">{e(title)}</p>'
+                   f'<table class="kv dense"><tbody>{rows}</tbody></table>'
+                   f'<pre class="w-result mono">{e(res)}</pre></div>')
+    elif run is not None:
+        counts = {s["state"]: 0 for s in run["subtasks"]}
+        for s in run["subtasks"]:
+            counts[s["state"]] += 1
+        queued = run["declared"] - len(run["subtasks"])
+        if queued > 0:
+            counts["QUEUED"] = counts.get("QUEUED", 0) + queued
+        fails = "".join(
+            f'<li><span class="mono">{e(str(f.get("task", "")))}</span> — {e(str(f.get("error", "")))}</li>'
+            for f in run["worker_failures"])
+        out.append(f'<h2>Run summary</h2><div class="w-card"><p class="w-card-t">{e(run["run"])}</p>'
+                   f'<p class="w-chips">{_state_chips(counts)}</p>'
+                   + (f'<h3 class="w-sub-h">Worker failures</h3><ul class="w-fails">{fails}</ul>' if fails else "")
+                   + "</div>")
+    else:
+        out.append(empty("Nothing selected",
+                         "Pick a run on the left to see its plan; select a subtask for its output. "
+                         "Pending approvals land here too."))
+    return "".join(out)
+
+
+def work_active(runs: list[dict], run: dict | None) -> bool:
+    """True while anything can still move — drives work.js's poll cadence."""
+    for r in runs:
+        if any(r["states"].get(k) for k in ("QUEUED", "LEASED", "RUNNING", "AWAITING-APPROVAL")):
+            return True
+    if run:
+        return (len(run["subtasks"]) < run["declared"]
+                or any(s["state"] not in ("DONE", "FAILED") for s in run["subtasks"]))
+    return False
 
 
 # ------------------------------------------------------------------- audit

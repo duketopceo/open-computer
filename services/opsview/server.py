@@ -44,6 +44,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 STATIC_TYPES = {
     "silver-lining.css": "text/css", "console.css": "text/css",
     "console.js": "text/javascript", "theme-init.js": "text/javascript",
+    "work.js": "text/javascript",
 }
 CSP = ("default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
        "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
@@ -179,11 +180,12 @@ def _resume_goals() -> None:
 # side-effect free and that every POST is CSRF-protected.
 
 GET_ROUTES = [
-    (r"/", "g_overview"), (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
+    (r"/", "g_overview"), (r"/work", "g_work"),
+    (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
     (r"/goals", "g_goals"), (r"/goals/new", "g_goal_new"), (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
     (r"/runs", "g_runs"), (r"/runs/new", "g_run_new"), (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
     (r"/approvals", "g_approvals"), (r"/router", "g_router"), (r"/audit", "g_audit"),
-    (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"),
+    (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"), (r"/_frag/work", "g_frag_work"),
 ]
 REDIRECTS = {"/fleet": "/sandboxes", "/matrix": "/runs", "/gate": "/approvals", "/ops": "/"}
 POST_ROUTES = [
@@ -224,7 +226,8 @@ class Handler(BaseHTTPRequestHandler):
         return who
 
     def _csrf(self) -> str:
-        return hmac.new(CSRF_SECRET, (self._cookie() or "").encode(), hashlib.sha256).hexdigest()
+        raw = self._cookie() or getattr(self, "_local_cookie", None) or ""
+        return hmac.new(CSRF_SECRET, raw.encode(), hashlib.sha256).hexdigest()
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
@@ -310,6 +313,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._page("overview", views.not_found(), 404)
         getattr(self, name)(qs, **args)
 
+    def g_work(self, qs):
+        self._page("work", views.page_work(self._csrf()), sub="Goals, plans, results — the workplace")
+
     def g_overview(self, qs):
         now = time.time()
         q = ApprovalQueue(approvals_path())
@@ -379,6 +385,21 @@ class Handler(BaseHTTPRequestHandler):
     def g_frag_status(self, qs):
         self._send(200, views.status_cell(fleet_state()).encode(), page=True)
 
+    def g_frag_work(self, qs):
+        rid = (qs.get("run") or [""])[0]
+        sel = (qs.get("sub") or [""])[0]
+        run = goalruns.get_run(rid) if re.fullmatch(r"goal_[0-9a-f]{8}", rid) else None
+        pend = ApprovalQueue(approvals_path()).pending()
+        runs = goalruns.list_runs()
+        now = time.time()
+        payload = {
+            "rail": views.work_rail(runs, now, rid if run else ""),
+            "main": views.work_main(run, now),
+            "inspect": views.work_inspect(run, sel, pend, now),
+            "active": views.work_active(runs, run),
+        }
+        self._send(200, json.dumps(payload).encode(), "application/json")
+
     # --- POST --------------------------------------------------------------
     def do_POST(self):
         path = urlparse(self.path).path
@@ -410,11 +431,17 @@ class Handler(BaseHTTPRequestHandler):
     def p_goals(self, who, body):
         goal = str(body.get("goal", "")).strip()
         if not goal or len(goal) > 4000:
+            if self._wants_json():
+                return self._json(400, {"error": "A goal is required (max 4000 chars)."})
             return self._page("goals", views.page_goal_new(self._csrf(), "A goal is required (max 4000 chars)."), 400)
         if body.get("confirm") != "1":
+            if self._wants_json():
+                return self._json(200, {"needs_confirm": True, "cap": daily_cap()})
             return self._page("goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()),
                               sub="Confirm before it runs")
         rid = _submit_goal(goal, who)
+        if self._wants_json():
+            return self._json(200, {"run": rid})
         self._redirect(f"/goals/{rid}", 303)
 
     def p_router_test(self, who, body):
