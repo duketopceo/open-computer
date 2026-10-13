@@ -101,22 +101,87 @@ class Orchestrator:
                 self._tid_by_sub[run_id][r["subtask"]] = r["task"]
         return True
 
+    def _dep_state(self, tid: str) -> str:
+        status = self.fs._task_dir(tid) / "status"
+        return status.read_text().strip() if status.exists() else "queued"
+
+    def _dep_fail(self, run_id: str, sub: dict, blocked_by: str) -> dict:
+        """Dep FAILED: dispatch a tombstone task and fail it before any lease.
+
+        The task is a literal on-disk record (status=failed, never worked);
+        deeper dependents cascade through it in the same dispatch_ready call.
+        """
+        tid = self.fs.send(
+            "worker",
+            {
+                "run": run_id,
+                "subtask": sub["id"],
+                "title": sub["title"],
+                "prompt": sub["prompt"],
+                "blocked_by": blocked_by,
+            },
+        )
+        self.fs.fail(tid)
+        reason = f"dep '{blocked_by}' failed — cannot run"
+        rec = {
+            "event": "dispatch",
+            "run": run_id,
+            "task": tid,
+            "subtask": sub["id"],
+            "route": "-",
+            "engine": "-",
+            "placement": "-",
+            "reason": reason,
+            "gate_required": False,
+            "pii": list(sub["pii"]) if isinstance(sub.get("pii"), list) else [],
+        }
+        self.audit.append(rec)
+        self.audit.append(
+            {
+                "event": "worker_fail",
+                "run": run_id,
+                "task": tid,
+                "subtask": sub["id"],
+                "kind": "DependencyFailed",
+                "error": reason,
+                "hint": "rerun the goal, or fix the failed dep and resume the run",
+            }
+        )
+        return rec
+
     def dispatch_ready(self, run_id: str) -> list[dict]:
-        """Dispatch every subtask whose deps are all tombstoned."""
+        """Dispatch ready subtasks; dep-fail ones whose deps can't complete.
+
+        A FAILED dep never satisfies fs.done, so dependents would queue
+        forever — they get a pre-failed tombstone task instead, cascading
+        through deeper dependents via fixpoint (bounded by subtask count).
+        """
         subs = self._subtasks[run_id]
         sent = self.dispatches[run_id]
         tids = self._tid_by_sub[run_id]
         out = []
-        for sid, sub in subs.items():
-            if sid in tids:
-                continue  # already dispatched
-            if all(d in tids and self.fs.done(tids[d]) for d in sub["deps"]):
-                rec = dispatch(
-                    self.fs, self.router, self.gate, self.place, self.audit, run_id, sub
-                )
+        progressed = True
+        while progressed:
+            progressed = False
+            for sid, sub in subs.items():
+                if sid in tids or any(d not in tids for d in sub["deps"]):
+                    continue  # dispatched already, or dep not dispatched yet
+                states = [self._dep_state(tids[d]) for d in sub["deps"]]
+                if all(st == "done" for st in states):
+                    rec = dispatch(
+                        self.fs, self.router, self.gate, self.place,
+                        self.audit, run_id, sub,
+                    )
+                elif any(st == "failed" for st in states):
+                    rec = self._dep_fail(
+                        run_id, sub, sub["deps"][states.index("failed")]
+                    )
+                else:
+                    continue  # dep still queued/leased — wait for it
                 tids[sid] = rec["task"]
                 sent.append(rec)
                 out.append(rec)
+                progressed = True
         return out
 
     def work(self, work_fn, agent: str = "worker", ttl: float = 60) -> list[str]:

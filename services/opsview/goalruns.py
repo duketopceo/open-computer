@@ -220,10 +220,6 @@ def resume(wfn) -> int:
     for d in sorted(base.iterdir()):
         if not d.is_dir():
             continue
-        if durable and durable.enabled() and any(
-            r.get("event") == "durable_start" for r in _audit_rows(d)
-        ):
-            continue  # Temporal owns this run's drive loop
         try:
             orch = Orchestrator(d, place_fn=place_live)
             if not orch.recover(d.name):
@@ -231,6 +227,10 @@ def resume(wfn) -> int:
             res = orch.results(d.name)
             if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
                 continue
+            if durable and durable.enabled() and any(
+                r.get("event") == "durable_start" for r in _audit_rows(d)
+            ) and durable.ensure_durable(d, d.name) is not None:
+                continue  # Temporal owns (or just re-adopted) the drive loop
             with _lock:
                 _live[d.name] = orch
             _start_drive(orch, d.name, wfn)
