@@ -46,8 +46,10 @@ class GoalRunWorkflow:
             n = await workflow.execute_activity(
                 work_sweep,
                 args=[inp.run_dir],
+                # no heartbeat_timeout: sync activities run in a thread
+                # executor and cannot heartbeat — one would cancel any
+                # model call slower than the interval.
                 start_to_close_timeout=timedelta(seconds=300),
-                heartbeat_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             if n == 0:
