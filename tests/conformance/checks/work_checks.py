@@ -99,7 +99,7 @@ def goal_requires_auth(ops) -> None:
     r = urllib.request.Request(
         f"{_b}/goals",
         data=b"goal=x&confirm=1",
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Host": "remote.test"},
         method="POST",
     )
     try:
