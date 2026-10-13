@@ -252,6 +252,7 @@ class Handler(BaseHTTPRequestHandler):
                 if email:
                     self._local_cookie = self.auth.access_session(self._rp(), email)
                     who = email
+                    print(f"access session minted for {email}")
         return who
 
     def _csrf(self) -> str:
