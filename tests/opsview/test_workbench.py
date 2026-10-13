@@ -67,8 +67,10 @@ def test_frag_work_run_detail_and_subtask(console, monkeypatch, tmp_path):
     assert status == 200
     d = json.loads(body)
     assert "Do one thing" in d["main"] and "first task" in d["main"]
+    assert "tl-step" in d["main"] and "Planned 1 step" in d["main"]  # narrative timeline
     assert rid in d["rail"]
     assert "result-body" in d["inspect"]
+    assert "w-doc" in d["inspect"] and "Details" in d["inspect"]  # doc result + disclosure
 
 
 def test_goal_json_flow_needs_confirm_then_runs(console, submitted):

@@ -24,8 +24,25 @@
   }
 
   function schedule(ms) { clearTimeout(timer); timer = setTimeout(poll, ms); }
+  function openDetails(root) {
+    var keys = [];
+    root.querySelectorAll("details[open]").forEach(function (d, i) {
+      var s = d.querySelector("summary");
+      keys.push(s ? s.textContent.trim() : String(i));
+    });
+    return keys;
+  }
+  function restoreDetails(root, keys) {
+    if (!keys.length) return;
+    root.querySelectorAll("details").forEach(function (d) {
+      var s = d.querySelector("summary");
+      if (s && keys.indexOf(s.textContent.trim()) !== -1) d.open = true;
+    });
+  }
   function paint(d) {
+    var km = openDetails(main), ki = openDetails(insp);
     rail.innerHTML = d.rail; main.innerHTML = d.main; insp.innerHTML = d.inspect;
+    restoreDetails(main, km); restoreDetails(insp, ki);
     schedule(d.active ? 2500 : 8000);
   }
   function poll() {

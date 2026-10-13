@@ -629,6 +629,42 @@ def page_work(csrf: str) -> str:
 </div>"""
 
 
+def _dur(start: float | None, end: float | None) -> str:
+    """Short duration: 0.4s / 12s / 3m."""
+    if start is None or end is None:
+        return ""
+    d = max(0.0, end - start)
+    if d < 10:
+        return f"{d:.1f}s"
+    if d < 120:
+        return f"{d:.0f}s"
+    return f"{d / 60:.0f}m"
+
+
+def _rail_state(states: dict) -> str:
+    """One aggregate word per run for the rail dot."""
+    if states.get("FAILED"):
+        return "failed"
+    if states.get("LEASED") or states.get("RUNNING"):
+        return "running"
+    if states.get("AWAITING-APPROVAL"):
+        return "waiting"
+    total = sum(states.values())
+    if total and states.get("DONE", 0) + states.get("FAILED", 0) == total:
+        return "done"
+    return "queued"
+
+
+_STEP = {  # task state -> (css, icon, live verb)
+    "DONE": ("done", "ok", "Done"),
+    "FAILED": ("failed", "urgent", "Failed"),
+    "LEASED": ("running", "neutral", "Working"),
+    "RUNNING": ("running", "neutral", "Working"),
+    "AWAITING-APPROVAL": ("waiting", "attention", "Awaiting approval"),
+    "QUEUED": ("queued", "neutral", "Queued"),
+}
+
+
 def work_rail(runs: list[dict], now: float, sel: str) -> str:
     if not runs:
         return ('<h2>Runs</h2><p class="muted caption">No goal runs yet. '
@@ -636,45 +672,114 @@ def work_rail(runs: list[dict], now: float, sel: str) -> str:
     items = []
     for r in runs:
         cur = ' cur" aria-current="true' if r["run"] == sel else ""
+        st = _rail_state(r["states"])
+        done = r["states"].get("DONE", 0)
+        total = r["subtasks"] or sum(v for k, v in r["states"].items() if k != "QUEUED")
+        meta = " · ".join(m for m in (
+            rel_time(r["ts"], now) if r.get("ts") else "",
+            f"{done}/{total}" if total else ("failed" if st == "failed" else ""),
+        ) if m)
         items.append(
             f'<li><button type="button" class="w-run{cur}" data-run="{e(r["run"])}">'
-            f'<span class="w-run-goal">{e(r["goal"] or r["run"])}</span>'
-            f'<span class="w-run-meta">{_state_chips(r["states"])}</span></button></li>')
+            f'<span class="w-run-top"><span class="w-dot w-dot-{st}"></span>'
+            f'<span class="w-run-goal">{e(r["goal"] or r["run"])}</span></span>'
+            f'<span class="w-run-meta muted caption">{e(meta)}</span></button></li>')
     return f'<h2>Runs</h2><ul class="w-runs">{"".join(items)}</ul>'
 
 
-def work_main(run: dict | None, now: float) -> str:
+def _thought_line(s: dict, now: float) -> str:
+    """The honest narrative line under a step — what it was routed to and
+    why, plus how long it took. Words from the audit row, never inferred."""
+    st = s.get("state", "QUEUED")
+    place = str(s.get("placement") or "")
+    reason = str(s.get("reason") or "")
+    if st in ("LEASED", "RUNNING"):
+        return f"Working on {place}" if place else "Working"
+    if st == "QUEUED":
+        return "Queued"
+    if st == "AWAITING-APPROVAL":
+        return "Awaiting your approval"
+    if st == "FAILED":
+        return (f"{place} — failed" if place else "Failed") + (f": {s['error']}" if s.get("error") else "")
+    via = " → ".join(m for m in (str(s.get("engine") or ""), place) if m and m != "None")
+    dur = _dur(s.get("ts"), s.get("finished_ts"))
+    return " · ".join(m for m in (via, reason, dur) if m)
+
+
+def _preview(s: dict, limit: int = 160) -> str:
+    """First beat of a finished step's result — the teaser, full text in the inspector."""
+    res = str(s.get("result") or "").strip()
+    if not res:
+        return ""
+    res = " ".join(res.split())
+    return res[:limit].rstrip() + ("…" if len(res) > limit else "")
+
+
+def work_main(run: dict | None, now: float, sel: str = "") -> str:
     if run is None:
         return """<div class="w-hero">
 <h2 class="w-hero-t">What should the computer do?</h2>
-<p class="muted note">A goal decomposes into a subtask graph — each subtask routed, placed
-on this box or cloud, gated, then worked. Pick a run on the left, or start one above.
-Nothing spends without your confirm.</p></div>"""
-    items = []
-    for i, s in enumerate(run["subtasks"]):
-        meta = " · ".join(m for m in (
-            f'route {e(str(s["route"]))}' if s.get("route") else "",
-            e(str(s["engine"])) if s.get("engine") else "",
-            f'→ {e(str(s["placement"]))}' if s.get("placement") else "",
-            money(s["cost"]) if s.get("cost") is not None else "",
-            "gate" if s.get("gate_required") else "",
-            "pii" if s.get("pii") else "",
-        ) if m)
-        title = s.get("title") or str(s.get("subtask") or "")
-        items.append(
-            f'<li><button type="button" class="w-task" data-sub="{i}">'
-            f'<span class="w-task-head">{status(s["state"])}<span class="w-task-title">{e(title)}</span></span>'
-            f'<span class="w-task-meta muted caption">{meta}</span></button></li>')
-    queued = run["declared"] - len(run["subtasks"])
+<p class="muted note">Describe a goal on the left. It decomposes into steps you can watch
+as it thinks — routed, placed, gated, worked. Nothing spends without your confirm.</p></div>"""
+    subs = run["subtasks"]
+    n = run["declared"] or len(subs)
+    done = sum(1 for s in subs if s["state"] == "DONE")
+    live = any(s["state"] in ("LEASED", "RUNNING", "QUEUED") for s in subs) or len(subs) < n
+    elapsed = _dur(run.get("started"), (run.get("ended") or now) if run.get("started") else None)
+    cost = sum(s.get("cost") or 0 for s in subs)
+    head = (
+        f'<div class="w-run-head"><h2 class="w-goal">{e(run["goal"] or run["run"])}</h2>'
+        f'<p class="w-run-sub muted caption">{e(run["run"])}'
+        + (f" · {e(rel_time(run['started'], now))}" if run.get("started") else "")
+        + (f" · step {done}/{n}" if n else "")
+        + (f" · {money(cost)}" if cost else "")
+        + (f" · {e(elapsed)}" if elapsed else "")
+        + f' · <a href="/goals/{e(run["run"])}">full page</a></p>'
+        + (f'<progress class="w-prog" value="{done}" max="{max(n, 1)}"></progress>' if n else "")
+        + "</div>"
+    )
+    run_err = ""
+    if run.get("error"):
+        kind = f'<span class="chip err-chip mono">{e(str(run["error_kind"]))}</span> ' if run.get("error_kind") else ""
+        hint = f'<p class="muted caption w-hint">{e(str(run["hint"]))}</p>' if run.get("hint") else ""
+        run_err = f'<div class="w-err" role="alert">{kind}{e(str(run["error"]))}{hint}</div>'
+    plan = ""
+    if subs:
+        titles = "".join(f"<li>{e(s.get('title') or str(s.get('subtask') or ''))}</li>" for s in subs)
+        plan = (f'<div class="w-thought"><header>{icon("neutral")}'
+                f'<span>Planned {n or len(subs)} step{"s" if (n or len(subs)) != 1 else ""}</span></header>'
+                f"<ol>{titles}</ol></div>")
+    steps = []
+    for i, s in enumerate(subs):
+        cls, ic, verb = _STEP.get(s.get("state", "QUEUED"), _STEP["QUEUED"])
+        cur = " sel" if str(i) == sel else ""
+        kicker = _thought_line(s, now)
+        kick_t = f'<span class="tl-kicker muted caption">{e(kicker)}</span>' if kicker else ""
+        prev = _preview(s) if s.get("state") == "DONE" else ""
+        prev_t = f'<span class="tl-preview">{e(prev)}</span>' if prev else ""
+        steps.append(
+            f'<li class="tl-step s-{cls}"><button type="button" class="tl-btn{cur}" data-sub="{i}">'
+            f'<span class="tl-dot">{icon(ic)}</span><span class="tl-body">'
+            f'<span class="tl-title">{e(s.get("title") or str(s.get("subtask") or ""))}</span>{kick_t}{prev_t}'
+            "</span></button></li>"
+        )
+    queued = run["declared"] - len(subs)
     if queued > 0:
-        items.append(f'<li class="w-task-ghost muted caption">+ {queued} queued behind dependencies</li>')
+        steps.append(
+            f'<li class="tl-step s-ghost"><span class="tl-dot"></span>'
+            f'<span class="tl-body muted caption">+ {queued} queued behind dependencies</span></li>'
+        )
     fails = "".join(_fail_item(f) for f in run["worker_failures"])
     fails_t = f'<h2>Worker failures</h2><ul class="w-fails">{fails}</ul>' if fails else ""
-    head = (f'<div class="w-run-head"><h2 class="w-goal">{e(run["goal"] or run["run"])}</h2>'
-            f'<p class="muted caption">{e(run["run"])}'
-            + (f' · started {time_tag(run["started"], now)}' if run.get("started") else "")
-            + f' · <a href="/goals/{e(run["run"])}">full page</a></p></div>')
-    return f'{head}<ul class="w-tasks">{"".join(items)}</ul>{fails_t}'
+    return f'{head}{run_err}{plan}<ol class="tl">{"".join(steps)}</ol>{fails_t}'
+
+
+def _doc_cls(s: str) -> str:
+    """Model output that smells like code/data renders mono; prose renders doc."""
+    t = s.strip()
+    if t[:1] in "{[<`#!" or "```" in t or t.startswith(("$ ", "#!")):
+        return " code"
+    return ""
 
 
 def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> str:
@@ -698,20 +803,24 @@ def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> st
             ("Engine", f'<span class="mono">{e(str(sub["engine"]))}</span>' if sub.get("engine") else ""),
             ("Placement", f'<span class="mono">{e(str(sub["placement"]))}</span>' if sub.get("placement") else ""),
             ("Why placed", e(str(sub["reason"])) if sub.get("reason") else ""),
+            ("Duration", e(_dur(sub.get("ts"), sub.get("finished_ts"))) if sub.get("finished_ts") else ""),
             ("Gate", "approval required" if sub.get("gate_required") else ""),
             ("PII", e(", ".join(map(str, sub["pii"]))) if sub.get("pii") else ""),
             ("Cost", money(sub["cost"]) if sub.get("cost") is not None else ""),
         ] if v)
-        res = str(sub["result"]) if sub.get("result") else "No result yet — the worker has not finished."
+        res = str(sub["result"]) if sub.get("result") else ""
         err_t = ""
         if sub.get("error"):
             kind = f'<span class="chip err-chip mono">{e(str(sub["error_kind"]))}</span> ' if sub.get("error_kind") else ""
             hint = f'<p class="muted caption w-hint">{e(str(sub["hint"]))}</p>' if sub.get("hint") else ""
             err_t = f'<div class="w-err" role="alert">{kind}{e(str(sub["error"]))}{hint}</div>'
         title = sub.get("title") or str(sub.get("subtask") or "")
+        doc = (f'<div class="w-doc{_doc_cls(res)}">{e(res)}</div>' if res
+               else '<p class="muted caption">No result yet — the worker has not finished.</p>')
         out.append(f'<h2>Subtask</h2><div class="w-card"><p class="w-card-t">{e(title)}</p>'
-                   f'<table class="kv dense"><tbody>{rows}</tbody></table>{err_t}'
-                   f'<pre class="w-result mono">{e(res)}</pre></div>')
+                   f'<p class="w-card-sub muted caption">{_thought_line(sub, now)}</p>{err_t}{doc}'
+                   f'<details class="w-details"><summary>Details</summary>'
+                   f'<table class="kv dense"><tbody>{rows}</tbody></table></details></div>')
     elif run is not None:
         counts = {s["state"]: 0 for s in run["subtasks"]}
         for s in run["subtasks"]:
