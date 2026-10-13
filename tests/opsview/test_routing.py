@@ -32,10 +32,13 @@ def test_every_sidebar_section_has_a_route(console):
         assert f"<span>{label}</span>" in html
 
 
-def test_unauthenticated_requests_go_to_login(console):
+def test_unauthenticated_remote_requests_go_to_login(console):
+    remote = {"Host": "remote.test"}
     for path in ("/", "/approvals", "/runs/new", "/_frag/fleet", "/sandboxes"):
-        status, headers, _ = console.get(path, cookie=False)
+        status, headers, _ = console.get(path, cookie=False, headers=remote)
         assert status == 302 and headers["Location"] == "/login"
+    status, headers, _ = console.get("/", cookie=False)  # loopback is the trusted surface
+    assert status == 200 and "oc_sess=" in headers.get("Set-Cookie", "")
     assert console.get("/static/console.css", cookie=False)[0] == 200  # tokens are public
 
 

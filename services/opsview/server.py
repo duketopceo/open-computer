@@ -35,7 +35,7 @@ from services.gate.queue import ApprovalQueue, QueueError
 from services.opsview import goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
-from services.opsview.auth import Auth, rp_for
+from services.opsview.auth import Auth, SESSION_TTL, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import engines as goal_engines
 
@@ -214,8 +214,14 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.headers.get("Cookie", "")
         return next((p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("oc_sess=")), None)
 
+    _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+
     def _identity(self) -> str | None:
-        return self.auth.check_cookie(self._rp(), self._cookie())
+        who = self.auth.check_cookie(self._rp(), self._cookie())
+        if who is None and self._rp() in self._LOOPBACK:
+            self._local_cookie = self.auth.local_session(self._rp())
+            who = "local"
+        return who
 
     def _csrf(self) -> str:
         return hmac.new(CSRF_SECRET, (self._cookie() or "").encode(), hashlib.sha256).hexdigest()
@@ -232,8 +238,8 @@ class Handler(BaseHTTPRequestHandler):
         return {k: v[0] for k, v in parse_qs(raw.decode(errors="replace")).items()}
 
     def _set_session(self, cookie: str):
-        secure = "" if self._rp() == "localhost" else "; Secure"
-        self.send_header("Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age=43200")
+        secure = "" if self._rp() in self._LOOPBACK else "; Secure"
+        self.send_header("Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}")
 
     def _send(self, code, body: bytes, ctype="text/html; charset=utf-8", extra: dict | None = None, page=False):
         self.send_response(code)
@@ -245,6 +251,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Security-Policy", CSP)
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Cache-Control", "no-store")
+        local_cookie = getattr(self, "_local_cookie", None)
+        if local_cookie:
+            self._set_session(local_cookie)
+            self._local_cookie = None
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()

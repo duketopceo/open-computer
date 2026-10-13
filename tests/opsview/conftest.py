@@ -26,6 +26,9 @@ class FakeAuth:
     def check_cookie(self, rp, raw):
         return "luke@test" if raw == "test" else None
 
+    def local_session(self, rp):
+        return "test"
+
 
 class Console:
     def __init__(self, port: int, base: Path, env: dict):
