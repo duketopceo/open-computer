@@ -1,0 +1,31 @@
+[project]
+name = "open-computer"
+version = "0.0.0"
+description = "Self-hosted, cost-capped control plane: routed workers in disposable sandboxes, approval-gated egress."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+dependencies = [
+  "fido2>=2.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/conformance", "tests/fsproto", "tests/opsview", "tests/unit", "tests/mcp"]
+addopts = "-ra"
+markers = [
+  "live: boots real CubeSandbox microVMs; excluded from CI (`-m 'not live'`), run by hand",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["bench", ".agentflow"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B006", "B008"]

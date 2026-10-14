@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import decide as _decide
-from .budget import Budget, BudgetHalt
+from .budget import Budget, BudgetHalt  # noqa: F401  (re-exported)
 from .policy_table import offline_decide
 
 

@@ -23,6 +23,7 @@ async function serve(port, ...extra) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-e2e-"));
   const p = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", String(port), dir, ...extra], { cwd: REPO });
   servers.push(p);
+  p.stderr.on("data", (d) => process.stderr.write(d)); // surface fixture crashes in CI logs
   await new Promise((res, rej) => {
     p.stdout.on("data", (d) => String(d).includes("ready") && res());
     p.on("exit", (c) => rej(new Error("fixture exited " + c)));

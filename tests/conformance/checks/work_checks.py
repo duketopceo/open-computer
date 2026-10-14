@@ -60,8 +60,8 @@ def run_detail_literal(runs, tmp_path) -> None:
             raise CheckFailed(f"subtask {s['subtask']} missing placement/reason")
 
 
-@check("WORK", "blocked dep reports QUEUED — never a fabricated result")
-def blocked_dep_queued(runs, tmp_path) -> None:
+@check("WORK", "failed dep fails dependents closed — FAILED, never a result")
+def blocked_dep_fails(runs, tmp_path) -> None:
     rid = runs.submit(
         "g",
         lambda _g: json.dumps(
@@ -72,13 +72,20 @@ def blocked_dep_queued(runs, tmp_path) -> None:
         ),
         lambda t: (_ for _ in ()).throw(RuntimeError("dead")),
     )
-    _wait(runs, rid, expect=1)  # b is dep-blocked on failed a — never dispatches
+    _wait(runs, rid)  # a fails; b dep-fails — the whole run settles
     d = runs.get_run(rid)
     by_id = {s["subtask"]: s for s in d["subtasks"]}
     if by_id["a"]["state"] != "FAILED":
         raise CheckFailed(f"a: {by_id['a']['state']}, wanted FAILED")
-    if "b" in by_id and "result" in by_id["b"]:
-        raise CheckFailed("blocked dep fabricated a result")
+    b = by_id.get("b")
+    if not b or b["state"] != "FAILED":
+        raise CheckFailed(f"b: {b and b['state']}, wanted FAILED (dep-failed)")
+    if "result" in b:
+        raise CheckFailed("dep-blocked subtask fabricated a result")
+    if b.get("error_kind") != "DependencyFailed":
+        raise CheckFailed(
+            f"b error_kind {b.get('error_kind')!r}, wanted DependencyFailed"
+        )
     states = [r["states"] for r in runs.list_runs() if r["run"] == rid]
     if not states or not any(s.get("FAILED") for s in states):
         raise CheckFailed("list_runs hid the failure")
@@ -99,7 +106,7 @@ def goal_requires_auth(ops) -> None:
     r = urllib.request.Request(
         f"{_b}/goals",
         data=b"goal=x&confirm=1",
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Host": "remote.test"},
         method="POST",
     )
     try:
