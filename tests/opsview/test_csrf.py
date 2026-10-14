@@ -12,8 +12,9 @@ POSTS = [concrete(p) for p, _ in server.POST_ROUTES]
 
 
 def test_post_without_session_is_401(console, calls):
+    remote = {"Host": "remote.test"}
     for path in POSTS:
-        assert console.post(path, {"confirm": "1"}, csrf=False, cookie=False)[0] == 401
+        assert console.post(path, {"confirm": "1"}, csrf=False, cookie=False, headers=remote)[0] == 401
     assert calls == {"matrix": 0, "route": 0}
 
 
@@ -31,7 +32,8 @@ def test_csrf_token_is_bound_to_the_session(console, calls):
     # same token, different cookie value: must not validate (token = HMAC of the cookie)
     status, _, _ = console.request(
         "POST", "/runs", body=f"csrf={good}&confirm=1",
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Cookie": "oc_sess=other"}, cookie=False)
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Cookie": "oc_sess=other",
+                 "Host": "remote.test"}, cookie=False)
     assert status == 401  # FakeAuth rejects the other cookie before the token is even compared
     assert calls["matrix"] == 0
 

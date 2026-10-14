@@ -32,20 +32,41 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
+from services.opsview import automations, capabilities, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
-from services.opsview.auth import Auth, rp_for
+from services.opsview.auth import Auth, SESSION_TTL, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
+from services.orchestrator import engines as goal_engines
 
 REPO = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
 STATIC_TYPES = {
     "silver-lining.css": "text/css", "console.css": "text/css",
     "console.js": "text/javascript", "theme-init.js": "text/javascript",
+    "work.js": "text/javascript",
 }
 CSP = ("default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
        "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 CSRF_SECRET = secrets.token_bytes(32)
+ACCESS_IDENTITY_URL = "https://duketopceo.cloudflareaccess.com/cdn-cgi/access/get-identity"
+
+
+def access_identity(cf_token: str) -> str | None:
+    """Ask Cloudflare who a CF_Authorization token belongs to. Server-verified
+    (no local crypto to get wrong); only called when no app session exists —
+    once per login. Any failure returns None → the passkey gate stays."""
+    if not cf_token:
+        return None
+    url = os.environ.get("OC_ACCESS_IDENTITY_URL", ACCESS_IDENTITY_URL)
+    try:
+        req = urllib.request.Request(url, headers={"Cookie": f"CF_Authorization={cf_token}"})
+        with urllib.request.urlopen(req, timeout=4) as r:
+            d = json.loads(r.read().decode())
+        email = str(d.get("email") or "").strip().lower()
+        return email or None
+    except Exception:
+        return None
 
 
 # ------------------------------------------------------------------ config
@@ -157,21 +178,43 @@ def _route(q: str) -> dict:
             "cost": d.cost, "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms)}
 
 
+def _submit_goal(goal: str, who: str) -> str:
+    """Spending path behind POST /goals confirm. Tests patch this."""
+    return goalruns.submit(goal, goal_engines.decompose_engine(), goal_engines.work_fn(), by=who)
+
+
+def _resume_goals() -> None:
+    """Re-drive goal runs orphaned by a restart. Fails soft — disk is truth."""
+    try:
+        n = goalruns.resume(goal_engines.work_fn())
+        if n:
+            print(f"resumed {n} goal run(s)")
+    except Exception:
+        pass
+
+
 # ----------------------------------------------------------------- routes
 # (pattern, method name). The tests enumerate these tables to prove GETs are
 # side-effect free and that every POST is CSRF-protected.
 
 GET_ROUTES = [
-    (r"/", "g_overview"), (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
+    (r"/", "g_overview"), (r"/work", "g_work"),
+    (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
+    (r"/goals", "g_goals"), (r"/goals/new", "g_goal_new"), (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
+    (r"/skills", "g_skills"), (r"/automations", "g_automations"),
     (r"/runs", "g_runs"), (r"/runs/new", "g_run_new"), (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
     (r"/approvals", "g_approvals"), (r"/router", "g_router"), (r"/audit", "g_audit"),
-    (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"),
+    (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"), (r"/_frag/work", "g_frag_work"),
 ]
 REDIRECTS = {"/fleet": "/sandboxes", "/matrix": "/runs", "/gate": "/approvals", "/ops": "/"}
 POST_ROUTES = [
-    (r"/runs", "p_runs"), (r"/router/test", "p_router_test"),
+    (r"/runs", "p_runs"), (r"/goals", "p_goals"), (r"/router/test", "p_router_test"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_sendback"),
+    (r"/automations", "p_automations"),
+    (r"/automations/(?P<id>auto-[0-9a-f]{8})/pause", "p_auto_pause"),
+    (r"/automations/(?P<id>auto-[0-9a-f]{8})/trigger", "p_auto_trigger"),
+    (r"/automations/(?P<id>auto-[0-9a-f]{8})/delete", "p_auto_delete"),
 ]
 # Old side-effecting GET URLs now answer 405 instead of acting.
 POST_ONLY_LEGACY = {"/run", "/route"}
@@ -196,11 +239,30 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.headers.get("Cookie", "")
         return next((p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("oc_sess=")), None)
 
+    def _cf_cookie(self) -> str | None:
+        raw = self.headers.get("Cookie", "")
+        return next((p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("CF_Authorization=")), None)
+
+    _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+
     def _identity(self) -> str | None:
-        return self.auth.check_cookie(self._rp(), self._cookie())
+        who = self.auth.check_cookie(self._rp(), self._cookie())
+        if who is None and self._rp() in self._LOOPBACK:
+            self._local_cookie = self.auth.local_session(self._rp())
+            who = "local"
+        if who is None:
+            cf = self._cf_cookie()
+            if cf:
+                email = access_identity(cf)
+                if email:
+                    self._local_cookie = self.auth.access_session(self._rp(), email)
+                    who = email
+                    print(f"access session minted for {email}")
+        return who
 
     def _csrf(self) -> str:
-        return hmac.new(CSRF_SECRET, (self._cookie() or "").encode(), hashlib.sha256).hexdigest()
+        raw = self._cookie() or getattr(self, "_local_cookie", None) or ""
+        return hmac.new(CSRF_SECRET, raw.encode(), hashlib.sha256).hexdigest()
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
@@ -214,8 +276,8 @@ class Handler(BaseHTTPRequestHandler):
         return {k: v[0] for k, v in parse_qs(raw.decode(errors="replace")).items()}
 
     def _set_session(self, cookie: str):
-        secure = "" if self._rp() == "localhost" else "; Secure"
-        self.send_header("Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age=43200")
+        secure = "" if self._rp() in self._LOOPBACK else "; Secure"
+        self.send_header("Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}")
 
     def _send(self, code, body: bytes, ctype="text/html; charset=utf-8", extra: dict | None = None, page=False):
         self.send_response(code)
@@ -227,6 +289,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Security-Policy", CSP)
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Cache-Control", "no-store")
+        local_cookie = getattr(self, "_local_cookie", None)
+        if local_cookie:
+            self._set_session(local_cookie)
+            self._local_cookie = None
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -282,6 +348,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._page("overview", views.not_found(), 404)
         getattr(self, name)(qs, **args)
 
+    def g_work(self, qs):
+        self._page("work", views.page_work(self._csrf()), sub="Goals, plans, results — the workplace")
+
     def g_overview(self, qs):
         now = time.time()
         q = ApprovalQueue(approvals_path())
@@ -300,6 +369,19 @@ class Handler(BaseHTTPRequestHandler):
         row = next((s for s in fleet_state()["sandboxes"] if str(s.get("sandboxID")) == sid), None)
         self._page("sandboxes", views.page_sandbox_detail(sid, row), 200 if row else 404, sub=views.e(sid))
 
+    def g_goals(self, qs):
+        self._page("goals", views.page_goals(goalruns.list_runs(), time.time()),
+                   sub='<a class="btn primary" href="/goals/new" data-action="goal.new">New goal</a>')
+
+    def g_goal_new(self, qs):
+        self._page("goals", views.page_goal_new(self._csrf()), sub="Decomposed into subtasks before it runs")
+
+    def g_goal(self, qs, id):
+        run = goalruns.get_run(id)
+        if not run:
+            return self._page("goals", views.not_found(), 404)
+        self._page("goals", views.page_goal_detail(run, time.time()), sub=id)
+
     def g_runs(self, qs):
         self._page("runs", views.page_runs(runstore.list_runs(), time.time()),
                    sub='<a class="btn primary" href="/runs/new" data-action="run.new">New matrix run</a>')
@@ -316,6 +398,15 @@ class Handler(BaseHTTPRequestHandler):
     def g_approvals(self, qs):
         items = ApprovalQueue(approvals_path()).items()
         self._page("approvals", views.page_approvals(items, time.time()), sub="Oldest first")
+
+    def g_skills(self, qs):
+        self._page("skills", views.page_skills(capabilities.collect()),
+                   sub="Capability surface — live health, never aspiration")
+
+    def g_automations(self, qs):
+        self._page("automations",
+                   views.page_automations(self._csrf(), automations.list_automations(), time.time()),
+                   sub="Goals on a cadence — durable Temporal schedules")
 
     def g_router(self, qs):
         self._page("router", self._router_body(), sub="Route tester and decision ledger")
@@ -337,6 +428,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def g_frag_status(self, qs):
         self._send(200, views.status_cell(fleet_state()).encode(), page=True)
+
+    def g_frag_work(self, qs):
+        rid = (qs.get("run") or [""])[0]
+        sel = (qs.get("sub") or [""])[0]
+        run = goalruns.get_run(rid) if re.fullmatch(r"goal_[0-9a-f]{8}", rid) else None
+        pend = ApprovalQueue(approvals_path()).pending()
+        runs = goalruns.list_runs()
+        now = time.time()
+        payload = {
+            "rail": views.work_rail(runs, now, rid if run else ""),
+            "main": views.work_main(run, now, sel),
+            "inspect": views.work_inspect(run, sel, pend, now),
+            "active": views.work_active(runs, run),
+        }
+        self._send(200, json.dumps(payload).encode(), "application/json")
 
     # --- POST --------------------------------------------------------------
     def do_POST(self):
@@ -365,6 +471,27 @@ class Handler(BaseHTTPRequestHandler):
         out = _run_matrix()
         row = runstore.record(out, by=who, duration_s=time.time() - t0)
         self._redirect(f"/runs/{row['id']}", 303)
+
+    def p_goals(self, who, body):
+        goal = str(body.get("goal", "")).strip()
+        if not goal or len(goal) > 4000:
+            if self._wants_json():
+                return self._json(400, {"error": "A goal is required (max 4000 chars)."})
+            return self._page("goals", views.page_goal_new(self._csrf(), "A goal is required (max 4000 chars)."), 400)
+        if body.get("confirm") != "1":
+            if self._wants_json():
+                return self._json(200, {"needs_confirm": True, "cap": daily_cap()})
+            return self._page("goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()),
+                              sub="Confirm before it runs")
+        try:
+            rid = _submit_goal(goal, who)
+        except Exception as e:
+            if self._wants_json():
+                return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+            return self._page("goals", views.page_goal_new(self._csrf(), f"{type(e).__name__}: {e}"), 500)
+        if self._wants_json():
+            return self._json(200, {"run": rid})
+        self._redirect(f"/goals/{rid}", 303)
 
     def p_router_test(self, who, body):
         q = str(body.get("q", "")).strip()[:500]
@@ -397,6 +524,59 @@ class Handler(BaseHTTPRequestHandler):
 
     def p_sendback(self, who, body, id):
         self._decide(who, body, id, False)
+
+    def _auto_body(self, error: str = "") -> str:
+        return views.page_automations(self._csrf(), automations.list_automations(),
+                                      time.time(), error)
+
+    def p_automations(self, who, body):
+        goal = str(body.get("goal", "")).strip()
+        try:
+            every = int(body.get("every_minutes", ""))
+        except (TypeError, ValueError):
+            every = 0
+        if not goal or len(goal) > 4000 or not 5 <= every <= 10080:
+            return self._page("automations",
+                              self._auto_body("A goal and a cadence of 5–10080 minutes are required."), 400)
+        try:
+            automations.create(goal, every)
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
+
+    def p_auto_pause(self, who, body, id):
+        try:
+            automations.set_paused(id, str(body.get("paused")) == "1")
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
+
+    def _auto_confirm(self, body, id, op) -> bool:
+        """Spendy/destructive ops need the confirm step — names the schedule."""
+        if body.get("confirm") == "1":
+            return True
+        desc = str(body.get("desc", ""))[:200]
+        self._page("automations", views.page_automation_confirm(self._csrf(), id, op, desc),
+                   sub="Confirm before it acts")
+        return False
+
+    def p_auto_trigger(self, who, body, id):
+        if not self._auto_confirm(body, id, "trigger"):
+            return
+        try:
+            automations.trigger(id)
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
+
+    def p_auto_delete(self, who, body, id):
+        if not self._auto_confirm(body, id, "delete"):
+            return
+        try:
+            automations.delete(id)
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
 
     def _webauthn(self, path):
         body = self._body()
@@ -442,6 +622,7 @@ def make_server(port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
 
 def main(port: int = 8791):
     print(f"console → http://127.0.0.1:{port}")
+    _resume_goals()
     make_server(port).serve_forever()
 
 
