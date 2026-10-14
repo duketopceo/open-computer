@@ -24,7 +24,11 @@ Adapter contract (what each unit must expose):
 
 - services.gate.adapter(tmp_path) — escalation gate adapter:
     scan(text) -> PIIDecision(flagged: bool, categories: list[str])
-    request_cloud_call(payload: dict, approved: bool) -> CallResult(allowed, bytes_sent)
+    grant(payload, by=) -> Approval        # human path; approval bound to sha256(payload), single use, expiring
+    approval_for(payload, id) -> Approval  # an unverified claim (what a forger would build)
+    request_cloud_call(payload, approval|None, sender=) -> CallResult(allowed, bytes_sent, reason)
+        # the only send path: bytes leave only by calling `sender`
+    clock / approval_ttl                  # injectable
     audit -> AuditLog: append(row), rows() -> list, delete(i) raises ReadOnly
 """
 

@@ -47,9 +47,11 @@ def test_approve_writes_audit_in_order_and_is_attributed(console):
     pend = q_of(console).pending()[0]
     status, _, body = console.post(f"/approvals/{pend['id']}/approve", {"hash": pend["payload_hash"]},
                                    headers=hdrs(console))
-    assert status == 200 and json.loads(body)["allowed"] is True
-    rows = AuditLog(console.env["OC_AUDIT"]).rows()[-2:]
-    assert [r["event"] for r in rows] == ["human_decision", "cloud_call_allowed"]
+    res = json.loads(body)
+    assert status == 200 and res["approved"] is True and res["sent"] is False  # approving never sends
+    rows = AuditLog(console.env["OC_AUDIT"]).rows()
+    assert rows[-1]["event"] == "human_decision"  # no cloud_call_allowed until the owner presents the approval
+    rows = rows[-1:]
     assert rows[0]["approved"] is True and rows[0]["by"] == "luke@test"
     assert rows[0]["approval_id"] == pend["id"] and rows[0]["payload_hash"] == pend["payload_hash"]
     assert q_of(console).get(pend["id"])["status"] == "approved"

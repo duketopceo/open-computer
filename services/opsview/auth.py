@@ -39,7 +39,9 @@ CREDS_PATH = DATA_DIR / "credentials.json"
 KEY_PATH = DATA_DIR / "session-key"
 ENROLL_DIR = DATA_DIR / "enroll"
 OMASEAL_KEY = ("open-computer", "session-key")
-SESSION_TTL = 12 * 3600
+SESSION_TTL = 30 * 86400
+LOCAL_CRED = b"local"
+ACCESS_CRED = b"access"  # sessions minted from a verified Cloudflare Access identity
 STATE_TTL = 300
 TOKEN_TTL = 600
 
@@ -180,11 +182,24 @@ class Auth:
             raise RuntimeError(f"session key corrupt: {key_path}")
         key = secrets.token_bytes(32)
         _omaseal_set(svc, acct, base64.b64encode(key).decode())
-        fd = os.open(key_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        # Create the file whole (tmp + link) so concurrent first starts neither crash nor read a partial
+        # key: the loser of the race adopts the winner's key.
+        tmp = key_path.with_name(f".{key_path.name}.{os.getpid()}.new")
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             os.write(fd, key)
         finally:
             os.close(fd)
+        try:
+            os.link(tmp, key_path)
+        except FileExistsError:
+            winner = key_path.read_bytes()
+            if len(winner) != 32:
+                raise RuntimeError(f"session key corrupt: {key_path}") from None
+            key = winner
+            _omaseal_set(svc, acct, base64.b64encode(key).decode())
+        finally:
+            tmp.unlink(missing_ok=True)
         return key
 
     # -- ceremonies --------------------------------------------------
@@ -274,6 +289,21 @@ class Auth:
 
     # -- sessions ----------------------------------------------------
 
+    def local_session(self, rp: str) -> str:
+        """Session for the trusted loopback surface — no ceremony.
+
+        A passkey on loopback proves nothing a local process can't bypass
+        anyway (the credential store + session key sit beside it); the
+        cookie still rides the same hmac/expiry/rp machinery.
+        """
+        return self._cookie(rp, "local", LOCAL_CRED)
+
+    def access_session(self, rp: str, email: str) -> str:
+        """Session for a Cloudflare Access-verified identity — the perimeter
+        already authenticated the human; the app consumes it instead of
+        re-running a second (flaky) passkey ceremony."""
+        return self._cookie(rp, email, ACCESS_CRED)
+
     def _cookie(self, rp: str, identity: str, cred_id: bytes) -> str:
         exp = int(time.time()) + SESSION_TTL
         body = ".".join(
@@ -301,7 +331,8 @@ class Auth:
                 return None
             if base64.urlsafe_b64decode(rp_b64.encode()).decode() != rp:
                 return None
-            if not self.store.by_id(rp, base64.urlsafe_b64decode(cred_b64.encode())):
+            cred = base64.urlsafe_b64decode(cred_b64.encode())
+            if cred not in (LOCAL_CRED, ACCESS_CRED) and not self.store.by_id(rp, cred):
                 return None  # credential deleted → session dead
             return base64.urlsafe_b64decode(id_b64.encode()).decode()
         except Exception:

@@ -42,17 +42,34 @@ class _FailedSandbox:
             msg += f": {type(self._err).__name__}: {self._err}"
         raise SandboxUnavailable(msg)
 
+    def close(self) -> None:
+        """No VM to kill — uniform interface with _CubeSandbox."""
+
 
 class _CubeSandbox:
-    def __init__(self, sdk_sandbox: Any, placeholders: dict[str, str]):
+    def __init__(self, sdk_sandbox: Any, resolve: dict[str, str] | None = None):
         self._sb = sdk_sandbox
-        self._placeholders = placeholders
+        self._resolve = dict(resolve or {})  # placeholder -> real secret. Host memory only, never sent.
+
+    def substitute(self, text: str) -> str:
+        """The credential boundary (v1, host side): replace placeholders with the real secret in
+        outbound text the HOST is about to send. The guest never holds the real value (R3)."""
+        for placeholder, real in self._resolve.items():
+            text = text.replace(placeholder, real)
+        return text
 
     def exec(self, cmd: str) -> ExecResult:
         r = self._sb.commands.run(cmd)
         return ExecResult(
             returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr
         )
+
+    def close(self) -> None:
+        """Terminate the microVM. Best-effort — never raises."""
+        try:
+            self._sb.kill()
+        except Exception:
+            pass
 
 
 class ExecplaneAdapter:
@@ -95,10 +112,7 @@ class ExecplaneAdapter:
         if boot_will_fail:
             return _FailedSandbox()
         allowlist = list(egress_allowlist or [])
-        env_vars = {
-            name: f"oc-placeholder-{uuid.uuid4().hex[:12]}"
-            for name in (secrets or {})
-        }
+        env_vars, resolve = self._guest_env(secrets or {})
         payload: dict[str, Any] = dict(
             template=template or self._template,
             timeout=timeout,
@@ -112,4 +126,15 @@ class ExecplaneAdapter:
             sb = self._sdk.Sandbox.create(**payload)
         except Exception as e:
             return _FailedSandbox(e)
-        return _CubeSandbox(sb, env_vars)
+        return _CubeSandbox(sb, resolve)
+
+    @staticmethod
+    def _guest_env(secrets: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+        """-> (env vars the guest sees, placeholder -> real secret kept host side)."""
+        env_vars: dict[str, str] = {}
+        resolve: dict[str, str] = {}
+        for name, real in secrets.items():
+            placeholder = f"oc-placeholder-{uuid.uuid4().hex[:12]}"
+            env_vars[name.upper()] = placeholder
+            resolve[placeholder] = real
+        return env_vars, resolve

@@ -47,8 +47,8 @@ QUESTIONS = {
 TIER_MODELS = {
     "local": ["typesafe/jev-1.13", "local/ollama"],
     "cheap": ["google/gemini-2.5-flash", "deepseek/deepseek-v4.1-flash"],
-    "mid": ["x-ai/grok-4.7", "anthropic/claude-sonnet-4.5"],
-    "frontier": ["anthropic/claude-opus-4.5"],
+    "mid": ["deepseek/deepseek-v4-pro", "x-ai/grok-4.7"],
+    "frontier": ["x-ai/grok-4.7"],  # price ceiling; premium models are never a default
 }
 
 _KW = [

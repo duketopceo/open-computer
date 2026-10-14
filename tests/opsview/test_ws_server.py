@@ -22,6 +22,12 @@ class FakeAuth:
     def check_cookie(self, rp, raw):
         return "luke@test" if raw == "test" else None
 
+    def local_session(self, rp):
+        return "test"
+
+    def access_session(self, rp, email):
+        return "test"
+
 
 class Client:
     def __init__(self, port):
@@ -176,7 +182,10 @@ def test_heartbeat_while_a_run_waits_on_a_human(wsx):
 
 
 def test_unauthenticated_stream_is_refused(wsx):
-    s, h, _ = wsx.get("/goals/g_research01/events", cookie=False)
+    # loopback is a trusted surface (auto-mints a local session) — an
+    # unauthenticated request must come from a non-loopback host
+    s, h, _ = wsx.get("/goals/g_research01/events", cookie=False,
+                      headers={"Host": "oc.shippedit.dev"})
     assert s == 302 and h["Location"] == "/login"
 
 
@@ -227,7 +236,11 @@ def test_every_workspace_post_needs_csrf_session_and_same_origin(wsx):
         assert wsx.post(p, {"choice": "once"}, csrf=False)[0] == 403, p
         assert wsx.post(p, {}, headers={"X-CSRF-Token": "0" * 64})[0] == 403, p
         assert wsx.post(p, {}, headers={"Origin": "http://evil.example"})[0] == 403, p
+        # loopback auto-mints a local session, so the auth boundary there is CSRF
         s, _, _ = wsx.request("POST", p, body="{}", headers={"Content-Type": "application/json"}, cookie=False)
+        assert s == 403, p
+        # a truly unauthenticated request (non-loopback host) is refused outright
+        s, _, _ = wsx.request("POST", p, body="{}", headers={"Content-Type": "application/json", "Host": "oc.shippedit.dev"}, cookie=False)
         assert s == 401, p
     assert routes.ws().log.goals() == []
 
@@ -338,8 +351,19 @@ def test_decisions_are_audited_through_the_gate(wsx):
     h = entities(routes.ws().log.read("g_coding01"), "approval")["ap_clone01"]["payload_hash"]
     wsx.post("/goals/g_coding01/approvals/ap_clone01/decide", {"choice": "once", "hash": h})
     rows = [json.loads(ln) for ln in (wsx.dir / "audit.ndjson").read_text().splitlines()]
-    assert [r["event"] for r in rows][-2:] == ["human_decision", "cloud_call_allowed"]
-    assert rows[-2]["approval_id"] == "ap_clone01" and rows[-2]["payload_hash"] == h and rows[-2]["by"] == "luke@test"
+    assert rows[-1]["event"] == "human_decision"
+    assert rows[-1]["approval_id"] == "ap_clone01" and rows[-1]["payload_hash"] == h and rows[-1]["by"] == "luke@test"
+    # the granted approval is consumable through the single send path — a
+    # worker's call then writes cloud_call_allowed (the send itself is the
+    # caller's, so the replay fixture injects a spy sender)
+    from services.gate.gate import Approval
+    q = routes.ws().queue("g_coding01", write=True)
+    item = q.get("ap_clone01")
+    res = q.gate.request_cloud_call(item["payload"], Approval(id="ap_clone01", payload_hash=h),
+                                    sender=lambda p: len(str(p)))
+    assert res.allowed
+    rows = [json.loads(ln) for ln in (wsx.dir / "audit.ndjson").read_text().splitlines()]
+    assert rows[-1]["event"] == "cloud_call_allowed" and rows[-1]["approval_id"] == "ap_clone01"
 
 
 def test_the_cap_pauses_instead_of_cancelling_and_resume_needs_a_real_cap(wsx):

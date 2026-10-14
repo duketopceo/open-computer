@@ -31,10 +31,12 @@ def decide(
     payload: dict,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    sender: Callable[[dict], int] | None = None,
 ) -> bool:
     """Scan → render → per-step keyboard decision → enforced call.
 
-    Returns True only if the human approved AND the call was allowed.
+    Returns True only if the human approved AND the gate let the payload leave via `sender`.
+    Without a sender nothing can leave, so the result is False (fail closed).
     Every outcome writes an audit row (the gate handles that).
     """
     decision = gate.scan(str(payload))
@@ -49,12 +51,8 @@ def decide(
             break
         output_fn("  (a) approve   (r) reject")
     approved = key == "a"
-    gate.audit.append(
-        {
-            "event": "human_decision",
-            "approved": approved,
-            "model": payload.get("model"),
-            **({"eof": True} if eof else {}),
-        }
-    )
-    return gate.request_cloud_call(payload, approved=approved).allowed
+    if not approved:
+        gate.deny(payload, note="eof" if eof else "")
+        return False
+    approval = gate.grant(payload)
+    return gate.request_cloud_call(payload, approval, sender=sender).allowed
