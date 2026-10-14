@@ -68,12 +68,12 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-012 | P0 | Ops view v1 (web, :8791) | done (#9, #11, #12, #17) |
 | OC-013 | P0 | Router bench E2 (open PR #2) | done (#2) |
 | OC-014 | P0 | Program roadmap, design, logo proposal (open PR #6) | done (#6) |
-| OC-015 | P1 | R2 egress: positive control and refusal error class | open |
+| OC-015 | P1 | R2 egress: positive control and refusal error class | partial: positive control + broken-network/open-egress mutants (#19); refusal exit class not pinned until a live cassette exists |
 | OC-016 | P1 | Wire unused policy fixture into R6; resolve benign-egress contradiction | open |
 | OC-017 | P1 | Router golden replay: 180-fixture corpus through Router, fallback matrix | open |
 | OC-018 | P1 | Router/budget unit tests + negative controls | open |
 | OC-019 | P1 | fsproto: close the 8 spec deviations, fix lease race, property + crash tests | open |
-| OC-020 | P1 | Gate: payload-hash-bound approval, single egress path, pending queue, decision table | open |
+| OC-020 | P1 | Gate: payload-hash-bound approval, single egress path, pending queue, decision table | partial: hash-bound, single-use, expiring approval and single send path with injected sender (#19); hash-chained audit is OC-021 |
 | OC-021 | P1 | Audit log: hash chain, fsync, file mode, `oc audit verify` | open |
 | OC-022 | P1 | PII corpus >= 300 rows + precision/recall gates | open |
 | OC-023 | P1 | Execplane contract tests with recorded Cube cassettes (zero skips in CI) | open |
@@ -85,7 +85,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-029 | P1 | Live suite on self-hosted runner (marker live) | open |
 | OC-030 | P2 | Execplane lifecycle: exec timeout, teardown, pause/resume, snapshot/clone/rollback | open |
 | OC-031 | P2 | Cold-boot measurement and aarch64/Asahi verdict | open |
-| OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | open |
+| OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | partial: placeholders in guest, host-side `substitute()`, R3 non-vacuous (#19); no real worker uses it yet |
 | OC-033 | P2 | Credential boundary v2: substitution at egress proxy | open |
 | OC-034 | P2 | Bind approved policy to sandbox creation + audit every apply | open |
 | OC-035 | P2 | Worker cost ledger + hard per-task cap | open |
