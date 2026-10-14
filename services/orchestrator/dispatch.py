@@ -37,6 +37,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict) -
             "route": decision.route,
             "engine": decision.engine,
             "placement": placement.target,
+            "est_cost": sub.get("est_cost", 0.0),
         },
     )
     rec = {
