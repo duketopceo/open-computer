@@ -20,3 +20,24 @@ Screenshots: start the fixture (`python -I tests/opsview/serve_fixture.py 8851 /
 Python tests (routing, side-effect-free GETs, CSRF, approvals, registry, tokens):
 
     uv run --with pytest --with fido2 pytest tests/opsview
+
+## Agent workspace
+
+`workspace.e2e.mjs` drives the workspace (`/workspace`) against the replay fixture (`serve_fixture.py --replay`):
+no sandbox, no model, only 127.0.0.1. Each test file starts its own fixture servers on its own ports.
+
+    npm run test:workspace   # replay determinism, approvals, live stability, keyboard, palette, citations, cap, phone, layout
+    npm run test:replay      # same recorded stream twice (and paced vs instant) gives identical DOM snapshots
+    npm run test:approval    # no reuse after a payload change, Esc never decides, high risk needs two presses
+    npm run test:live        # a 200-event burst keeps scroll, tab, focus and the hovered row
+
+Gates (their own file and fixture servers): `npm run test:gates`
+
+    npm run test:artifacts   # every viewer renders its fixture with axe at 0 violations; the HTML viewer has no network
+    npm run test:a11y        # (also the console) axe on every tab and state, both themes, 1440 and 390, incl. approval cards
+
+Screenshots: start the fixture (`python -I tests/opsview/serve_fixture.py 8871 /tmp/fx --replay`), then
+`node tests/e2e/workspace-shots.mjs http://127.0.0.1:8871 docs/screenshots/workspace`.
+
+See [docs/design/agent-workspace.md](../../docs/design/agent-workspace.md) and
+[docs/design/event-stream.md](../../docs/design/event-stream.md).

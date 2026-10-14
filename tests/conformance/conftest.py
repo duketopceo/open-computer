@@ -80,9 +80,9 @@ def pytest_terminal_summary(terminalreporter):
     """Print the determinism matrix: rule -> PASS / FAIL / PENDING."""
     stats = terminalreporter.stats
     rows: dict[str, list[str]] = {}
-    for status in ("passed", "failed", "skipped", "error"):
+    for status in ("passed", "failed", "skipped", "error", "deselected"):
         for rep in stats.get(status, []):
-            m = re.search(r"test_(r\d+|router|auth|place|orch)_", getattr(rep, "nodeid", ""))
+            m = re.search(r"test_(r\d+|router|auth|place|orch|work)_", getattr(rep, "nodeid", ""))
             if m:
                 rows.setdefault(m.group(1).upper(), []).append(status)
     if not rows:
@@ -93,6 +93,6 @@ def pytest_terminal_summary(terminalreporter):
         state = (
             "FAIL"
             if "failed" in s or "error" in s
-            else ("PASS" if "passed" in s else "PENDING")
+            else ("PASS" if "passed" in s else "LIVE-ONLY" if set(s) == {"deselected"} else "PENDING")
         )
         terminalreporter.write_line(f"{rule}: {state} ({len(s)} checks)")

@@ -1,0 +1,8 @@
+flowchart LR
+  A[pytest x20] --> B{3 failures?}
+  B -->|yes| C[time.time can jump]
+  B -->|no| D[Done]
+  C --> E[Inject a monotonic clock]
+  E --> F[Fake clock in test]
+  F --> G[pytest x50 green]
+  G --> H[Push branch]

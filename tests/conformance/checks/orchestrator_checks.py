@@ -93,6 +93,32 @@ def worker_failure_fails_closed(orch, tmp_path) -> None:
         raise CheckFailed("worker failure wrote no audit row")
 
 
+@check("ORCH", "failed dep cascades — dependents fail closed, never queue forever")
+def dep_failure_cascades(orch, tmp_path) -> None:
+    def boom(_task):
+        raise RuntimeError("engine died")
+
+    run_id = orch.submit("build it", _dag_engine)
+    orch.work(boom)  # 'a' fails; b and c must dep-fail in the same sweep
+    res = orch.results(run_id)
+    for sid in ("a", "b", "c"):
+        if res[sid]["state"] != "FAILED":
+            raise CheckFailed(f"{sid} reports {res[sid]['state']}, wanted FAILED")
+        if "result" in res[sid]:
+            raise CheckFailed(f"{sid} fabricated a result")
+    kinds = {
+        row.get("kind")
+        for row in orch.audit.rows()
+        if row.get("event") == "worker_fail"
+    }
+    if "DependencyFailed" not in kinds:
+        raise CheckFailed("dep-blocked subtasks wrote no DependencyFailed rows")
+    recs = {d["subtask"]: d for d in orch.dispatches[run_id]}
+    for sid in ("b", "c"):
+        if not recs[sid].get("task") or recs[sid].get("placement") != "-":
+            raise CheckFailed(f"{sid} missing tombstone task or invented placement")
+
+
 @check("ORCH", "undispatched/pending subtask reports literal QUEUED, never a result")
 def pending_reports_queued(orch, tmp_path) -> None:
     run_id = orch.submit("build it", _dag_engine)

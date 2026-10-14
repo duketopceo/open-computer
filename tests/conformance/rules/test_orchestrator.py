@@ -3,6 +3,7 @@
 import pytest
 
 from checks.orchestrator_checks import (
+    dep_failure_cascades,
     dep_gates_dispatch,
     e2e_dag,
     malformed_decompose,
@@ -36,6 +37,10 @@ def test_orch_e2e_dag(orch, tmp_path):
 
 def test_orch_dep_gates(orch, tmp_path):
     dep_gates_dispatch(orch, tmp_path)
+
+
+def test_orch_dep_failure_cascades(orch, tmp_path):
+    dep_failure_cascades(orch, tmp_path)
 
 
 def test_orch_malformed(orch, tmp_path):

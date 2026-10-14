@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "provenance": "synthetic",
+  "note": "Hand-written: Cube API returns 503 on create.",
+  "interactions": [
+    {
+      "op": "create",
+      "id": "sb-503",
+      "result": {
+        "ok": false,
+        "error": "cube api 503"
+      },
+      "request": {
+        "template": "code-interpreter",
+        "timeout": 300,
+        "env_vars": null,
+        "allow_internet_access": false
+      }
+    }
+  ]
+}
