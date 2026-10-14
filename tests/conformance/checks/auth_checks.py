@@ -20,11 +20,12 @@ def _status(get, path, **kw):
         return e.code, dict(e.headers), e.read().decode()
 
 
-@check("AUTH", "unauthed view request redirects to /login — nothing leaks")
+@check("AUTH", "unauthed remote request redirects to /login — nothing leaks")
 def unauthed_redirects(ops) -> None:
     base, _auth, get = ops
     for path in ("/", "/run", "/route?q=x"):
-        code, hdrs, _ = _status(get, path)
+        # remote host: loopback is the trusted surface, the gate is for here
+        code, hdrs, _ = _status(get, path, headers={"Host": "remote.test"})
         if code != 302 or "/login" not in hdrs.get("Location", ""):
             raise CheckFailed(f"{path} → {code} (expected 302 → /login)")
 
