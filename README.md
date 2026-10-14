@@ -52,13 +52,14 @@ No package or CLI yet. From a checkout, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 # determinism matrix (no network, no model calls; sandbox rows skip without CubeSandbox)
-uv run --with pytest --with fido2 pytest tests/conformance tests/opsview tests/unit -q
+uv sync --locked
+uv run pytest -m "not live"        # CI runs exactly this, plus `uv run ruff check .`
 
 # operator console against fixture data (no microVMs, no models)
-uv run --with fido2 python -I tests/opsview/serve_fixture.py 8851 /tmp/oc-fixture
+uv run python -I tests/opsview/serve_fixture.py 8851 /tmp/oc-fixture
 
 # console browser tests (Playwright + axe)
-cd tests/e2e && npm i && npx playwright install chromium && npm test
+cd tests/e2e && npm ci && npx playwright install chromium && npm test
 ```
 
 Live rows need `CUBE_API_URL` and `CUBE_API_KEY` for a local CubeSandbox; they boot real microVMs, so run

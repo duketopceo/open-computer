@@ -56,8 +56,8 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 |---|---|---|---|
 | OC-001 | P0 | Reconcile docs with code: rebase PR #6, fix stale README/ROADMAP/ARCHITECTURE_MAP | in review (this PR) |
 | OC-002 | P0 | Decide and record: name, router (keep/shrink/delete), fsproto (keep), Anthropic models in TIER_MODELS | open |
-| OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | open |
-| OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | open |
+| OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | partial: pyproject.toml + uv.lock + pytest/ruff config (#22); sys.path hacks remain |
+| OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | done (#22): hosted ubuntu-latest, SHA-pinned actions, pull_request only; python and console-e2e jobs; mypy not configured, not added |
 | OC-005 | P0 | Determinism guard: random order x20, frozen/foreign clock, matrix-vs-docs drift check | open |
 | OC-006 | P0 | U0 conformance harness (R1-R7 executable) | done (#3) |
 | OC-007 | P0 | U1 fs-protocol spec v0.1 | done (#4) |
@@ -88,7 +88,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | partial: placeholders in guest, host-side `substitute()`, R3 non-vacuous (#19); no real worker uses it yet |
 | OC-033 | P2 | Credential boundary v2: substitution at egress proxy | open |
 | OC-034 | P2 | Bind approved policy to sandbox creation + audit every apply | open |
-| OC-035 | P2 | Worker cost ledger + hard per-task cap | open |
+| OC-035 | P2 | Worker cost ledger + hard per-task cap | partial: ledger, per-run cap that pauses (never cancels), resume, orchestrator wiring (#24); event emission is a plain-dict hook until the UI event-stream helper lands; no real worker reports usage yet |
 | OC-036 | P2 | Placement policy: one pure function | partial: rule table landed (#15), decider call and cost inputs open |
 | OC-037 | P2 | Router cleanup: seconds-vs-ms, spend-rule models, local jev path, alpha-endpoint contract test | open |
 | OC-038 | P2 | PII-Tracer model stage behind scan() | open |
@@ -119,6 +119,14 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-064 | P6 | Remote HTTPS MCP with auth (prerequisite for public directories) | open |
 | OC-065 | P6 | Anthropic directory submission (claude.ai/directory/manage) | open |
 | OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open |
+
+## Product direction (owner, 2026-10-11)
+
+open-computer should feel like Perplexity Computer: the user states a goal in a chat, work runs in sandboxes,
+and a right sidebar shows steps, sources, artifacts and approvals live. The current console becomes the
+admin/ops surface. The goal event-stream contract (schema, emitter helper, SSE `/goals/<id>/events`) is owned by the
+UI workspace branch (`docs/design/event-stream.md`); the orchestrator units (OC-039, OC-040) emit through that helper
+and schema and do not define a second one.
 
 ## Open decisions (OC-002)
 

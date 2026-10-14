@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def _jsonl(path: Path):
-    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
 
 
 @check("R5", "labeled PII fixtures flagged before any cloud call")

@@ -244,7 +244,7 @@ class FSAdapter:
         deps = self._agent_dir(consumer) / "deps"
         if not deps.exists():
             return True
-        wanted = [l for l in deps.read_text().splitlines() if l.strip()]
+        wanted = [ln for ln in deps.read_text().splitlines() if ln.strip()]
         return all(self._tombstoned(t) for t in wanted)
 
     def claim(self, agent: str, tid: str, ttl: float | None = None) -> str:
