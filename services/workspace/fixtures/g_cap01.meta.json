@@ -1,0 +1,14 @@
+{
+  "title": "Competitive analysis of 12 workflow vendors",
+  "summary": "A goal that hits the spend cap and pauses",
+  "id": "g_cap01",
+  "holds": {
+    "33": "resume"
+  },
+  "on_deny": [],
+  "files": {
+    "art_outline": "outline.md",
+    "art_analysis": "analysis.md"
+  },
+  "events": 44
+}

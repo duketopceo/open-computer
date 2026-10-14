@@ -88,14 +88,14 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | partial: placeholders in guest, host-side `substitute()`, R3 non-vacuous (#19); no real worker uses it yet |
 | OC-033 | P2 | Credential boundary v2: substitution at egress proxy | open |
 | OC-034 | P2 | Bind approved policy to sandbox creation + audit every apply | open |
-| OC-035 | P2 | Worker cost ledger + hard per-task cap | open |
-| OC-036 | P2 | Placement policy: one pure function | partial: rule table landed (#15), decider call and cost inputs open |
+| OC-035 | P2 | Worker cost ledger + hard per-task cap | partial: ledger, per-run cap that pauses (never cancels), resume, orchestrator wiring (#24); event emission is a plain-dict hook until the UI event-stream helper lands; no real worker reports usage yet |
+| OC-036 | P2 | Placement policy: one pure function | partial: pure function with headroom input from the run cost ledger, 1,152-case invariant table with mutants (#25); the router's decider chain already supplies the tier at dispatch, no new decider call |
 | OC-037 | P2 | Router cleanup: seconds-vs-ms, spend-rule models, local jev path, alpha-endpoint contract test | open |
 | OC-038 | P2 | PII-Tracer model stage behind scan() | open |
 | OC-039 | P2 | `oc` CLI: run, matrix, ledger, approve, audit verify, ops; exit-code contract | open |
 | OC-040 | P2 | Vertical slice: goal -> subtasks -> sandboxes -> artifact, 3 golden tasks, replay mode | partial: decompose/dispatch/collect landed (#16); no CLI, no golden tasks |
 | OC-041 | P2 | fsproto sandbox mount isolation (agents see only their dir) | open |
-| OC-042 | P2 | MCP server (stdio): route, place, gate_request, audit, ledger, matrix (no approve tool) | open |
+| OC-042 | P2 | MCP server (stdio): route, place, gate_request, audit, ledger, matrix (no approve tool) | partial: stdio server (hand-rolled JSON-RPC), 8 tools, golden tools/list, human-only approval enforced by tests (#27); no `run` tool until OC-039, no registry packaging |
 | OC-043 | P3 | Khan adapter plugin consuming the MCP server | open |
 | OC-044 | P4 | Temporal durability | open |
 | OC-045 | P4 | Browser/computer-use worker (browser-use in sandbox) | open |

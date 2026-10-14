@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/duketopceo/open-computer/oc/events/schema/event.schema.json",
+  "title": "open-computer goal event",
+  "description": "One event on a goal's stream. The workspace sidebar and timeline are pure projections of these events. See docs/design/event-stream.md.",
+  "$ref": "#/$defs/event",
+  "$defs": {
+    "event": {
+      "type": "object",
+      "required": ["id", "v", "goal", "seq", "ts", "type", "data"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^g_[a-z0-9_]+:[0-9]+$", "description": "'<goal>:<seq>'. Stable and unique." },
+        "v": { "const": 1 },
+        "goal": { "type": "string", "pattern": "^g_[a-z0-9_]+$" },
+        "seq": { "type": "integer", "minimum": 1, "description": "Gapless, strictly increasing per goal, starting at 1. Doubles as the SSE id." },
+        "ts": { "type": "number", "minimum": 0, "description": "Epoch seconds, millisecond precision. The UI derives all durations from event ts, never from its own clock." },
+        "type": { "enum": ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error"] },
+        "actor": { "$ref": "#/$defs/actor" },
+        "data": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        { "properties": { "type": { "const": "run" }, "data": { "$ref": "#/$defs/run" } } },
+        { "properties": { "type": { "const": "step" }, "data": { "$ref": "#/$defs/step" } } },
+        { "properties": { "type": { "const": "tool_call" }, "data": { "$ref": "#/$defs/tool_call" } } },
+        { "properties": { "type": { "const": "source" }, "data": { "$ref": "#/$defs/source" } } },
+        { "properties": { "type": { "const": "artifact" }, "data": { "$ref": "#/$defs/artifact" } } },
+        { "properties": { "type": { "const": "change" }, "data": { "$ref": "#/$defs/change" } } },
+        { "properties": { "type": { "const": "approval" }, "data": { "$ref": "#/$defs/approval" } } },
+        { "properties": { "type": { "const": "cost" }, "data": { "$ref": "#/$defs/cost" } } },
+        { "properties": { "type": { "const": "note" }, "data": { "$ref": "#/$defs/note" } } },
+        { "properties": { "type": { "const": "error" }, "data": { "$ref": "#/$defs/error" } } }
+      ]
+    },
+    "actor": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "session": { "type": "string" },
+        "kind": { "enum": ["agent", "human", "system"] }
+      },
+      "additionalProperties": false
+    },
+    "ref": { "type": "string", "pattern": "^[a-z]+_[a-z0-9_]+$", "description": "Entity id: lowercase prefix, underscore, body." },
+    "usd": { "type": "number", "minimum": 0 },
+    "run": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["queued", "planning", "running", "waiting", "paused", "done", "failed", "cancelled"] },
+        "reason": { "enum": ["approval", "plan_approval", "cap", "loop_guard", "user", "error"], "description": "Why the run is waiting or paused." },
+        "title": { "type": "string", "minLength": 1 },
+        "goal_text": { "type": "string" },
+        "summary": { "type": "string" },
+        "model": { "type": "string" },
+        "cap_usd": { "$ref": "#/$defs/usd" },
+        "box": {
+          "type": "object",
+          "properties": {
+            "template": { "type": "string" },
+            "ttl_s": { "type": "integer", "minimum": 0 },
+            "cpu": { "type": "number", "minimum": 0 },
+            "mem_mb": { "type": "integer", "minimum": 0 },
+            "disk_mb": { "type": "integer", "minimum": 0 },
+            "network_allow": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "step": {
+      "type": "object",
+      "required": ["id", "title", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "title": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["pending", "running", "done", "failed", "skipped"] },
+        "parent": { "$ref": "#/$defs/ref" },
+        "kind": { "enum": ["step", "subagent", "sandbox"] },
+        "agent": { "type": "string", "description": "Name of the sub-agent or sandbox running this row." },
+        "detail": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "tool_call": {
+      "type": "object",
+      "required": ["id", "name", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["running", "ok", "error"] },
+        "step": { "$ref": "#/$defs/ref" },
+        "summary": { "type": "string" },
+        "destination": { "type": "string", "description": "Host or path the call touches." },
+        "output_tail": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Last lines of terminal output; feeds the Box tab." },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "repeat": { "type": "integer", "minimum": 1, "description": "Consecutive identical calls so far. The loop guard fires at 3." },
+        "cost_usd": { "$ref": "#/$defs/usd" }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "n", "url", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "n": { "type": "integer", "minimum": 1, "description": "Citation number shown in chat. Assigned once, in order of first appearance." },
+        "url": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "domain": { "type": "string" },
+        "snippet": { "type": "string" },
+        "fetched": { "type": "boolean", "description": "False means the agent cited it without fetching it: the UI flags it Not verified." },
+        "fetched_at": { "type": "number", "minimum": 0 },
+        "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "cited_by": { "type": "array", "items": { "$ref": "#/$defs/ref" }, "description": "Steps that cited this source." }
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["id", "name", "kind", "version", "url"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["markdown", "html", "image", "svg", "pdf", "csv", "code", "text", "diff", "mermaid", "archive", "office", "audio", "video"] },
+        "mime": { "type": "string" },
+        "version": { "type": "integer", "minimum": 1 },
+        "url": { "type": "string", "pattern": "^/", "description": "Same-origin path to the bytes. Never an external URL." },
+        "size": { "type": "integer", "minimum": 0 },
+        "rows": { "type": "integer", "minimum": 0, "description": "Total rows for csv; the viewer shows the first 100." },
+        "language": { "type": "string", "description": "For kind=code." },
+        "step": { "$ref": "#/$defs/ref" },
+        "summary": { "type": "string" },
+        "export": {
+          "type": "object",
+          "required": ["requires_approval"],
+          "properties": {
+            "requires_approval": { "type": "boolean" },
+            "approval": { "$ref": "#/$defs/ref" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "change": {
+      "type": "object",
+      "required": ["id", "path", "op", "additions", "deletions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "path": { "type": "string", "minLength": 1 },
+        "op": { "enum": ["add", "modify", "delete", "rename"] },
+        "additions": { "type": "integer", "minimum": 0 },
+        "deletions": { "type": "integer", "minimum": 0 },
+        "diff": { "type": "string", "description": "Unified diff for this file against the sandbox's starting point." },
+        "step": { "$ref": "#/$defs/ref" }
+      },
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "required": ["id", "status", "kind", "action", "payload_hash", "risk"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "status": { "enum": ["pending", "approved", "denied", "superseded", "expired"] },
+        "kind": { "enum": ["network", "push", "email", "spend", "export", "plan"] },
+        "action": { "type": "string", "minLength": 1 },
+        "destination": { "type": "string", "description": "Host or path. Anything that leaves the box shows its destination." },
+        "payload": { "description": "The exact payload. payload_hash is sha256 over its canonical JSON." },
+        "payload_preview": { "type": "string", "description": "Human-readable rendering of the payload or diff." },
+        "payload_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "why": { "type": "string" },
+        "cost_usd": { "$ref": "#/$defs/usd" },
+        "if_denied": { "type": "string" },
+        "risk": { "enum": ["low", "elevated", "high"] },
+        "scope_pattern": { "type": "string", "description": "What 'Allow for this goal' would grant, e.g. 'GET api.github.com/repos/duketopceo/*'." },
+        "supersedes": { "$ref": "#/$defs/ref" },
+        "step": { "$ref": "#/$defs/ref" },
+        "decision": { "enum": ["once", "goal", "deny"] },
+        "decided_by": { "type": "string" },
+        "decided_at": { "type": "number", "minimum": 0 },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "cost": {
+      "type": "object",
+      "required": ["spent_usd", "cap_usd"],
+      "properties": {
+        "spent_usd": { "$ref": "#/$defs/usd" },
+        "cap_usd": { "$ref": "#/$defs/usd" },
+        "tokens": {
+          "type": "object",
+          "required": ["in", "out", "cached"],
+          "properties": {
+            "in": { "type": "integer", "minimum": 0 },
+            "out": { "type": "integer", "minimum": 0 },
+            "cached": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "by_model": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["model", "in", "out", "cached", "usd"],
+            "properties": {
+              "model": { "type": "string" },
+              "in": { "type": "integer", "minimum": 0 },
+              "out": { "type": "integer", "minimum": 0 },
+              "cached": { "type": "integer", "minimum": 0 },
+              "usd": { "$ref": "#/$defs/usd" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "context": {
+          "type": "object",
+          "required": ["used", "window"],
+          "properties": {
+            "used": { "type": "integer", "minimum": 0 },
+            "window": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "threshold": { "enum": [0.8, 1.0], "description": "Set on the event that crosses 80% or 100% of the cap." }
+      },
+      "additionalProperties": false
+    },
+    "note": {
+      "type": "object",
+      "required": ["id", "role", "text"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "role": { "enum": ["agent", "user", "system"] },
+        "kind": { "enum": ["message", "final", "threshold", "status"] },
+        "text": { "type": "string", "description": "Markdown. Citations are written [1]; file citations [path:line]." },
+        "cites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["n"],
+            "properties": { "n": { "type": "integer", "minimum": 1 }, "quote": { "type": "string" } },
+            "additionalProperties": false
+          }
+        },
+        "to": { "$ref": "#/$defs/ref", "description": "A sub-agent step this user note is addressed to (Send note)." }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["id", "code", "message"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "hint": { "type": "string", "description": "What the operator can do next." },
+        "step": { "$ref": "#/$defs/ref" },
+        "recoverable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

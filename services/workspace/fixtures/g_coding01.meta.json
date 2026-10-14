@@ -1,0 +1,44 @@
+{
+  "title": "Fix the flaky rate limiter test in api-gateway",
+  "summary": "Coding task with changes, a diff and an approval to push",
+  "id": "g_coding01",
+  "holds": {
+    "13": "approval:ap_clone01",
+    "43": "approval:ap_push01"
+  },
+  "on_deny": [
+    [
+      "step",
+      {
+        "id": "step_push",
+        "title": "Push the branch for review",
+        "status": "skipped"
+      }
+    ],
+    [
+      "note",
+      {
+        "id": "note_a3",
+        "role": "agent",
+        "kind": "final",
+        "text": "Understood, I did not push. The fix is in the sandbox: see Changes, or export `fix-flaky-ratelimit.patch` from Artifacts when you want it."
+      }
+    ],
+    [
+      "run",
+      {
+        "status": "done",
+        "summary": "Fix verified in the sandbox. Push was denied, nothing left the box."
+      }
+    ]
+  ],
+  "files": {
+    "art_patch": "fix-flaky-ratelimit.patch",
+    "art_code": "ratelimit.py",
+    "art_mmd": "flake-timeline.mmd",
+    "art_img": "coverage.png",
+    "art_zip": "bundle.zip",
+    "art_txt": "test-output.txt"
+  },
+  "events": 49
+}

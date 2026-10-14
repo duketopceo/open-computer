@@ -16,7 +16,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/conformance", "tests/fsproto", "tests/opsview", "tests/unit"]
+testpaths = ["tests/conformance", "tests/fsproto", "tests/opsview", "tests/unit", "tests/mcp"]
 addopts = "-ra"
 markers = [
   "live: boots real CubeSandbox microVMs; excluded from CI (`-m 'not live'`), run by hand",

@@ -1,0 +1,49 @@
+--- a/src/gateway/ratelimit.py
++++ b/src/gateway/ratelimit.py
+@@ -1,15 +1,17 @@
+ import time
++from collections.abc import Callable
+ 
+ 
+ class TokenBucket:
+-    def __init__(self, rate: float, burst: int):
++    def __init__(self, rate: float, burst: int, clock: Callable[[], float] = time.monotonic):
+         self.rate, self.burst = rate, burst
++        self.clock = clock
+         self.tokens = float(burst)
+-        self.stamp = time.time()
++        self.stamp = clock()
+ 
+     def allow(self) -> bool:
+-        now = time.time()
+-        self.tokens = min(self.burst, self.tokens + (now - self.stamp) * self.rate)
++        now = self.clock()
++        self.tokens = min(self.burst, self.tokens + max(0.0, now - self.stamp) * self.rate)
+         self.stamp = now
+         if self.tokens >= 1:
+             self.tokens -= 1
+--- a/tests/test_ratelimit.py
++++ b/tests/test_ratelimit.py
+@@ -1,11 +1,18 @@
+-import time
+-
+ from gateway.ratelimit import TokenBucket
+ 
+ 
++class FakeClock:
++    def __init__(self):
++        self.now = 0.0
++
++    def __call__(self):
++        return self.now
++
++
+ def test_refills_after_wait():
+-    b = TokenBucket(rate=10, burst=1)
++    clock = FakeClock()
++    b = TokenBucket(rate=10, burst=1, clock=clock)
+     assert b.allow()
+     assert not b.allow()
+-    time.sleep(0.1)
++    clock.now += 0.1
+     assert b.allow()

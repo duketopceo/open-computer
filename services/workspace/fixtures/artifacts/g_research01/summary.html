@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Summary</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;margin:16px;color:#151923;background:#fff}
+h1{font-size:16px;margin:0 0 8px}.card{border:1px solid #c9cdd4;border-radius:8px;padding:12px;margin:8px 0}
+.k{color:#566070;font-size:12px}.big{font-size:22px;font-weight:600}
+</style></head><body>
+<h1>pgvector vs Qdrant: one-page summary</h1>
+<div class="card"><div class="k">Recommendation</div><div class="big">Start with pgvector</div></div>
+<div class="card"><div class="k">Network probe (this page tries to reach out and must fail)</div><div id="net">running</div></div>
+<script>
+(function(){
+  var q=new URLSearchParams(location.search).get("probe")||"https://example.invalid/leak";
+  var tried=0,blocked=0,out=document.getElementById("net");
+  function done(){tried++;if(tried===4)out.textContent="network: blocked "+blocked+"/4";}
+  function fail(){blocked++;done();}
+  document.addEventListener("securitypolicyviolation",function(){});
+  fetch(q+"?via=fetch",{mode:"no-cors"}).then(done,fail);
+  var x=new XMLHttpRequest();x.open("GET",q+"?via=xhr");x.onerror=fail;x.onload=done;
+  try{x.send();}catch(e){fail();}
+  var i=new Image();i.onload=done;i.onerror=fail;i.src=q+"?via=img";
+  try{var w=new WebSocket(q.replace(/^http/,"ws")+"?via=ws");w.onerror=fail;w.onopen=done;}catch(e){fail();}
+})();
+</script></body></html>
