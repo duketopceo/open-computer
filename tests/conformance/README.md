@@ -29,3 +29,9 @@ When a unit lands, expose `adapter(tmp_path)` in its package:
 
 Until then the row reports PENDING — which is the statement "unverified,"
 not "passing."
+
+## Row to unit map (OC numbering; see ROADMAP.md)
+
+R1-R3, R6 `services/execplane/` (OC-009); R4, R7 `oc/fsproto/` (OC-008); R5 `services/gate/` (OC-010);
+ROUTER `services/router/` (OC-011); PLACE `services/placement/` (OC-036); ORCH `services/orchestrator/`
+(OC-040); AUTH `services/opsview/auth.py` (OC-012).

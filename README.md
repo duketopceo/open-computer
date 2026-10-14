@@ -9,9 +9,12 @@
 
 **An open, self-hosted take on the cloud half of Perplexity Computer: route each subtask to a cheap model, run it in a disposable sandbox, hold anything sensitive for approval, and stop at a hard cost cap.**
 
-> **Status: research phase, no runtime code yet.** The architecture is mapped, the router question is
-> answered with data, and a small vertical slice is planned. Nothing below under "How it works" is
-> runnable today. See the [roadmap](./ROADMAP.md).
+> **Status: early runtime, not yet usable end to end.** Tested safety primitives exist (filesystem protocol,
+> policy engine, PII gate with audit and approval queue, router with a decision budget, live CubeSandbox
+> adapter, placement rules, orchestrator glue, a passkey-gated operator console). **It cannot yet turn a goal
+> into an artifact:** there is no `oc` CLI, no worker cost ledger, no credential boundary and no golden-task
+> run. Per-feature status with verified gaps: [docs/FEATURES.md](./docs/FEATURES.md). Unit board:
+> [ROADMAP.md](./ROADMAP.md).
 
 ## Why
 
@@ -24,32 +27,49 @@ those slices under a cost cap and an approval gate, built from parts the owner a
 
 It is personal infrastructure first. It does not try to match Perplexity's connectors, memory or enterprise features.
 
-## How it works (planned)
+## How it works
 
 ```mermaid
 flowchart LR
-  G[goal] --> O[orchestrator<br/>orchestral loop + agentflow fan-out]
-  O --> P[placement policy<br/>rules + hosted decider call]
+  G[goal] --> O[orchestrator<br/>decompose, dispatch, collect]
+  O --> P[placement rules<br/>PII and budget demote to local]
   P -->|local or cheap model| S[sandbox per subtask<br/>CubeSandbox, egress deny]
   P -->|cloud + flagged content| A[approval gate<br/>PII scan, human OK]
   A --> S
   S --> R[results + cost ledger + audit log]
 ```
 
-What exists as measured evidence, from open PR [#2](https://github.com/duketopceo/open-computer/pull/2): on a 180-fixture
-set the hosted `pplx-decider` reached 86.7% route and tier accuracy at about $0.000004 per decision, and a
-self-hosted router did not stay up under load, so no router service will be built.
+Built: orchestrator glue, placement rule table, router, gate prefilter/queue/audit, execplane adapter,
+fsproto, console. Not built: CLI, worker cost ledger, credential boundary, snapshots (see the FEATURES matrix).
+
+Measured evidence: on a 180-fixture set the hosted `pplx-decider` reached 86.7% route and tier accuracy at
+about $0.000004 per decision ([bench](./docs/router-bench-results.md)). A self-hosted router did not stay up
+under load, so the router is a thin chain over the hosted decider with Jev as fallback.
 
 ## Install and quick start
 
-Not available yet. There is nothing to install. The first runnable command (`open-computer run "<goal>"`) is
-unit U8 in the [program plan](./docs/plans/2026-10-10-program-roadmap-plan.md).
+No package or CLI yet. From a checkout, with [uv](https://docs.astral.sh/uv/):
 
-A screenshot or recording goes here once the CLI exists. TODO: capture from the real CLI; the design is in [DESIGN.md](./DESIGN.md).
+```bash
+# determinism matrix (no network, no model calls; sandbox rows skip without CubeSandbox)
+uv sync --locked
+uv run pytest -m "not live"        # CI runs exactly this, plus `uv run ruff check .`
+
+# operator console against fixture data (no microVMs, no models)
+uv run python -I tests/opsview/serve_fixture.py 8851 /tmp/oc-fixture
+
+# console browser tests (Playwright + axe)
+cd tests/e2e && npm ci && npx playwright install chromium && npm test
+```
+
+Live rows need `CUBE_API_URL` and `CUBE_API_KEY` for a local CubeSandbox; they boot real microVMs, so run
+them by hand, never in CI. The first runnable command (`oc run "<goal>"`) is OC-039.
 
 ## Docs
 
 - [Landscape research](./docs/research/2026-10-10-landscape.md): Perplexity Computer, Manus, ChatGPT agent, Claude computer use, browser-use, OpenHands, Open Interpreter, E2B/Cube/Daytona, routers.
+- [ROADMAP.md](./ROADMAP.md): unit board, numbering map (OC-nnn to the old PR #1/#6 ids), spend rule.
+- [docs/FEATURES.md](./docs/FEATURES.md): feature inventory verified against code.
 - [Program roadmap plan](./docs/plans/2026-10-10-program-roadmap-plan.md)
 - [ARCHITECTURE_MAP.md](./ARCHITECTURE_MAP.md): Perplexity part, open equivalent, status.
 - [docs/determinism.md](./docs/determinism.md): the non-negotiable rules and test matrix.
@@ -59,8 +79,8 @@ A screenshot or recording goes here once the CLI exists. TODO: capture from the 
 
 ## Contributing
 
-Docs and plans only for now. Open an issue before proposing code: the roadmap deliberately avoids new services
-where an existing repo already does the job. Default branch changes go through a pull request.
+Open an issue before proposing a new service: the roadmap deliberately avoids building what an existing repo
+already does. Run the test command above before sending a PR. Default branch changes go through a pull request.
 
 ## License
 

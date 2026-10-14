@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from services.gate.audit import AuditLog
-from services.gate.gate import Gate
+from services.gate.gate import Approval, Gate
 from services.gate.queue import ApprovalQueue
 from services.opsview import runs
 
@@ -39,6 +39,8 @@ def seed(base: Path, now: float | None = None) -> dict:
     done = q.submit(who="docs-agent", session="sess-4f21", ts=now - 86400 * 2, est_cost=0.0004,
                     what="Translate README intro", payload={"model": "google/gemini-flash", "egress": "openrouter.ai", "prompt": "Translate."})
     q.decide(done, approve=True, by="luke", note="")
+    gate.request_cloud_call(q.get(done)["payload"], Approval(done, q.get(done)["payload_hash"]),
+                            sender=lambda p: len(str(p)))  # a real, consumed send: the audit shows both rows
     qf = base / "approvals.ndjson"
     evs = [json.loads(line) for line in qf.read_text().splitlines()]
     for ev in evs:
@@ -56,7 +58,7 @@ def seed(base: Path, now: float | None = None) -> dict:
     out = ("tests/conformance/rules/test_r1.py ..                                            [ 20%]\n" * 3
            + "\n".join(f"R{i}: PASS ({i + 2} checks)" for i in (1, 2, 3, 4, 5, 6, 7)) + "\n"
            + "AUTH: PENDING (2 checks)\n7 passed, 1 skipped in 6.91s\n")
-    r = runs.record(out, by="luke", duration_s=6.9, base=base / "runs")
+    runs.record(out, by="luke", duration_s=6.9, base=base / "runs")
     big = "\n".join(f"{i:05d} step collected assertion ok {'x' * (i % 40)}" for i in range(12000)) + "\nR1: PASS (3 checks)\n"
     runs.record(big, by="luke", duration_s=211, base=base / "runs")
     return {
@@ -79,7 +81,9 @@ class FakeCube(http.server.BaseHTTPRequestHandler):
                 {"sandboxID": "sbx-2d10be44", "templateID": "code-interpreter", "status": "running"},
             ]).encode()
         else:
-            self.send_response(404); self.end_headers(); return
+            self.send_response(404)
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

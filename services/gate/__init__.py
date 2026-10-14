@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .gate import CallResult, Gate
+from .gate import Approval, CallResult, Gate, payload_hash
 from .pii import PIIDecision, scan
 
-__all__ = ["CallResult", "Gate", "PIIDecision", "scan", "adapter"]
+__all__ = ["Approval", "CallResult", "Gate", "PIIDecision", "payload_hash", "scan", "adapter"]
 
 
-def adapter(root: Path | str, **_: object) -> Gate:
-    return Gate(Path(root) / "audit.ndjson")
+def adapter(root: Path | str, **kw: object) -> Gate:
+    return Gate(Path(root) / "audit.ndjson", **kw)  # type: ignore[arg-type]

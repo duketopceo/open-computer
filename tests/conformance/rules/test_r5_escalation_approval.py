@@ -1,19 +1,21 @@
-"""R5 — frontier escalation requires explicit per-step approval."""
+"""R5 - frontier escalation requires explicit per-step approval, bound to the payload, single use."""
 
-from checks.gate_checks import (
-    audit_append_only,
-    pii_labeled_flagged,
-    unapproved_cloud_call_blocked,
-)
+import pytest
+
+from checks import gate_checks as gc
+
+CHECKS = [
+    gc.pii_labeled_flagged,
+    gc.unapproved_cloud_call_blocked,
+    gc.approval_bound_to_payload,
+    gc.approval_single_use,
+    gc.approval_expires,
+    gc.no_sender_fails_closed,
+    gc.pii_send_is_explicit,
+    gc.audit_append_only,
+]
 
 
-def test_r5_pii_labeled_flagged(gate):
-    pii_labeled_flagged(gate)
-
-
-def test_r5_unapproved_cloud_call_blocked(gate):
-    unapproved_cloud_call_blocked(gate)
-
-
-def test_r5_audit_append_only(gate):
-    audit_append_only(gate)
+@pytest.mark.parametrize("fn", CHECKS, ids=lambda f: f.__name__)
+def test_r5(gate, fn):
+    fn(gate)

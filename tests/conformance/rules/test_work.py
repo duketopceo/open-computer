@@ -3,7 +3,7 @@
 import pytest
 
 from checks.work_checks import (
-    blocked_dep_queued,
+    blocked_dep_fails,
     goal_requires_auth,
     missing_run_is_none,
     run_detail_literal,
@@ -27,7 +27,7 @@ def test_work_run_detail(runs, tmp_path):
 
 
 def test_work_blocked_dep(runs, tmp_path):
-    blocked_dep_queued(runs, tmp_path)
+    blocked_dep_fails(runs, tmp_path)
 
 
 def test_work_missing_run(runs, tmp_path):

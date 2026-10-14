@@ -1,92 +1,146 @@
 # Roadmap
 
-## Program roadmap (2026-10-10, current)
+One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-066` (there is no OC-056). Phases P0-P6 and
+the exit criteria below are the plan; this file is the status board and is updated by the PR that
+changes a unit's state. Anything contradicting `main` here is a bug in this file.
 
-Full plan with difficulty, feasibility and simpler alternatives per unit:
-[docs/plans/2026-10-10-program-roadmap-plan.md](docs/plans/2026-10-10-program-roadmap-plan.md).
-Research: [docs/research/2026-10-10-landscape.md](docs/research/2026-10-10-landscape.md).
-Builds on open PR [#1](https://github.com/duketopceo/open-computer/pull/1) (verdict, phase-0 plan, MIT licence)
-and PR [#2](https://github.com/duketopceo/open-computer/pull/2) (router bench: no router service; hosted decider inside a placement function).
+What the code does today, feature by feature, with gaps verified against source:
+[docs/FEATURES.md](docs/FEATURES.md). Rules and test matrix: [docs/determinism.md](docs/determinism.md).
 
-**Scope:** MVP = one command, cheap routed workers, sandbox per subtask with default-deny egress, approval gate, cost ledger with a hard cap, on Luke's own machines. Not attempted: connectors, hosted SaaS, persistent memory product.
+**Scope (MVP):** one command, cheap routed workers, a sandbox per subtask with default-deny egress, an
+approval gate, a cost ledger with a hard cap, on the owner's own machines. Not attempted: connectors,
+hosted SaaS, a persistent memory product.
 
-| Now | Difficulty |
-|---|---|
-| U1 Land PRs #1 and #2, resolve ROADMAP conflicts | easy |
-| U2 Record the four open decisions (personal-first, Khan, dev topology, MIT) | easy |
-| U3 Conformance harness: 4 rules first | medium |
-| U4 Cost ledger and per-task cap | easy |
-| U5 Sandbox spike: egress, clone/rollback, aarch64 | medium |
+**Spend rule:** no premium model (Anthropic-class and similar) is a default anywhere. The price ceiling
+is Grok 4.7 (about $1.60/$4.80 per Mtok); the orchestrator default is `deepseek-v4-pro`. Anything above
+that needs an explicit owner decision. Enforced by `tests/unit/test_spend_rule.py`.
 
-| Next | Difficulty |
-|---|---|
-| U6 Sandbox worker adapter (E2B SDK against CubeSandbox) | medium |
-| U7 Escalation gate (rules first, PII-Tracer next) | medium |
-| U8 Vertical slice: goal to artifact via orchestral + agentflow | medium |
-| U9 Placement policy: one function calling the hosted decider | easy |
-| U12 Golden-task eval with replicates, spend via `orch` | medium |
+## Phases
 
-| Later | Difficulty |
-|---|---|
-| U10 Credential boundary | hard |
-| U11 jev-compact for long runs | medium |
-| U13 Browser worker (browser-use in a sandbox) | hard |
-| U14 Snapshots, branch, rollback | medium |
-| U15 Khan adapter / MCP | medium |
-| U16 docketry front door | medium |
-| U17 numbat / bumblebee / OpenShell enforcement | hard |
-| U18 Knowledge index (keep kurultai) | medium |
+| Phase | Theme | Exit criterion |
+|---|---|---|
+| P0 | Truth, decisions, CI | docs match code; name/router/fsproto/model-list decisions recorded; hosted CI green |
+| P1 | Deterministic test hardening | weak checks fixed (each row fails against a broken fake); zero skips in CI |
+| P2 | Core features | cost-capped `oc run` replays 3 golden tasks; gate cannot be replayed or bypassed; placement table done |
+| P3 | UX, brand | logo signed off; console v2 per the design; a11y gates |
+| P5 | Marketplaces | Skill, Claude Code plugin, MCP Registry, Codex, Cursor |
+| P4 / P6 | Later / remote | durability, browser worker, evals; remote MCP only with a threat model |
 
----
+## Numbering map
 
-# Earlier roadmap (kept for history; superseded where the plan above differs)
+Three earlier schemes are retired. Merged PR titles keep their old labels; this table is the translation.
 
-## Phase 0 — Decisions (now)
-- [x] License: **MIT** — decided 2026-10-10, matches fleet norm (wisp, docketry, kurultai all MIT)
-- [~] Router: bench **Jev vs pplx-decider vs `openrouter/auto`** in `orchestral` (quality-per-dollar,
-      reproducible) — running; `auto` leg done (81.7% route-exact), Jev + decider legs in flight.
-      Baselines widened to include hosted decider + `openrouter/auto` after verification.
-- [x] CubeVM: TencentCloud/CubeSandbox is **Apache-2.0** (verified 2026-10-10); E2B-compatible API,
-      auto-pause/resume, aarch64 bare-metal. Adopted as execution-plane candidate; local deploy exists
+| Backlog id | What | PR #1 id | PR #6 id | Landed as |
+|---|---|---|---|---|
+| OC-006 | Conformance harness (R1-R7) | U0 | U3 | #3 |
+| OC-007 | fs-protocol spec v0.1 | U1 (spec) | deferred (KTD5) | #4 |
+| OC-008 | fsproto reference implementation | U1 | deferred (KTD5) | #5 (stacked; on main via #8) |
+| OC-009 | Execplane, live CubeSandbox adapter | U2 | U6 (reduced) | #8 |
+| OC-010 | Escalation gate (PII, audit, console) | U3 | U7 | #7 (stacked; on main via #8) |
+| OC-011 | Router service | U4 | U9 (partly) | #10 |
+| OC-012 | Ops view, passkey gate, workplace shell | n/a | n/a | #9, #11 (F-AUTH), #12 (F1), #17 (Silver Lining console) |
+| OC-013 | Router bench | E2 | n/a | #2 |
+| OC-014 | Program roadmap, design, logo proposal | n/a | U1 | #6 |
+| OC-036 | Placement policy | U5 | U9 | #15 (commit label "OC-2") |
+| OC-040 | Orchestrator glue (vertical slice, partial) | U6 | U8 | #16 (commit label "OC-3") |
+| n/a | Agentflow audit fixes (fail-closed budget, forge-proof audit, lease) | n/a | n/a | #14 |
 
-## Phase 1 — Conformance harness first, then router service
-- [ ] **Deterministic conformance harness** (`tests/conformance/`): every rule in `docs/determinism.md`
-      becomes an executable pytest check BEFORE feature code lands. Tests-as-spec — no unit merges
-      without its matrix rows green (fail-closed, egress-deny, no-creds-in-VM, fsproto-only comms,
-      per-step escalation approval, dry-run policy diffs, queue-never-fabricates)
-- [ ] Unified fleet-wide router: task type × complexity × latency → model via OpenRouter
-      (decider primary per bench, Jev local fallback — `openrouter/auto` rejected)
-- [ ] Port wisp's router+budget-gate pattern out of the voice agent into a shared service
-- [ ] Extend wisp-route-fuzz golden set to model selection; exact-match fixtures
+Commit labels "OC-2" and "OC-3" on #15 and #16 were local run labels, not backlog ids. PR #1's U7
+(Khan adapter and Temporal) is OC-043/OC-044. PR #6's U10-U18 map to OC-032/033 (U10), OC-046 (U11),
+OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry front door), OC-047
+(U17), OC-050 (U18).
 
-## Phase 2 — Sub-agent protocol (the main design work)
-- [ ] Filesystem protocol spec: inbox/outbox, lease files, tombstones, dependency queueing
-- [ ] Deterministic conformance tests (spawn/collect, ordering, lease expiry)
-- [ ] No existing repo defines this — it is genuinely new
+## Unit status
 
-## Phase 3 — Execution plane
-- [ ] CubeVM (or Firecracker fallback): disposable microVM per task, snapshot/clone/rollback
-- [ ] OpenShell policy wrapper: Gateway/Supervisor/Sandbox, credential substitution
-- [ ] Wire Khan's Temporal adapter into the live loop for durable workflows
-- [ ] Fail-closed + egress-deny tests green before any agent runs inside
+| Id | Phase | Unit | Status |
+|---|---|---|---|
+| OC-001 | P0 | Reconcile docs with code: rebase PR #6, fix stale README/ROADMAP/ARCHITECTURE_MAP | in review (this PR) |
+| OC-002 | P0 | Decide and record: name, router (keep/shrink/delete), fsproto (keep), Anthropic models in TIER_MODELS | open |
+| OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | partial: pyproject.toml + uv.lock + pytest/ruff config (#22); sys.path hacks remain |
+| OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | done (#22): hosted ubuntu-latest, SHA-pinned actions, pull_request only; python and console-e2e jobs; mypy not configured, not added |
+| OC-005 | P0 | Determinism guard: random order x20, frozen/foreign clock, matrix-vs-docs drift check | open |
+| OC-006 | P0 | U0 conformance harness (R1-R7 executable) | done (#3) |
+| OC-007 | P0 | U1 fs-protocol spec v0.1 | done (#4) |
+| OC-008 | P0 | U1 fsproto reference implementation | done (#5, on main via #8); spec deviations resolved in #20 (OC-019) |
+| OC-009 | P0 | U2 execplane CubeSandbox adapter | done (#8); lifecycle/creds/binding open |
+| OC-010 | P0 | U3 escalation gate (PII prefilter, audit, console) | done (#7, on main via #8); real enforcement open (OC-020) |
+| OC-011 | P0 | U4 router service (decider/jev/table, budget) | done (#10) |
+| OC-012 | P0 | Ops view v1 (web, :8791) | done (#9, #11, #12, #17) |
+| OC-013 | P0 | Router bench E2 (open PR #2) | done (#2) |
+| OC-014 | P0 | Program roadmap, design, logo proposal (open PR #6) | done (#6) |
+| OC-015 | P1 | R2 egress: positive control and refusal error class | partial: positive control + broken-network/open-egress mutants (#19); refusal exit class not pinned until a live cassette exists |
+| OC-016 | P1 | Wire unused policy fixture into R6; resolve benign-egress contradiction | open |
+| OC-017 | P1 | Router golden replay: 180-fixture corpus through Router, fallback matrix | open |
+| OC-018 | P1 | Router/budget unit tests + negative controls | open |
+| OC-019 | P1 | fsproto: close the 8 spec deviations, fix lease race, property + crash tests | partial: 8 deviations resolved with a test each (#20), lease race fixed; property and crash-point tests open |
+| OC-020 | P1 | Gate: payload-hash-bound approval, single egress path, pending queue, decision table | partial: hash-bound, single-use, expiring approval and single send path with injected sender (#19); hash-chained audit is OC-021 |
+| OC-021 | P1 | Audit log: hash chain, fsync, file mode, `oc audit verify` | open |
+| OC-022 | P1 | PII corpus >= 300 rows + precision/recall gates | open |
+| OC-023 | P1 | Execplane contract tests with recorded Cube cassettes (zero skips in CI) | open |
+| OC-024 | P1 | Chaos and timeout suite | open |
+| OC-025 | P1 | Ops view: fix 12 defects + render/escape/no-mutation tests | open |
+| OC-026 | P1 | Approval console v2 (show payload, keys, states, EOF=reject) + golden renders | open |
+| OC-027 | P1 | Mutation testing gate on gate/policy/fsproto | open |
+| OC-028 | P1 | Branch coverage gate >= 90% on safety paths | open |
+| OC-029 | P1 | Live suite on self-hosted runner (marker live) | open |
+| OC-030 | P2 | Execplane lifecycle: exec timeout, teardown, pause/resume, snapshot/clone/rollback | open |
+| OC-031 | P2 | Cold-boot measurement and aarch64/Asahi verdict | open |
+| OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | partial: placeholders in guest, host-side `substitute()`, R3 non-vacuous (#19); no real worker uses it yet |
+| OC-033 | P2 | Credential boundary v2: substitution at egress proxy | open |
+| OC-034 | P2 | Bind approved policy to sandbox creation + audit every apply | open |
+| OC-035 | P2 | Worker cost ledger + hard per-task cap | partial: ledger, per-run cap that pauses (never cancels), resume, orchestrator wiring (#24); event emission is a plain-dict hook until the UI event-stream helper lands; no real worker reports usage yet |
+| OC-036 | P2 | Placement policy: one pure function | partial: pure function with headroom input from the run cost ledger, 1,152-case invariant table with mutants (#25); the router's decider chain already supplies the tier at dispatch, no new decider call |
+| OC-037 | P2 | Router cleanup: seconds-vs-ms, spend-rule models, local jev path, alpha-endpoint contract test | open |
+| OC-038 | P2 | PII-Tracer model stage behind scan() | open |
+| OC-039 | P2 | `oc` CLI: run, matrix, ledger, approve, audit verify, ops; exit-code contract | open |
+| OC-040 | P2 | Vertical slice: goal -> subtasks -> sandboxes -> artifact, 3 golden tasks, replay mode | partial: decompose/dispatch/collect landed (#16); no CLI, no golden tasks |
+| OC-041 | P2 | fsproto sandbox mount isolation (agents see only their dir) | open |
+| OC-042 | P2 | MCP server (stdio): route, place, gate_request, audit, ledger, matrix (no approve tool) | partial: stdio server (hand-rolled JSON-RPC), 8 tools, golden tools/list, human-only approval enforced by tests (#27); no `run` tool until OC-039, no registry packaging |
+| OC-043 | P3 | Khan adapter plugin consuming the MCP server | open |
+| OC-044 | P4 | Temporal durability | open |
+| OC-045 | P4 | Browser/computer-use worker (browser-use in sandbox) | open |
+| OC-046 | P4 | jev-compact for long runs | open |
+| OC-047 | P4 | Enforcement wiring: numbat, bumblebee, OpenShell (audit mode first) | open |
+| OC-048 | P4 | Evals: golden replicates (>=5) per arm + DRACO/WANDR subset via orch | open |
+| OC-049 | P4 | Decision: browsesafe input screening keep or cut | open |
+| OC-050 | P4 | Decision: knowledge index (pplx-embed) cut or keep kurultai | open |
+| OC-051 | P3 | Logo v2: sketch 3 marks, 16px test, owner sign-off | open |
+| OC-052 | P3 | Brand build script and rollout (README, ops view, favicon, social preview, plugin icons) | open |
+| OC-053 | P3 | Ops view v2 on FD design: split views, tokens.css, strips, glyphs, FD state vocabulary | partial: Silver Lining console landed (#17) |
+| OC-054 | P3 | UI a11y and screenshot regression (pinned playwright + axe) | open |
+| OC-055 | P3 | README and social card with generated numbers only | open |
+| OC-057 | P5 | Agent Skill: skills/open-computer/SKILL.md | open |
+| OC-058 | P5 | Claude Code plugin + repo marketplace.json | open |
+| OC-059 | P5 | MCP Registry publication (PyPI + server.json + mcp-publisher via Actions OIDC) | open |
+| OC-060 | P5 | Codex plugin (plugin.json, mcp.json, .agents/plugins/marketplace.json) | open |
+| OC-061 | P5 | Cursor plugin + cursor.directory listing | open |
+| OC-062 | P5 | Devin: docs page for adding open-computer as custom MCP server | open |
+| OC-063 | P5 | Smithery listing (optional) | open |
+| OC-064 | P6 | Remote HTTPS MCP with auth (prerequisite for public directories) | open |
+| OC-065 | P6 | Anthropic directory submission (claude.ai/directory/manage) | open |
+| OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open |
 
-## Phase 4 — Gates and safety
-- [ ] PII-Tracer escalation gate with per-step human approval
-- [ ] browsesafe input screening (one layer among several)
-- [ ] Numbat enforcement mode on; Bumblebee wired to execution
+## Product direction (owner, 2026-10-11)
 
-## Phase 5 — Knowledge and memory
-- [ ] Local index: pplx-embed-v2-late (index with 9B, query with 0.6B) or keep kurultai
-- [ ] jev-compact wired as the mid-run compactor for long tasks
+open-computer should feel like Perplexity Computer: the user states a goal in a chat, work runs in sandboxes,
+and a right sidebar shows steps, sources, artifacts and approvals live. The current console becomes the
+admin/ops surface. The goal event-stream contract (schema, emitter helper, SSE `/goals/<id>/events`) is owned by the
+UI workspace branch (`docs/design/event-stream.md`); the orchestrator units (OC-039, OC-040) emit through that helper
+and schema and do not define a second one.
 
-## Quality bar (cross-cutting, non-negotiable)
-- [ ] Any human-facing surface (gate approval console, ops/audit views, docketry front door):
-      keyboard-complete, command-palette interaction where it fits, information density over
-      decoration, every state renders deterministically (queued/leased/running/blocked/denied/
-      tombstoned), zero fake buttons or unverified metrics. TUI-first acceptable if it meets the
-      bar; any future GUI gets a real design pass — no AI slop
+## Open decisions (OC-002)
 
-## Later
-- [ ] docketry `services/dispatch` as the human front door for long-running tasks
-- [ ] Measure against DRACO / WANDR / PII-TRACE once the runtime exists
-- [ ] Watch for Perplexity's Local Knowledge Work Bench open-sourcing (promised, not yet out)
+- Package/registry name: other projects use "open-computer" (see FEATURES.md, conflicts section); the name is
+  permanent once published to a registry. Decide before OC-058/OC-059.
+- Router: keep and shrink (it is the engine layer behind the placement function) or delete. Default until
+  decided: keep.
+- fsproto: keep (code exists and is tested); fix the deviations (OC-019).
+- Premium models: none as defaults (see Spend rule).
+
+## Open questions carried from the original roadmap
+
+- OpenShell v0.1.0 is fresh (2026-09-28): expect sharp edges; pin the version.
+- CubeSandbox is Apache-2.0 (verified 2026-10-10); cold boot < 100 ms and byte-identical rollback are
+  claims from its docs, not measurements here (OC-030, OC-031).
+- Router choice was benched: hosted pplx-decider reached 86.7% route and tier accuracy at about
+  $0.000004 per decision ([results](docs/router-bench-results.md)). The router kept as a thin chain.
