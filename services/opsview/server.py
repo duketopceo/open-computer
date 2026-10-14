@@ -38,6 +38,7 @@ from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import engines as goal_engines
+from services.workspace import routes as workspace
 
 REPO = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
@@ -279,14 +280,15 @@ class Handler(BaseHTTPRequestHandler):
         secure = "" if self._rp() in self._LOOPBACK else "; Secure"
         self.send_header("Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}")
 
-    def _send(self, code, body: bytes, ctype="text/html; charset=utf-8", extra: dict | None = None, page=False):
+    def _send(self, code, body: bytes, ctype="text/html; charset=utf-8", extra: dict | None = None, page=False,
+              csp: str = CSP):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
         if page:
-            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("Content-Security-Policy", csp)
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Cache-Control", "no-store")
         local_cookie = getattr(self, "_local_cookie", None)
@@ -328,6 +330,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, login_page().encode())
         if path == "/enroll":
             return self._send(200, enroll_page((qs.get("token") or [""])[0]).encode())
+        if workspace.serve_static(self, path):
+            return
         if path.startswith("/static/"):
             name = path[len("/static/"):]
             if name not in STATIC_TYPES:
@@ -338,6 +342,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._redirect("/login")
         if path in REDIRECTS:
             return self._redirect(REDIRECTS[path])
+        if workspace.handle_get(self, path, qs):
+            return
         if path in POST_ONLY_LEGACY:
             return self._send(405, b"This action is POST-only and needs a confirm step.", "text/plain",
                               {"Allow": "POST"})
@@ -453,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
         if not who:
             return self._json(401, {"error": "Sign in again."})
         name, args = match(POST_ROUTES, path)
-        if name is None:
+        if name is None and not workspace.is_ws_path(path):
             return self._json(404, {"error": "not found"})
         origin = self.headers.get("Origin")
         if origin and urlparse(origin).netloc != self.headers.get("Host", ""):
@@ -462,6 +468,8 @@ class Handler(BaseHTTPRequestHandler):
         token = self.headers.get("X-CSRF-Token") or str(body.get("csrf", ""))
         if not hmac.compare_digest(token, self._csrf()):
             return self._json(403, {"error": "Missing or invalid CSRF token. Reload the page and try again."})
+        if name is None:
+            return workspace.handle_post(self, who, body, path)
         getattr(self, name)(who, body, **args)
 
     def p_runs(self, who, body):

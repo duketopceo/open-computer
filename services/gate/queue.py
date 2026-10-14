@@ -77,20 +77,31 @@ class ApprovalQueue:
 
     def submit(
         self, *, who: str, what: str, payload: dict, session: str = "",
-        est_cost: float = 0.0, ts: float | None = None,
+        est_cost: float = 0.0, ts: float | None = None, item_id: str | None = None,
+        bound_hash: str | None = None,
     ) -> str:
         decision = self.gate.scan(str(payload))
         egress = str(payload.get("egress", "<unset>"))
-        item_id = "ap_" + uuid.uuid4().hex[:8]
+        if item_id is None:
+            item_id = "ap_" + uuid.uuid4().hex[:8]
+        elif self.get(item_id) is not None:
+            raise QueueError(f"{item_id} already exists. A changed payload is a new request.", 409)
         self._append({
             "event": "request", "id": item_id, "ts": ts if ts is not None else time.time(),
             "who": who, "session": session, "what": what,
             "model": payload.get("model", "<unset>"), "egress": egress,
             "est_cost": est_cost, "pii": decision.categories,
-            "payload_hash": payload_hash(payload),
+            "payload_hash": bound_hash or payload_hash(payload),
             "payload_bytes": len(str(payload)), "payload": payload,
         })
         return item_id
+
+    def supersede(self, item_id: str, *, by: str = "system") -> None:
+        """A changed payload is a new request: close the old one so it can never be approved."""
+        item = self.get(item_id)
+        if item is None or item["status"] != "pending":
+            raise QueueError("Only a pending approval can be superseded.", 409)
+        self._append({"event": "decision", "id": item_id, "ts": time.time(), "decision": "superseded", "by": by, "note": ""})
 
     def decide(
         self, item_id: str, *, approve: bool, by: str, note: str = "",
