@@ -15,7 +15,7 @@ from temporalio.common import RetryPolicy
 
 # Activity impls live in services/durable/activities.py (sandbox-safe passthrough).
 with workflow.unsafe.imports_passed_through():
-    from .activities import run_status, work_sweep  # noqa: F401  (impls run in worker)
+    from .activities import run_status, submit_goal, work_sweep  # noqa: F401
 
 TASK_QUEUE = "oc-goals"
 
@@ -60,3 +60,33 @@ class GoalRunWorkflow:
                     start_to_close_timeout=timedelta(seconds=30),
                 )
         await workflow.continue_as_new(GoalRunInput(inp.run_dir, inp.run_id, inp.max_sweeps))
+
+
+@dataclass
+class GoalCronInput:
+    goal: str
+    by: str = "automation"
+
+
+@workflow.defn
+class GoalCronWorkflow:
+    """One automation fire: submit the goal, then drive it like a normal run.
+
+    The schedule is the trigger; the run it produces is an ordinary goal
+    run — same fsproto state, same audit, visible in /work.
+    """
+
+    @workflow.run
+    async def run(self, inp: GoalCronInput) -> dict:
+        st = await workflow.execute_activity(
+            submit_goal,
+            args=[inp.goal, inp.by],
+            # decompose is a model call — the budget, not a heartbeat
+            start_to_close_timeout=timedelta(seconds=180),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+        return await workflow.execute_child_workflow(
+            GoalRunWorkflow.run,
+            GoalRunInput(st["run_dir"], st["run_id"]),
+            id=f"goal-{st['run_id']}",
+        )

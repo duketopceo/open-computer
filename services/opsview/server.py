@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
-from services.opsview import goalruns
+from services.opsview import automations, capabilities, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -201,6 +201,7 @@ GET_ROUTES = [
     (r"/", "g_overview"), (r"/work", "g_work"),
     (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
     (r"/goals", "g_goals"), (r"/goals/new", "g_goal_new"), (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
+    (r"/skills", "g_skills"), (r"/automations", "g_automations"),
     (r"/runs", "g_runs"), (r"/runs/new", "g_run_new"), (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
     (r"/approvals", "g_approvals"), (r"/router", "g_router"), (r"/audit", "g_audit"),
     (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"), (r"/_frag/work", "g_frag_work"),
@@ -210,6 +211,10 @@ POST_ROUTES = [
     (r"/runs", "p_runs"), (r"/goals", "p_goals"), (r"/router/test", "p_router_test"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_sendback"),
+    (r"/automations", "p_automations"),
+    (r"/automations/(?P<id>auto-[0-9a-f]{8})/pause", "p_auto_pause"),
+    (r"/automations/(?P<id>auto-[0-9a-f]{8})/trigger", "p_auto_trigger"),
+    (r"/automations/(?P<id>auto-[0-9a-f]{8})/delete", "p_auto_delete"),
 ]
 # Old side-effecting GET URLs now answer 405 instead of acting.
 POST_ONLY_LEGACY = {"/run", "/route"}
@@ -394,6 +399,15 @@ class Handler(BaseHTTPRequestHandler):
         items = ApprovalQueue(approvals_path()).items()
         self._page("approvals", views.page_approvals(items, time.time()), sub="Oldest first")
 
+    def g_skills(self, qs):
+        self._page("skills", views.page_skills(capabilities.collect()),
+                   sub="Capability surface — live health, never aspiration")
+
+    def g_automations(self, qs):
+        self._page("automations",
+                   views.page_automations(self._csrf(), automations.list_automations(), time.time()),
+                   sub="Goals on a cadence — durable Temporal schedules")
+
     def g_router(self, qs):
         self._page("router", self._router_body(), sub="Route tester and decision ledger")
 
@@ -510,6 +524,59 @@ class Handler(BaseHTTPRequestHandler):
 
     def p_sendback(self, who, body, id):
         self._decide(who, body, id, False)
+
+    def _auto_body(self, error: str = "") -> str:
+        return views.page_automations(self._csrf(), automations.list_automations(),
+                                      time.time(), error)
+
+    def p_automations(self, who, body):
+        goal = str(body.get("goal", "")).strip()
+        try:
+            every = int(body.get("every_minutes", ""))
+        except (TypeError, ValueError):
+            every = 0
+        if not goal or len(goal) > 4000 or not 5 <= every <= 10080:
+            return self._page("automations",
+                              self._auto_body("A goal and a cadence of 5–10080 minutes are required."), 400)
+        try:
+            automations.create(goal, every)
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
+
+    def p_auto_pause(self, who, body, id):
+        try:
+            automations.set_paused(id, str(body.get("paused")) == "1")
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
+
+    def _auto_confirm(self, body, id, op) -> bool:
+        """Spendy/destructive ops need the confirm step — names the schedule."""
+        if body.get("confirm") == "1":
+            return True
+        desc = str(body.get("desc", ""))[:200]
+        self._page("automations", views.page_automation_confirm(self._csrf(), id, op, desc),
+                   sub="Confirm before it acts")
+        return False
+
+    def p_auto_trigger(self, who, body, id):
+        if not self._auto_confirm(body, id, "trigger"):
+            return
+        try:
+            automations.trigger(id)
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
+
+    def p_auto_delete(self, who, body, id):
+        if not self._auto_confirm(body, id, "delete"):
+            return
+        try:
+            automations.delete(id)
+        except Exception as e:
+            return self._page("automations", self._auto_body(f"{type(e).__name__}: {e}"), 500)
+        self._redirect("/automations", 303)
 
     def _webauthn(self, path):
         body = self._body()
