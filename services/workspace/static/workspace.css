@@ -235,6 +235,7 @@ h2.md-h { font-size: var(--text-headline); } h3.md-h { font-size: var(--text-tit
 .op { text-transform: capitalize; }
 .out-row .st { margin-top: var(--space-2); }
 .kv-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8); min-height: var(--space-24); padding: 0 var(--space-8); font-size: var(--text-caption); }
+.kv-row.start { justify-content: flex-start; gap: var(--space-8); }
 .kv-row .ic { color: var(--color-ink-subtle); margin-right: var(--space-4); }
 .kv-list { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-4) var(--space-16); margin: 0; font-size: var(--text-body); }
 .kv-list dt { color: var(--color-ink-subtle); } .kv-list dd { margin: 0; text-align: right; }
@@ -338,6 +339,8 @@ h2.md-h { font-size: var(--text-headline); } h3.md-h { font-size: var(--text-tit
   .acard-acts { flex-direction: column-reverse; }
   .acard-acts .btn { min-height: 48px; width: 100%; font-size: var(--text-body-lg); }
   .acard-acts kbd { display: none; }
+  .cap-form { flex-direction: column; align-items: stretch; }
+  .cap-form .input, .cap-form .btn { width: 100%; min-height: 44px; font-size: var(--text-body-lg); }
   .composer .btn kbd { display: none; }
   .composer .btn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .composer .btn { width: var(--row-compact); padding: 0; }
