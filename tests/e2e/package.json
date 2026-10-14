@@ -3,9 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test console.e2e.mjs",
+    "test": "node --test console.e2e.mjs workspace.e2e.mjs",
     "test:a11y": "node --test --test-name-pattern=@a11y console.e2e.mjs",
-    "test:keyboard": "node --test --test-name-pattern=@keyboard console.e2e.mjs"
+    "test:keyboard": "node --test --test-name-pattern=@keyboard console.e2e.mjs workspace.e2e.mjs",
+    "test:workspace": "node --test workspace.e2e.mjs",
+    "test:replay": "node --test --test-name-pattern=@replay workspace.e2e.mjs",
+    "test:approval": "node --test --test-name-pattern=@approval workspace.e2e.mjs",
+    "test:live": "node --test --test-name-pattern=@live workspace.e2e.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",

@@ -20,3 +20,16 @@ Screenshots: start the fixture (`python -I tests/opsview/serve_fixture.py 8851 /
 Python tests (routing, side-effect-free GETs, CSRF, approvals, registry, tokens):
 
     uv run --with pytest --with fido2 pytest tests/opsview
+
+## Agent workspace
+
+`workspace.e2e.mjs` drives the workspace (`/workspace`) against the replay fixture (`serve_fixture.py --replay`):
+no sandbox, no model, only 127.0.0.1. Each test file starts its own fixture servers on its own ports.
+
+    npm run test:workspace   # replay determinism, approvals, live stability, keyboard, palette, citations, cap, phone, layout
+    npm run test:replay      # same recorded stream twice (and paced vs instant) gives identical DOM snapshots
+    npm run test:approval    # no reuse after a payload change, Esc never decides, high risk needs two presses
+    npm run test:live        # a 200-event burst keeps scroll, tab, focus and the hovered row
+
+See [docs/design/agent-workspace.md](../../docs/design/agent-workspace.md) and
+[docs/design/event-stream.md](../../docs/design/event-stream.md).

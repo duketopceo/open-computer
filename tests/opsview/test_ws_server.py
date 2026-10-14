@@ -55,7 +55,7 @@ class Client:
 
     def csrf(self):
         if not self._csrf:
-            _, _, html = self.get("/runs/new")
+            _, _, html = self.get("/workspace")
             self._csrf = re.search(r'name="csrf-token" content="([0-9a-f]+)"', html).group(1)
         return self._csrf
 
@@ -191,6 +191,7 @@ def test_unauthenticated_stream_is_refused(wsx):
 
 def test_unknown_goal_and_bad_ids_are_404(wsx):
     assert wsx.get("/goals/g_nope/events")[0] == 404
+    assert wsx.get("/goals/g_nope")[0] == 404
     assert wsx.get("/goals/../etc/passwd/events")[0] in (404, 302)
 
 
@@ -205,10 +206,10 @@ def test_every_workspace_get_is_side_effect_free(wsx):
     start(wsx, "g_coding01")
     wait_for(lambda: routes.ws().sessions["g_coding01"].waiting_for(), "hold")
     before, n_events = snapshot(wsx.dir), routes.ws().log.last_seq("g_coding01")
-    paths = ["/goals.json", "/goals/g_coding01/state", "/goals/g_coding01/approvals",
+    paths = ["/workspace", "/workspace/g_coding01", "/goals.json", "/goals/g_coding01/state", "/goals/g_coding01/approvals",
              "/goals/g_coding01/artifacts/art_patch", "/goals/g_coding01/artifacts/art_zip/listing",
-             "/goals/g_coding01/artifacts/art_patch?download=1", "/static/ws/none.js",
-             "/goals/g_coding01/events?stop=1&resume=1"]
+             "/goals/g_coding01/artifacts/art_patch?download=1", "/workspace/g_cap01", "/static/ws/app.js",
+             "/workspace/g_coding01?approve=1&decide=once", "/goals/g_coding01/events?stop=1&resume=1"]
     for p in paths:
         wsx.sse(p, timeout=0.5) if p.endswith("/events") or "/events?" in p else wsx.get(p)
     assert snapshot(wsx.dir) == before
@@ -441,6 +442,12 @@ def test_html_artifact_is_served_sandboxed_with_no_network(wsx):
     assert "<iframe" not in body
 
 
+def test_the_workspace_page_allows_only_same_origin_frames(wsx):
+    s, h, _ = wsx.get("/workspace")
+    csp = h["Content-Security-Policy"]
+    assert "frame-src 'self'" in csp and "script-src 'self'" in csp and "connect-src 'self'" in csp
+    assert "unsafe-inline" not in csp and "http" not in csp.replace("'self'", "")
+
 
 def test_text_artifacts_are_never_rendered_as_active_content(wsx):
     played(wsx)
@@ -468,6 +475,17 @@ def test_export_of_a_gated_artifact_needs_an_approved_export_request(wsx):
     assert wsx.post("/goals/g_research01/artifacts/art_csv/export")[0] == 409, "no approval needed for this one"
 
 
+def test_the_stream_stays_open_while_an_export_approval_is_pending_after_the_run_ended(wsx):
+    played(wsx)
+    assert wsx.post("/goals/g_research01/artifacts/art_pdf/export")[0] == 200
+    evs, _ = wsx.sse("/goals/g_research01/events", headers={"Last-Event-ID": "59"}, timeout=1.2)
+    assert [e["type"] for _, _, e in evs] == ["approval"] and not any(n == "end" for _, n, _ in evs), "an unanswered approval keeps the stream open"
+    ap = entities(routes.ws().log.read("g_research01"), "approval")["ap_exp_art_pdf"]
+    wsx.post("/goals/g_research01/approvals/ap_exp_art_pdf/decide", {"choice": "deny", "hash": ap["payload_hash"]})
+    evs, _ = wsx.sse("/goals/g_research01/events", headers={"Last-Event-ID": "59"})
+    assert evs[-1][1] == "end" and [e["data"]["status"] for _, _, e in evs[:-1]] == ["pending", "denied"]
+
+
 def test_archive_listing_and_bad_refs(wsx):
     played(wsx, "g_coding01")
     j = wsx.json("/goals/g_coding01/artifacts/art_zip/listing")
@@ -486,6 +504,25 @@ def test_goal_list_reports_the_server_fold(wsx):
     assert (g["status"], g["group"], g["artifacts"], g["sources"]) == ("done", "done", 5, 6) and g["cap_usd"] == 2.0
 
 
+def test_the_page_renders_for_a_goal_and_embeds_the_workspace_actions(wsx):
+    s, h, html = wsx.get("/workspace/g_research01")
+    assert s == 200 and 'data-replay="1"' in html and '"goal": "g_research01"' in html
+    assert re.search(r'role="tab"', html) and html.count('role="tabpanel"') == 7
+    ids = json.loads(re.search(r'id="oc-actions">(.*?)</script>', html, re.S).group(1).replace("<\\/", "</"))
+    assert {"ws.send", "ws.stop", "ws.allow_once", "ws.tab.cost", "nav.workspace"} <= {a["id"] for a in ids}
+    assert "run.new" not in {a["id"] for a in ids}, "c creates a goal here, not a matrix run"
+
+
+def test_the_workspace_does_not_shadow_the_console_goals_pages(wsx):
+    assert wsx.get("/goals")[0] == 200 and wsx.get("/goals/new")[0] == 200
+    _, _, html = wsx.get("/workspace")
+    assert 'data-page="workspace"' in html and 'data-page="goals"' not in html
+
+
+def test_goals_page_has_no_inline_script_or_style(wsx):
+    _, _, html = wsx.get("/workspace")
+    assert not re.search(r"<script(?![^>]*(src=|type=\"application/json\"))", html)
+    assert " style=" not in html and "<style" not in html
 
 
 def test_memory_log_reset_lets_replay_restart(wsx):

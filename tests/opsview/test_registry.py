@@ -6,6 +6,8 @@ import re
 
 from services.opsview import registry, server
 
+from services.workspace import routes as workspace_routes
+
 
 def embedded(html):
     return json.loads(re.search(r'<script type="application/json" id="oc-actions">(.*?)</script>', html, re.S)
@@ -35,7 +37,7 @@ def test_every_nav_href_is_a_get_route():
     for a in registry.ACTIONS:
         if a.href:
             path = a.href.split("?")[0]
-            assert any(_re.fullmatch(p, path) for p, _ in server.GET_ROUTES), a.id
+            assert any(_re.fullmatch(p, path) for p, _ in [*server.GET_ROUTES, *workspace_routes.GET_ROUTES]), a.id
 
 
 def test_every_page_embeds_exactly_its_registry_slice(console):
@@ -70,4 +72,5 @@ def test_overlay_and_palette_are_generated_not_hardcoded():
 def test_help_overlay_lists_every_keyed_action():
     keyed = [a for a in registry.ACTIONS if a.keys]
     assert len(keyed) >= 15
-    assert all(a.group in ("Global", "Navigate", "Lists", "Goals", "Work", "Approvals", "Router", "Audit") for a in keyed)
+    assert all(a.group in ("Global", "Navigate", "Lists", "Goals", "Work", "Approvals", "Router", "Audit", "Workspace", "Sidebar")
+               for a in keyed)
