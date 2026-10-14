@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from typing import Callable
 
+from services.placement import headroom_from
 
-def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict) -> dict:
+
+def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, ledger=None) -> dict:
     """Route, place, and offer a subtask to the worker inbox.
 
     Returns the dispatch record (also written to the audit log).
@@ -25,7 +27,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict) -
             "needs_sandbox": sub.get("needs_sandbox", False),
         },
         pii_flagged=bool(pii.categories),
-        budget=getattr(router, "budget", None),
+        headroom=headroom_from(getattr(router, "budget", None), ledger, run_id),
     )
     tid = fs.send(
         "worker",

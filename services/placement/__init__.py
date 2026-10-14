@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .rules import TARGETS, Placement, place
+from .rules import TARGETS, Placement, headroom_from, place
 from .health import local_endpoints_up, place_live
 
-__all__ = ["TARGETS", "Placement", "place", "place_live", "local_endpoints_up", "adapter"]
+__all__ = ["TARGETS", "Placement", "headroom_from", "place", "place_live", "local_endpoints_up", "adapter"]
 
 
 def adapter(root: Path | str, **_: object):

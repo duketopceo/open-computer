@@ -173,6 +173,7 @@ class Orchestrator:
                     rec = dispatch(
                         self.fs, self.router, self.gate, self.place,
                         self.audit, run_id, sub,
+                        ledger=self.ledger,
                     )
                 elif any(st == "failed" for st in states):
                     rec = self._dep_fail(
