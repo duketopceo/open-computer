@@ -182,11 +182,24 @@ class Auth:
             raise RuntimeError(f"session key corrupt: {key_path}")
         key = secrets.token_bytes(32)
         _omaseal_set(svc, acct, base64.b64encode(key).decode())
-        fd = os.open(key_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        # Create the file whole (tmp + link) so concurrent first starts neither crash nor read a partial
+        # key: the loser of the race adopts the winner's key.
+        tmp = key_path.with_name(f".{key_path.name}.{os.getpid()}.new")
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             os.write(fd, key)
         finally:
             os.close(fd)
+        try:
+            os.link(tmp, key_path)
+        except FileExistsError:
+            winner = key_path.read_bytes()
+            if len(winner) != 32:
+                raise RuntimeError(f"session key corrupt: {key_path}") from None
+            key = winner
+            _omaseal_set(svc, acct, base64.b64encode(key).decode())
+        finally:
+            tmp.unlink(missing_ok=True)
         return key
 
     # -- ceremonies --------------------------------------------------

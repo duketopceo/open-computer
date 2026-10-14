@@ -4,7 +4,7 @@ enforces that the palette covers 100% of the actions on screen (section 7)."""
 import json
 import re
 
-from services.opsview import registry, server, views
+from services.opsview import registry, server
 
 
 def embedded(html):
