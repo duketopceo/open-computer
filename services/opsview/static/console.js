@@ -225,7 +225,7 @@
       case "row.open": return openRow();
       case "approval.approve": return approve(needRow());
       case "approval.sendback": return openNote(needRow());
-      case "router.focus": case "audit.focus": var i = $("#q") || $("#aq"); if (i) i.focus(); return;
+      case "router.focus": case "audit.focus": case "work.compose": var i = $("#q") || $("#aq") || $("#wg"); if (i) i.focus(); return;
       default: if (a && a.href) location.href = a.href;
     }
   }
@@ -267,7 +267,7 @@
       case "k": case "ArrowUp": if (e.key === "ArrowUp" && e.target.closest && e.target.closest(".log")) return; e.preventDefault(); setCursor(cursor < 0 ? 0 : cursor - 1); return;
       case "Enter": if (onControl || cursor < 0) return; e.preventDefault(); openRow(); return;
       case "c": e.preventDefault(); location.href = "/runs/new"; return;
-      case "/": if ($("#q") || $("#aq")) { e.preventDefault(); perform("router.focus"); } return;
+      case "/": var f = $("#q") ? "router.focus" : $("#aq") ? "audit.focus" : $("#wg") ? "work.compose" : ""; if (f) { e.preventDefault(); perform(f); } return;
       case "a": if (PAGE === "approvals") { e.preventDefault(); perform("approval.approve"); } return;
       case "r": if (PAGE === "approvals") { e.preventDefault(); perform("approval.sendback"); } return;
     }
@@ -298,6 +298,13 @@
     if (on) { var f = $("#sidebar a"); if (f) f.focus(); } else m.focus();
   }
   $("#menu").addEventListener("click", function () { toggleDrawer(!document.body.classList.contains("drawer")); });
+
+  // ---- live section: reload while a run is active --------------------------
+  var live = $("[data-refresh]");
+  if (live) {
+    var every = parseInt(live.dataset.refresh, 10) || 3;
+    setInterval(function () { if (!document.hidden) location.reload(); }, every * 1000);
+  }
 
   // ---- skeleton fragments -------------------------------------------------
   $$("[data-frag]").forEach(function (host) {
