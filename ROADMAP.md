@@ -95,7 +95,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-039 | P2 | `oc` CLI: run, matrix, ledger, approve, audit verify, ops; exit-code contract | open |
 | OC-040 | P2 | Vertical slice: goal -> subtasks -> sandboxes -> artifact, 3 golden tasks, replay mode | partial: decompose/dispatch/collect landed (#16); no CLI, no golden tasks |
 | OC-041 | P2 | fsproto sandbox mount isolation (agents see only their dir) | open |
-| OC-042 | P2 | MCP server (stdio): route, place, gate_request, audit, ledger, matrix (no approve tool) | open |
+| OC-042 | P2 | MCP server (stdio): route, place, gate_request, audit, ledger, matrix (no approve tool) | partial: stdio server (hand-rolled JSON-RPC), 8 tools, golden tools/list, human-only approval enforced by tests (#27); no `run` tool until OC-039, no registry packaging |
 | OC-043 | P3 | Khan adapter plugin consuming the MCP server | open |
 | OC-044 | P4 | Temporal durability | open |
 | OC-045 | P4 | Browser/computer-use worker (browser-use in sandbox) | open |
