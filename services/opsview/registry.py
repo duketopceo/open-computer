@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
-PAGES = ("overview", "sandboxes", "runs", "approvals", "router", "audit")
+PAGES = ("work", "overview", "goals", "automations", "skills", "sandboxes", "runs", "approvals", "router", "audit")
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,11 @@ class Action:
 
 ACTIONS: tuple[Action, ...] = (
     # Navigate: the sidebar sections, in order
+    Action("nav.work", "Work", "Navigate", "g w", href="/work"),
     Action("nav.overview", "Overview", "Navigate", "g o", href="/"),
+    Action("nav.goals", "Goals", "Navigate", "g t", href="/goals"),
+    Action("nav.automations", "Automations", "Navigate", "g a", href="/automations"),
+    Action("nav.skills", "Skills", "Navigate", "g k", href="/skills"),
     Action("nav.sandboxes", "Sandboxes", "Navigate", "g x", href="/sandboxes"),
     Action("nav.runs", "Runs", "Navigate", "g n", href="/runs"),
     Action("nav.approvals", "Approvals", "Navigate", "g r", href="/approvals"),
@@ -45,6 +49,12 @@ ACTIONS: tuple[Action, ...] = (
     Action("row.down", "Move down", "Lists", "j / ↓"),
     Action("row.up", "Move up", "Lists", "k / ↑"),
     Action("row.open", "Open selected", "Lists", "enter"),
+    # Goals
+    Action("goal.new", "New goal", "Goals", "n", "goals", href="/goals/new",
+           note="Decomposes into subtasks and runs them. Model spend."),
+    # Work
+    Action("work.compose", "Focus goal composer", "Work", "/", "work",
+           note="Describe a goal; it decomposes before it runs"),
     # Approvals (foundation section 10)
     Action("approval.approve", "Approve selected request", "Approvals", "a", "approvals",
            note="Sends the payload to its destination"),

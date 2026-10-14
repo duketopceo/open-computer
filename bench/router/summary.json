@@ -1,13 +1,27 @@
 {
+  "auto": {
+    "n": 180,
+    "errors": 0,
+    "invalid": 20,
+    "route_exact": 147,
+    "tier_exact": 38,
+    "route_acc": 0.8167,
+    "tier_acc": 0.2111,
+    "cost_usd": 0.034995,
+    "input_tokens": null,
+    "p50_ms": 1285,
+    "p95_ms": 3775
+  },
   "jev": {
     "n": 180,
     "errors": 0,
     "invalid": 0,
     "route_exact": 156,
-    "route_acc": 0.8667,
     "tier_exact": 142,
+    "route_acc": 0.8667,
     "tier_acc": 0.7889,
     "cost_usd": 0.006006,
+    "input_tokens": null,
     "p50_ms": 248,
     "p95_ms": 369
   },
@@ -16,23 +30,25 @@
     "errors": 0,
     "invalid": 0,
     "route_exact": 156,
-    "route_acc": 0.8667,
     "tier_exact": 156,
+    "route_acc": 0.8667,
     "tier_acc": 0.8667,
     "cost_usd": 0.002043,
+    "input_tokens": null,
     "p50_ms": 331,
     "p95_ms": 969
   },
-  "auto": {
+  "subq": {
     "n": 180,
     "errors": 0,
-    "invalid": 20,
-    "route_exact": 147,
-    "route_acc": 0.8167,
-    "tier_exact": 38,
-    "tier_acc": 0.2111,
-    "cost_usd": 0.034995,
-    "p50_ms": 1285,
-    "p95_ms": 3775
+    "invalid": 0,
+    "route_exact": 157,
+    "tier_exact": 156,
+    "route_acc": 0.8722,
+    "tier_acc": 0.8667,
+    "cost_usd": 0.0,
+    "input_tokens": 92756,
+    "p50_ms": 396,
+    "p95_ms": 518
   }
 }

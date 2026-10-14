@@ -42,6 +42,9 @@ class _FailedSandbox:
             msg += f": {type(self._err).__name__}: {self._err}"
         raise SandboxUnavailable(msg)
 
+    def close(self) -> None:
+        """No VM to kill — uniform interface with _CubeSandbox."""
+
 
 class _CubeSandbox:
     def __init__(self, sdk_sandbox: Any, resolve: dict[str, str] | None = None):
@@ -60,6 +63,13 @@ class _CubeSandbox:
         return ExecResult(
             returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr
         )
+
+    def close(self) -> None:
+        """Terminate the microVM. Best-effort — never raises."""
+        try:
+            self._sb.kill()
+        except Exception:
+            pass
 
 
 class ExecplaneAdapter:

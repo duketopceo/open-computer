@@ -58,7 +58,13 @@ def run_once(
                 ledger.release(task["run"], token)
             fs.fail(tid)
             audit.append(
-                {"event": "worker_fail", "task": tid, "error": f"{type(e).__name__}: {e}"}
+                {
+                    "event": "worker_fail",
+                    "task": tid,
+                    "kind": type(e).__name__,
+                    "error": str(e),
+                    "hint": getattr(e, "hint", ""),
+                }
             )
             continue
         if isinstance(result, WorkResult) and result.usage is not None and ledger is not None:

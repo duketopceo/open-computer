@@ -14,6 +14,7 @@ from services.execplane import client as exec_client
 from services.gate import audit as audit_mod
 from services.gate import gate as gate_mod
 from services.gate import queue as queue_mod
+from services.opsview import goalruns as goalruns_mod
 from services.opsview import runs as runs_mod
 from services.opsview import server
 from services.router import budget as budget_mod
@@ -97,8 +98,10 @@ def test_get_handlers_do_not_name_a_mutation_path():
 def test_readers_never_create_files(tmp_path, monkeypatch):
     monkeypatch.setenv("OC_APPROVALS", str(tmp_path / "none" / "a.ndjson"))
     monkeypatch.setenv("OC_RUNS_DIR", str(tmp_path / "none" / "runs"))
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path / "none" / "goals"))
     monkeypatch.setenv("OC_ROUTER_LEDGER", str(tmp_path / "none" / "l.jsonl"))
     assert queue_mod.ApprovalQueue(server.approvals_path()).items() == []
     assert runs_mod.list_runs() == [] and runs_mod.get_run("run_00000000") is None
+    assert goalruns_mod.list_runs() == [] and goalruns_mod.get_run("goal_00000000") is None
     assert server.day_spend() == 0.0
     assert not (tmp_path / "none").exists()

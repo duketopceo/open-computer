@@ -14,6 +14,10 @@ Candidates
                 fixture: (a) classification prompt -> parse route word,
                 (b) bare utterance -> response.model = auto's routing
                 decision, mapped to a tier via MODEL_TIER_MAP.
+  subq          SubQ Snap via its Decisions API (POST
+                https://api.subq.ai/v1/systemone), model
+                subq-snap-preview. Same {state, questions} contract;
+                input-token-only billing. Key from SUBQ_API_KEY.
 
 Usage (bills OpenRouter calls to orchestral-eval-v3):
   orch python3 bench/router/run_bench.py [--candidate X] [--limit N]
@@ -34,8 +38,10 @@ from pathlib import Path
 HERE = Path(__file__).parent
 CORPUS = HERE / "corpus.jsonl"
 OR_BASE = "https://openrouter.ai/api"
+SUBQ_URL = "https://api.subq.ai/v1/systemone"
 JEV_MODEL = "typesafe/jev-1.13"
 DECIDER_MODEL = "perplexity/pplx-decider-v1.1-27b"
+SUBQ_MODEL = "subq-snap-preview"
 TIMEOUT = 90
 
 ROUTES = {
@@ -91,10 +97,10 @@ def _key():
     return os.environ["OPENROUTER_API_KEY"]
 
 
-def _post(url, body, auth=True, timeout=TIMEOUT):
+def _post(url, body, auth=True, timeout=TIMEOUT, key=None):
     headers = {"Content-Type": "application/json"}
     if auth:
-        headers["Authorization"] = f"Bearer {_key()}"
+        headers["Authorization"] = f"Bearer {key or _key()}"
     req = urllib.request.Request(url, data=json.dumps(body).encode(),
                                  headers=headers, method="POST")
     t0 = time.time()
@@ -102,11 +108,11 @@ def _post(url, body, auth=True, timeout=TIMEOUT):
         return json.loads(r.read()), time.time() - t0
 
 
-def ask_decisions(url, model, utt, auth):
+def ask_decisions(url, model, utt, auth, key=None):
     payload = {"state": f'User request: "{utt}"', "questions": QUESTIONS}
     if model:
         payload["model"] = model
-    d, ms = _post(url, payload, auth=auth)
+    d, ms = _post(url, payload, auth=auth, key=key)
     ans = d.get("answers", {})
     return {
         "route": (ans.get("route") or {}).get("choice"),
@@ -114,6 +120,7 @@ def ask_decisions(url, model, utt, auth):
         "confidence": (ans.get("route") or {}).get("confidence"),
         "model_used": d.get("model"),
         "cost": (d.get("usage") or {}).get("cost", 0.0),
+        "input_tokens": (d.get("usage") or {}).get("input_tokens"),
         "ms": ms,
     }
 
@@ -203,6 +210,9 @@ def run_fixture(fx, cand):
             r["auto_route_model"] = slug
             r["cost"] += cost2
             r["ms"] += ms2
+        elif cand == "subq":
+            r = ask_decisions(SUBQ_URL, SUBQ_MODEL, utt, auth=True,
+                              key=os.environ["SUBQ_API_KEY"])
         else:
             raise ValueError(cand)
         ok_route = r["route"] == fx["expected_route"]
@@ -213,19 +223,22 @@ def run_fixture(fx, cand):
                 "raw": r.get("raw"),
                 "model_used": r.get("model_used"),
                 "auto_route_model": r.get("auto_route_model"),
+                "input_tokens": r.get("input_tokens"),
                 "cost": r["cost"], "ms": round(r["ms"] * 1000),
                 "error": None}
     except urllib.error.HTTPError as e:
         return {**fx, "candidate": cand, "pred_route": None,
                 "pred_tier": None, "route_ok": False, "tier_ok": False,
                 "confidence": None, "model_used": None, "raw": None,
-                "auto_route_model": None, "cost": 0.0, "ms": 0,
+                "auto_route_model": None, "input_tokens": None,
+                "cost": 0.0, "ms": 0,
                 "error": f"http {e.code}: {e.read()[:200]!r}"}
     except Exception as e:  # noqa: BLE001 - record, don't die
         return {**fx, "candidate": cand, "pred_route": None,
                 "pred_tier": None, "route_ok": False, "tier_ok": False,
                 "confidence": None, "model_used": None, "raw": None,
-                "auto_route_model": None, "cost": 0.0, "ms": 0,
+                "auto_route_model": None, "input_tokens": None,
+                "cost": 0.0, "ms": 0,
                 "error": f"{type(e).__name__}: {e}"}
 
 
@@ -241,7 +254,7 @@ def main():
     fxs = [json.loads(l) for l in CORPUS.read_text().splitlines() if l.strip()]
     if limit:
         fxs = fxs[:limit]
-    cands = [cand] if cand else ["jev", "pplx-decider", "auto"]
+    cands = [cand] if cand else ["jev", "pplx-decider", "auto", "subq"]
     summary = {}
     for c in cands:
         out = HERE / f"results-{c}.jsonl"

@@ -347,6 +347,10 @@ class GoodAudit:
         raise ReadOnly("audit log is append-only")
 
 
+import hashlib
+import json
+
+
 def _h(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
