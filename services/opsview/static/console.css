@@ -260,6 +260,12 @@ h3.w-sub-h { font-size: var(--text-micro); font-weight: 500; letter-spacing: 0.4
 .w-details summary:hover { color: var(--color-ink-muted); }
 .w-details table { margin-top: var(--space-8); }
 
+/* automations */
+.form-row { display: flex; gap: var(--space-8); align-items: center; margin: var(--space-8) 0; }
+.form-row .input { width: 88px; margin: 0; }
+td.row-acts { white-space: nowrap; text-align: right; }
+form.inline { display: inline-flex; margin: 0 0 0 var(--space-4); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; scroll-behavior: auto !important; }
 }

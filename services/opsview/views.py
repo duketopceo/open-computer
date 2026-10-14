@@ -18,12 +18,13 @@ from . import registry
 e = html.escape
 
 PAGE_TITLES = {
-    "work": "Work", "overview": "Overview", "goals": "Goals", "sandboxes": "Sandboxes",
+    "work": "Work", "overview": "Overview", "goals": "Goals", "automations": "Automations",
+    "skills": "Skills", "sandboxes": "Sandboxes",
     "runs": "Runs", "approvals": "Approvals", "router": "Router", "audit": "Audit",
 }
 NAV_PAGE = {a.id.split(".", 1)[1]: a for a in registry.nav_actions()}
 
-ASSET_V = "1"
+ASSET_V = "2"
 
 # ---------------------------------------------------------------- formatting
 
@@ -115,6 +116,8 @@ STATES = {
     "pending": ("attention", "attention"), "waiting": ("attention", "attention"),
     "elevated": ("attention", "attention"),
     "sent back": ("neutral", "back"), "sent_back": ("neutral", "back"),
+    "ready": ("healthy", "ok"), "active": ("healthy", "ok"),
+    "paused": ("neutral", "neutral"),
     "not configured": ("neutral", "neutral"), "low": ("neutral", "neutral"),
     "unknown": ("neutral", "neutral"),
     "queued": ("neutral", "neutral"), "leased": ("attention", "attention"),
@@ -854,6 +857,110 @@ def work_active(runs: list[dict], run: dict | None) -> bool:
         return (len(run["subtasks"]) < run["declared"]
                 or any(s["state"] not in ("DONE", "FAILED") for s in run["subtasks"]))
     return False
+
+
+# ------------------------------------------------------------- skills + automations
+
+
+def page_skills(caps: list[dict]) -> str:
+    """Capability registry — every row is a real code path with live health."""
+    rows = "".join(
+        f'<tr><td>{e(c["name"])}</td><td class="muted">{e(c["kind"])}</td>'
+        f'<td>{status(c["status"])}</td><td class="muted">{e(c["detail"])}</td></tr>'
+        for c in caps
+    )
+    return ("<section aria-labelledby=\"cap\"><h2 id=\"cap\">What a run can invoke</h2>"
+            '<p class="muted note">The capability surface — each row is a real engine, worker or '
+            'safety check. Health is probed live; a down engine is reported, not hidden. '
+            'Placement picks among these per subtask.</p>'
+            '<table class="dense"><caption class="sr">Capabilities and live health</caption><thead><tr>'
+            '<th scope="col">Capability</th><th scope="col">Kind</th><th scope="col">Status</th>'
+            '<th scope="col">Detail</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table></section>')
+
+
+def _auto_row(a: dict, csrf: str, now: float) -> str:
+    sid = e(a["id"])
+    nxt = ", ".join(time_tag(t, now) for t in a["next"][:2]) or '<span class="muted">—</span>'
+    state = status("paused") if a["paused"] else status("active")
+    toggle = ("Resume", "0") if a["paused"] else ("Pause", "1")
+    return (
+        f'<tr><td class="goal">{e(a["goal"] or "(no description)")}'
+        f'<div class="muted caption mono">{sid}</div></td>'
+        f'<td class="mono">{e(a["every"])}</td>'
+        f'<td class="num">{nxt}</td><td class="num">{a["fired"]}</td><td>{state}</td>'
+        '<td class="row-acts">'
+        f'<form method="post" action="/automations/{sid}/pause" class="inline">'
+        f'<input type="hidden" name="csrf" value="{e(csrf)}">'
+        f'<input type="hidden" name="paused" value="{toggle[1]}">'
+        f'<button class="btn ghost" type="submit">{toggle[0]}</button></form>'
+        f'<form method="post" action="/automations/{sid}/trigger" class="inline">'
+        f'<input type="hidden" name="csrf" value="{e(csrf)}">'
+        f'<input type="hidden" name="desc" value="{e(a["goal"])}">'
+        '<button class="btn ghost" type="submit">Run now</button></form>'
+        f'<form method="post" action="/automations/{sid}/delete" class="inline">'
+        f'<input type="hidden" name="csrf" value="{e(csrf)}">'
+        f'<input type="hidden" name="desc" value="{e(a["goal"])}">'
+        '<button class="btn ghost" type="submit">Delete</button></form>'
+        '</td></tr>'
+    )
+
+
+def page_automations(csrf: str, items: list[dict] | None, now: float, error: str = "") -> str:
+    """Temporal schedules: cadence, next fire, run-now/pause/delete."""
+    err = f'<p class="err" role="alert">{e(error)}</p>' if error else ""
+    form = f"""<section class="lit" aria-labelledby="nf"><h2 id="nf">New automation</h2>
+<p class="muted note">A goal on a cadence. Every fire submits a real run — routed, placed, gated,
+and driven to terminal state through the same protocol a manual goal uses.</p>
+<form method="post" action="/automations" class="goal-form">
+<input type="hidden" name="csrf" value="{e(csrf)}">
+<label for="agoal" class="sr">Goal</label>
+<textarea id="agoal" name="goal" class="input" rows="2" maxlength="4000" required
+  placeholder="e.g. Summarize today's audit failures and post the digest"></textarea>
+<div class="form-row">
+<label for="every">Every</label>
+<input id="every" name="every_minutes" type="number" class="input" min="5" max="10080" value="60" required>
+<span class="muted">minutes</span>
+<button type="submit" class="btn primary">Schedule it</button>
+</div>
+</form></section>"""
+    if items is None:
+        table = empty(
+            "Scheduler unreachable",
+            "Temporal isn't answering — schedules are durable state and nothing here will guess. "
+            "Check the temporal stack and reload.")
+        return form + err + table
+    if not items:
+        table = empty("No automations",
+                      "Nothing is scheduled. Add one above — it fires real goal runs on a cadence.")
+    else:
+        rows = "".join(_auto_row(a, csrf, now) for a in items)
+        table = ('<table class="dense"><caption class="sr">Automations</caption><thead><tr>'
+                 '<th scope="col">Goal</th><th scope="col">Cadence</th>'
+                 '<th scope="col" class="num">Next</th><th scope="col" class="num">Fired</th>'
+                 '<th scope="col">State</th><th scope="col"></th></tr></thead>'
+                 f'<tbody>{rows}</tbody></table>')
+    return form + err + f"<section>{table}</section>"
+
+
+def page_automation_confirm(csrf: str, sid: str, op: str, desc: str) -> str:
+    """Confirm card for spendy/destructive automation actions (trigger, delete)."""
+    verb = {"trigger": "Run it now", "delete": "Delete it"}.get(op, "Confirm")
+    what = {
+        "trigger": "Fires the schedule once, immediately — a real goal run that may spend.",
+        "delete": "Removes the schedule permanently. Runs it already produced stay on disk.",
+    }.get(op, "")
+    return f"""<section class="confirm" aria-labelledby="ac"><h2 id="ac">{e(verb)}?</h2>
+<table class="kv dense"><tbody>
+<tr><th scope="row">Automation</th><td class="goal">{e(desc)}<div class="muted caption mono">{e(sid)}</div></td></tr>
+<tr><th scope="row">Effect</th><td>{e(what)}</td></tr>
+</tbody></table>
+<form method="post" action="/automations/{e(sid)}/{e(op)}" class="actions">
+<input type="hidden" name="csrf" value="{e(csrf)}">
+<input type="hidden" name="confirm" value="1">
+<button type="submit" class="btn primary">{e(verb)}</button>
+<a class="btn" href="/automations">Cancel</a>
+</form></section>"""
 
 
 # ------------------------------------------------------------------- audit

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
-PAGES = ("work", "overview", "goals", "sandboxes", "runs", "approvals", "router", "audit")
+PAGES = ("work", "overview", "goals", "automations", "skills", "sandboxes", "runs", "approvals", "router", "audit")
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,8 @@ ACTIONS: tuple[Action, ...] = (
     Action("nav.work", "Work", "Navigate", "g w", href="/work"),
     Action("nav.overview", "Overview", "Navigate", "g o", href="/"),
     Action("nav.goals", "Goals", "Navigate", "g t", href="/goals"),
+    Action("nav.automations", "Automations", "Navigate", "g a", href="/automations"),
+    Action("nav.skills", "Skills", "Navigate", "g k", href="/skills"),
     Action("nav.sandboxes", "Sandboxes", "Navigate", "g x", href="/sandboxes"),
     Action("nav.runs", "Runs", "Navigate", "g n", href="/runs"),
     Action("nav.approvals", "Approvals", "Navigate", "g r", href="/approvals"),
