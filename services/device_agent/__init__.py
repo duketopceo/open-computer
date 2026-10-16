@@ -6,6 +6,19 @@ the app/browser capabilities are P2+; anything else is refused here.
 """
 
 from .exec import SUPPORTED, execute
+from .grants import GrantViolation, resolve_granted_path
 from .heartbeat import heartbeat_payload, registration_payload
+from .privacy import LOCAL_TARGETS, PRIVACY_MODES, OnDevicePrivacyGate, PrivacyDecision
 
-__all__ = ["SUPPORTED", "execute", "heartbeat_payload", "registration_payload"]
+__all__ = [
+    "LOCAL_TARGETS",
+    "PRIVACY_MODES",
+    "SUPPORTED",
+    "GrantViolation",
+    "OnDevicePrivacyGate",
+    "PrivacyDecision",
+    "execute",
+    "heartbeat_payload",
+    "registration_payload",
+    "resolve_granted_path",
+]

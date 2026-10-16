@@ -9,16 +9,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .grants import DEFAULT_GRANT_TTL, MODES, Grant, GrantCheckResult, GrantStore
 from .protocol import WINDOW, EnvelopeError, mint_secret, open_envelope, seal
 from .registry import CAPABILITIES, STALE_AFTER, Device, DeviceRegistry
 
 __all__ = [
     "CAPABILITIES",
+    "DEFAULT_GRANT_TTL",
+    "MODES",
     "STALE_AFTER",
     "WINDOW",
     "Device",
     "DeviceRegistry",
     "EnvelopeError",
+    "Grant",
+    "GrantCheckResult",
+    "GrantStore",
     "mint_secret",
     "open_envelope",
     "seal",
