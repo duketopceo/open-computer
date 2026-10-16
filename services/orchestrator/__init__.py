@@ -41,7 +41,7 @@ __all__ = [
 class Orchestrator:
     """goal -> dispatched subtask DAG -> collected results."""
 
-    def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None):
+    def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None, devices=None):
         root = Path(root)
         self.root = root
         self.fs = fs_adapter(root / "run")
@@ -50,6 +50,7 @@ class Orchestrator:
         self.router = router or router_adapter(root)
         self.place = place_fn or place
         self.ledger = ledger  # services.cost.CostLedger | None
+        self.devices = devices  # services.device.DeviceRegistry | None (P1)
         self.dispatches: dict[str, list[dict]] = {}  # run_id -> records
         self._subtasks: dict[str, dict[str, dict]] = {}  # run_id -> id -> sub
         self._tid_by_sub: dict[str, dict[str, str]] = {}  # run_id -> sid -> tid
@@ -173,7 +174,7 @@ class Orchestrator:
                     rec = dispatch(
                         self.fs, self.router, self.gate, self.place,
                         self.audit, run_id, sub,
-                        ledger=self.ledger,
+                        ledger=self.ledger, devices=self.devices,
                     )
                 elif any(st == "failed" for st in states):
                     rec = self._dep_fail(

@@ -11,6 +11,9 @@ Targets:
   cloud-OpenRouter   cloud model call via router — costs, needs gate when
                      sensitive or frontier
   cloud-sandbox      execution-capable sandboxed worker
+  device             the user's own registered machine (services/device) —
+                     the only target that can touch a granted local root,
+                     local app or local browser. Local, never cloud.
 
 Every Placement carries `reason` for the audit row — the matrix and the
 UI read the same words, never inferred.
@@ -26,7 +29,15 @@ TARGETS = (
     "local-llamacpp",
     "cloud-OpenRouter",
     "cloud-sandbox",
+    "device",
 )
+
+DEVICE_NEEDS = ("device_root", "needs_local_app", "needs_local_browser")
+
+
+def needs_device(subtask: dict) -> bool:
+    """A step that must run on the user's machine: it names a granted root, a local app or the local browser."""
+    return any(subtask.get(k) for k in DEVICE_NEEDS)
 
 
 @dataclass
@@ -61,6 +72,7 @@ def place(
     headroom: float | None = None,
     budget=None,
     local_up: bool = True,
+    device_available: bool = True,
 ) -> Placement:
     """Where this subtask's model/execution lands. A pure function of its arguments.
 
@@ -77,6 +89,7 @@ def place(
       I3 est_cost above headroom -> local, never cloud.
       I4 every cloud placement of PII-flagged content, and every frontier placement, has gate_required.
       I5 deterministic: same arguments, same Placement (reason included).
+      I6 needs_device(subtask) -> target device, whatever else is set; nothing else ever lands on device.
     """
     latency = subtask.get("latency", "normal")
     tier = subtask.get("tier", "mid")
@@ -84,6 +97,17 @@ def place(
     est_cost = float(subtask.get("est_cost", 0.0))
     if headroom is None and budget is not None:
         headroom = headroom_from(budget=budget)
+
+    # 0. Steps bound to the user's machine run there or nowhere: a local
+    #     file, app or browser cannot be reached from any other target.
+    #     Device is local, so PII and spend rules are satisfied by it.
+    if needs_device(subtask):
+        if not device_available:
+            return Placement(
+                "device",
+                "device-required but no eligible device - run parks until a heartbeat arrives",
+            )
+        return Placement("device", "device-required - runs on the user's registered machine")
 
     # 1. PII never reaches cloud without a recorded human approval.
     if pii_flagged and not approved:
