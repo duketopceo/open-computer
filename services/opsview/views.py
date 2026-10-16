@@ -728,7 +728,6 @@ as it thinks — routed, placed, gated, worked. Nothing spends without your conf
     subs = run["subtasks"]
     n = run["declared"] or len(subs)
     done = sum(1 for s in subs if s["state"] == "DONE")
-    live = any(s["state"] in ("LEASED", "RUNNING", "QUEUED") for s in subs) or len(subs) < n
     elapsed = _dur(run.get("started"), (run.get("ended") or now) if run.get("started") else None)
     cost = sum(s.get("cost") or 0 for s in subs)
     head = (
