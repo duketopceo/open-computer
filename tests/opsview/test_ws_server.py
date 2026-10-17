@@ -350,7 +350,7 @@ def test_decisions_are_audited_through_the_gate(wsx):
     wait_for(lambda: routes.ws().sessions["g_coding01"].waiting_for(), "hold")
     h = entities(routes.ws().log.read("g_coding01"), "approval")["ap_clone01"]["payload_hash"]
     wsx.post("/goals/g_coding01/approvals/ap_clone01/decide", {"choice": "once", "hash": h})
-    rows = [json.loads(ln) for ln in (wsx.dir / "audit.ndjson").read_text().splitlines()]
+    rows = [json.loads(ln) for ln in (wsx.dir / "ws" / "g_coding01.audit.ndjson").read_text().splitlines()]
     assert rows[-1]["event"] == "human_decision"
     assert rows[-1]["approval_id"] == "ap_clone01" and rows[-1]["payload_hash"] == h and rows[-1]["by"] == "luke@test"
     # the granted approval is consumable through the single send path — a
@@ -362,7 +362,7 @@ def test_decisions_are_audited_through_the_gate(wsx):
     res = q.gate.request_cloud_call(item["payload"], Approval(id="ap_clone01", payload_hash=h),
                                     sender=lambda p: len(str(p)))
     assert res.allowed
-    rows = [json.loads(ln) for ln in (wsx.dir / "audit.ndjson").read_text().splitlines()]
+    rows = [json.loads(ln) for ln in (wsx.dir / "ws" / "g_coding01.audit.ndjson").read_text().splitlines()]
     assert rows[-1]["event"] == "cloud_call_allowed" and rows[-1]["approval_id"] == "ap_clone01"
 
 
@@ -531,3 +531,12 @@ def test_memory_log_reset_lets_replay_restart(wsx):
     start(wsx, "g_research01", hold=False, restart=True)
     wait_for(lambda: routes.ws().log.finished("g_research01"), "second run")
     assert routes.ws().log.last_seq("g_research01") == 59 and isinstance(routes.ws().log, MemoryLog)
+
+
+def test_a_replay_restart_can_decide_the_same_approval_again(wsx):
+    for restart in (False, True, True):
+        start(wsx, "g_coding01", restart=restart)
+        wait_for(lambda: routes.ws().sessions["g_coding01"].waiting_for(), "hold")
+        h = entities(routes.ws().log.read("g_coding01"), "approval")["ap_clone01"]["payload_hash"]
+        s, b = wsx.post("/goals/g_coding01/approvals/ap_clone01/decide", {"choice": "once", "hash": h})
+        assert s == 200, b
