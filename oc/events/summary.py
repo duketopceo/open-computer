@@ -8,9 +8,21 @@ from __future__ import annotations
 
 
 def fold(events: list[dict]) -> dict:
-    s = {"id": None, "title": "", "status": "queued", "reason": None, "spent_usd": 0.0, "cap_usd": 0.0,
-         "pending_approvals": 0, "artifacts": 0, "sources": 0, "changes": 0, "last_seq": 0, "updated": 0.0,
-         "started": None}
+    s = {
+        "id": None,
+        "title": "",
+        "status": "queued",
+        "reason": None,
+        "spent_usd": 0.0,
+        "cap_usd": 0.0,
+        "pending_approvals": 0,
+        "artifacts": 0,
+        "sources": 0,
+        "changes": 0,
+        "last_seq": 0,
+        "updated": 0.0,
+        "started": None,
+    }
     approvals: dict[str, str] = {}
     artifacts, sources, changes = set(), set(), set()
     for e in events:

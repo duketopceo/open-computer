@@ -70,6 +70,7 @@ def _public_item(it: dict) -> dict:
 
 # --- tools ------------------------------------------------------------------------------------------------------
 
+
 def t_list_runs(st: State, args: dict) -> dict:
     runs: dict[str, dict] = {}
     for r in _rows(st.orch):
@@ -111,11 +112,21 @@ def t_request_approval(st: State, args: dict) -> dict:
     if not isinstance(payload, dict):
         return {"error": "payload must be an object"}
     q = ApprovalQueue(st.approvals, Gate(st.audit))  # Gate used only to PII-scan at submit
-    item_id = q.submit(who=str(args.get("who", "mcp-client")), what=str(args["what"]), payload=payload,
-                       session=str(args.get("session", "")), est_cost=float(args.get("est_cost", 0.0)))
+    item_id = q.submit(
+        who=str(args.get("who", "mcp-client")),
+        what=str(args["what"]),
+        payload=payload,
+        session=str(args.get("session", "")),
+        est_cost=float(args.get("est_cost", 0.0)),
+    )
     item = q.get(item_id)
-    return {"id": item_id, "status": "pending", "payload_hash": item["payload_hash"], "pii": item["pii"],
-            "next": "the owner decides in the console; poll approval_status. Nothing is sent by this call."}
+    return {
+        "id": item_id,
+        "status": "pending",
+        "payload_hash": item["payload_hash"],
+        "pii": item["pii"],
+        "next": "the owner decides in the console; poll approval_status. Nothing is sent by this call.",
+    }
 
 
 def t_approval_status(st: State, args: dict) -> dict:
@@ -134,34 +145,83 @@ def t_audit_tail(st: State, args: dict) -> dict:
 
 
 def t_place(st: State, args: dict) -> dict:
-    p = place(args.get("subtask", {}), pii_flagged=bool(args.get("pii_flagged", False)),
-              approved=False, headroom=args.get("headroom"))
+    p = place(
+        args.get("subtask", {}),
+        pii_flagged=bool(args.get("pii_flagged", False)),
+        approved=False,
+        headroom=args.get("headroom"),
+    )
     return {"target": p.target, "reason": p.reason, "gate_required": p.gate_required}
 
 
 _OBJ = "object"
 TOOLS: dict[str, tuple[str, dict, Callable[[State, dict], dict], bool]] = {
     # name: (description, input schema, handler, read_only)
-    "list_runs": ("List orchestrated goals (runs) with dispatch counts and cost state.",
-                  {"type": _OBJ, "properties": {}}, t_list_runs, True),
-    "get_run": ("Audit events, cost state and per-subtask cost for one run.",
-                {"type": _OBJ, "properties": {"run": {"type": "string"}}, "required": ["run"]}, t_get_run, True),
-    "list_approvals": ("List approval requests. status: pending (default), approved, sent_back, all.",
-                       {"type": _OBJ, "properties": {"status": {"type": "string"}}}, t_list_approvals, True),
+    "list_runs": (
+        "List orchestrated goals (runs) with dispatch counts and cost state.",
+        {"type": _OBJ, "properties": {}},
+        t_list_runs,
+        True,
+    ),
+    "get_run": (
+        "Audit events, cost state and per-subtask cost for one run.",
+        {"type": _OBJ, "properties": {"run": {"type": "string"}}, "required": ["run"]},
+        t_get_run,
+        True,
+    ),
+    "list_approvals": (
+        "List approval requests. status: pending (default), approved, sent_back, all.",
+        {"type": _OBJ, "properties": {"status": {"type": "string"}}},
+        t_list_approvals,
+        True,
+    ),
     "request_approval": (
         "Ask the owner to approve one exact payload leaving the box. Queues it; sends nothing; cannot be approved by this client.",
-        {"type": _OBJ, "required": ["what", "payload"], "properties": {
-            "what": {"type": "string"}, "payload": {"type": _OBJ}, "who": {"type": "string"},
-            "session": {"type": "string"}, "est_cost": {"type": "number"}}}, t_request_approval, False),
-    "approval_status": ("Status of one approval request (pending, approved, sent_back).",
-                        {"type": _OBJ, "properties": {"id": {"type": "string"}}, "required": ["id"]}, t_approval_status, True),
-    "cost": ("Cost-ledger state (cap, spend, paused) and per-subtask spend for a run.",
-             {"type": _OBJ, "properties": {"run": {"type": "string"}}, "required": ["run"]}, t_cost, True),
-    "audit_tail": ("Last n rows of the append-only audit log (default 20, max 200).",
-                   {"type": _OBJ, "properties": {"n": {"type": "integer"}}}, t_audit_tail, True),
-    "place": ("Where a subtask would run (local/cloud, gate required). Pure; never approves PII.",
-              {"type": _OBJ, "properties": {"subtask": {"type": _OBJ}, "pii_flagged": {"type": "boolean"},
-                                             "headroom": {"type": "number"}}}, t_place, True),
+        {
+            "type": _OBJ,
+            "required": ["what", "payload"],
+            "properties": {
+                "what": {"type": "string"},
+                "payload": {"type": _OBJ},
+                "who": {"type": "string"},
+                "session": {"type": "string"},
+                "est_cost": {"type": "number"},
+            },
+        },
+        t_request_approval,
+        False,
+    ),
+    "approval_status": (
+        "Status of one approval request (pending, approved, sent_back).",
+        {"type": _OBJ, "properties": {"id": {"type": "string"}}, "required": ["id"]},
+        t_approval_status,
+        True,
+    ),
+    "cost": (
+        "Cost-ledger state (cap, spend, paused) and per-subtask spend for a run.",
+        {"type": _OBJ, "properties": {"run": {"type": "string"}}, "required": ["run"]},
+        t_cost,
+        True,
+    ),
+    "audit_tail": (
+        "Last n rows of the append-only audit log (default 20, max 200).",
+        {"type": _OBJ, "properties": {"n": {"type": "integer"}}},
+        t_audit_tail,
+        True,
+    ),
+    "place": (
+        "Where a subtask would run (local/cloud, gate required). Pure; never approves PII.",
+        {
+            "type": _OBJ,
+            "properties": {
+                "subtask": {"type": _OBJ},
+                "pii_flagged": {"type": "boolean"},
+                "headroom": {"type": "number"},
+            },
+        },
+        t_place,
+        True,
+    ),
 }
 
 
@@ -173,6 +233,7 @@ def tool_list() -> list[dict]:
 
 
 # --- JSON-RPC ---------------------------------------------------------------------------------------------------
+
 
 def handle(msg: dict, st: State) -> dict | None:
     mid, method = msg.get("id"), msg.get("method")
@@ -186,9 +247,15 @@ def handle(msg: dict, st: State) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": text}}
 
     if method == "initialize":
-        return ok({"protocolVersion": PROTOCOL, "capabilities": {"tools": {}}, "serverInfo": SERVER_INFO,
-                   "instructions": "Approval is human-only: request_approval queues a request for the owner. "
-                                   "This server has no tool that approves, sends back or sends anything."})
+        return ok(
+            {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {"tools": {}},
+                "serverInfo": SERVER_INFO,
+                "instructions": "Approval is human-only: request_approval queues a request for the owner. "
+                "This server has no tool that approves, sends back or sends anything.",
+            }
+        )
     if method == "ping":
         return ok({})
     if method == "tools/list":
@@ -204,8 +271,12 @@ def handle(msg: dict, st: State) -> dict | None:
             return ok({"isError": True, "content": [{"type": "text", "text": f"missing argument: {e.args[0]}"}]})
         except Exception as e:  # tool failure is a tool result, not a protocol error
             return ok({"isError": True, "content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}]})
-        return ok({"isError": "error" in result,
-                   "content": [{"type": "text", "text": json.dumps(result, sort_keys=True, default=str)}]})
+        return ok(
+            {
+                "isError": "error" in result,
+                "content": [{"type": "text", "text": json.dumps(result, sort_keys=True, default=str)}],
+            }
+        )
     return err(-32601, f"method not found: {method}")
 
 
@@ -218,7 +289,9 @@ def serve(stdin=sys.stdin, stdout=sys.stdout, st: State | None = None) -> None:
         try:
             msg = json.loads(line)
         except ValueError:
-            stdout.write(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}) + "\n")
+            stdout.write(
+                json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}) + "\n"
+            )
             stdout.flush()
             continue
         resp = handle(msg, st)

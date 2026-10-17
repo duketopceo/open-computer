@@ -1,0 +1,32 @@
+# systemd user service template for open-computer device agent (plan P6)
+# Enable linger for always-on headless hosting:
+#   loginctl enable-linger $USER
+#   systemctl --user enable --now oc-device.service
+
+[Unit]
+Description=open-computer personal device agent (oc-device)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/opt/open-computer
+ExecStart=%h/.local/bin/uv run python -m services.device_agent.main --root %h/.local/share/oc --device-id %H
+Restart=on-failure
+RestartSec=5
+
+# Hardening directives
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=%h/.local/share/oc
+
+[Install]
+WantedBy=default.target

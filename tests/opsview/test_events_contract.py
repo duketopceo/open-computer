@@ -9,7 +9,18 @@ from pathlib import Path
 
 import pytest
 
-from oc.events import ApprovalStateError, Emitter, FileLog, MemoryLog, entities, errors, fold, payload_hash, schema, validate
+from oc.events import (
+    ApprovalStateError,
+    Emitter,
+    FileLog,
+    MemoryLog,
+    entities,
+    errors,
+    fold,
+    payload_hash,
+    schema,
+    validate,
+)
 from oc.events.log import TERMINAL
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
@@ -60,17 +71,20 @@ def good():
     return fixture_events("g_research01")[0]
 
 
-@pytest.mark.parametrize("mutate,why", [
-    (lambda e: e.pop("seq"), "missing seq"),
-    (lambda e: e.update(seq=0), "seq below 1"),
-    (lambda e: e.update(type="nope"), "unknown type"),
-    (lambda e: e.update(extra=1), "unexpected field"),
-    (lambda e: e.update(goal="research"), "bad goal id"),
-    (lambda e: e["data"].update(status="exploding"), "bad enum"),
-    (lambda e: e["data"].update(cap_usd=-1), "negative money"),
-    (lambda e: e["data"].update(surprise=True), "unexpected data field"),
-    (lambda e: e.update(v=2), "wrong version"),
-])
+@pytest.mark.parametrize(
+    "mutate,why",
+    [
+        (lambda e: e.pop("seq"), "missing seq"),
+        (lambda e: e.update(seq=0), "seq below 1"),
+        (lambda e: e.update(type="nope"), "unknown type"),
+        (lambda e: e.update(extra=1), "unexpected field"),
+        (lambda e: e.update(goal="research"), "bad goal id"),
+        (lambda e: e["data"].update(status="exploding"), "bad enum"),
+        (lambda e: e["data"].update(cap_usd=-1), "negative money"),
+        (lambda e: e["data"].update(surprise=True), "unexpected data field"),
+        (lambda e: e.update(v=2), "wrong version"),
+    ],
+)
 def test_validator_rejects(mutate, why):
     ev = good()
     mutate(ev)
@@ -79,6 +93,7 @@ def test_validator_rejects(mutate, why):
 
 def test_validator_refuses_schema_keywords_it_does_not_understand(monkeypatch):
     import importlib
+
     v = importlib.import_module("oc.events.validate")
     bad = {"type": "object", "patternProperties": {}}
     with pytest.raises(ValueError, match="does not support"):
@@ -183,6 +198,7 @@ def test_concurrent_emitters_never_gap_or_duplicate_seq(tmp_path):
         em = Emitter(log, "g_c1", clock=lambda: 1.0)
         for i in range(40):
             em.note(f"note_{k}_{i}", "agent", "x")
+
     ts = [threading.Thread(target=work, args=(k,)) for k in range(6)]
     [t.start() for t in ts]
     [t.join() for t in ts]

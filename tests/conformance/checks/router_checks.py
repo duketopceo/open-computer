@@ -12,9 +12,7 @@ from harness import CheckFailed, check
 def _dec(route="answer", tier="cheap", engine="stub", cost=0.001):
     from services.router import RouteDecision
 
-    return RouteDecision(
-        route=route, tier=tier, engine=engine, confidence=0.9, cost=cost, ms=1
-    )
+    return RouteDecision(route=route, tier=tier, engine=engine, confidence=0.9, cost=cost, ms=1)
 
 
 def _mk(mod, tmp_path, engines, **kw):

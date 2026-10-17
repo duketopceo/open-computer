@@ -26,7 +26,11 @@ class WorkResult:
 
 
 def run_once(
-    fs, audit, agent: str, work_fn: Callable[[dict], object], ttl: float = 60,
+    fs,
+    audit,
+    agent: str,
+    work_fn: Callable[[dict], object],
+    ttl: float = 60,
     ledger: CostLedger | None = None,
 ) -> list[str]:
     """One sweep of agent's inbox. Returns the task ids attempted.

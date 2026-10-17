@@ -10,6 +10,7 @@ import pytest
 from services.cost import CostLedger, LedgerCorrupt, Usage
 from services.orchestrator import Orchestrator, WorkResult
 
+
 def U(c):
     return Usage("deepseek/deepseek-v4-pro", 100, 50, c)
 
@@ -34,7 +35,7 @@ def test_totals_per_run_and_subtask(ledger):
 def test_cap_is_never_exceeded_by_more_than_one_call(ledger):
     est = 0.003
     started = 0
-    while (tok := ledger.check("r", est)):
+    while tok := ledger.check("r", est):
         started += 1
         ledger.record("r", "s", U(est), token=tok)
         assert started < 20
@@ -110,12 +111,15 @@ def test_concurrent_checks_respect_the_cap(tmp_path):
 
 # --- integration with the orchestrator: pause holds work, cancels nothing ----------------------------------
 
+
 def _engine(_goal):
-    return json.dumps([
-        {"id": "a", "title": "a", "prompt": "collect data", "tier": "cheap", "est_cost": 0.004},
-        {"id": "b", "title": "b", "prompt": "analyze", "tier": "cheap", "deps": ["a"], "est_cost": 0.004},
-        {"id": "c", "title": "c", "prompt": "report", "tier": "cheap", "deps": ["b"], "est_cost": 0.004},
-    ])
+    return json.dumps(
+        [
+            {"id": "a", "title": "a", "prompt": "collect data", "tier": "cheap", "est_cost": 0.004},
+            {"id": "b", "title": "b", "prompt": "analyze", "tier": "cheap", "deps": ["a"], "est_cost": 0.004},
+            {"id": "c", "title": "c", "prompt": "report", "tier": "cheap", "deps": ["b"], "est_cost": 0.004},
+        ]
+    )
 
 
 def _work(task):

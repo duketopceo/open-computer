@@ -128,9 +128,7 @@ async def _create(goal: str, every_s: int) -> str:
                 task_queue=TASK_QUEUE,
                 static_summary=goal[:120],
             ),
-            spec=ScheduleSpec(
-                intervals=[ScheduleIntervalSpec(every=timedelta(seconds=every_s))]
-            ),
+            spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(seconds=every_s))]),
             state=ScheduleState(note=f"every {every_s // 60}m"),
         ),
     )

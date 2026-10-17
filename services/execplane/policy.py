@@ -51,9 +51,7 @@ class Diff:
 class PolicyEngine:
     def __init__(self, path: Path | str):
         self.path = Path(path)
-        self._applied: list[dict] = (
-            json.loads(self.path.read_text()) if self.path.exists() else []
-        )
+        self._applied: list[dict] = json.loads(self.path.read_text()) if self.path.exists() else []
 
     def propose(self, change: dict, origin: str) -> Proposal:
         return Proposal(
@@ -72,12 +70,8 @@ class PolicyEngine:
         """Apply iff a human approved. Agent-origin proposals can never be
         self-approved (R6)."""
         if approved_by != _HUMAN:
-            raise PolicyDenied(
-                f"policy change must be human-approved, got {approved_by!r}"
-            )
-        self._applied.append(
-            {"id": proposal.id, "change": proposal.change, "ts": time.time()}
-        )
+            raise PolicyDenied(f"policy change must be human-approved, got {approved_by!r}")
+        self._applied.append({"id": proposal.id, "change": proposal.change, "ts": time.time()})
         data = json.dumps(self._applied, indent=2).encode()
         tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
         tmp.write_bytes(data)

@@ -163,28 +163,23 @@ enroll();
 
 _LOGIN_BODY = ""
 
-_ENROLL_BODY = (
-    '<div id="done" hidden>enrolled — '
-    '<a href="/">continue to sign in</a></div>'
-)
+_ENROLL_BODY = '<div id="done" hidden>enrolled — <a href="/">continue to sign in</a></div>'
 
 
 def _page(title: str, body: str, script: str) -> str:
     return (
-        '<!doctype html>\n'
+        "<!doctype html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta name="robots" content="noindex">'
-        '<title>open-computer · ' + title + '</title>'
-        '<link rel="stylesheet" href="/static/silver-lining.css"><style>' + _CSS + '</style></head>\n'
-        '<body><main>'
-        '<h1>open-computer</h1>'
+        "<title>open-computer · " + title + "</title>"
+        '<link rel="stylesheet" href="/static/silver-lining.css"><style>' + _CSS + "</style></head>\n"
+        "<body><main>"
+        "<h1>open-computer</h1>"
         '<div id="status"><span id="word"></span> <span id="msg" class="dim"></span></div>'
-        '<button id="retry" type="button" hidden>retry</button>'
-        + body +
-        '</main>\n'
-        '<script>' + _JS + script + '</script>\n'
-        '</body></html>\n'
+        '<button id="retry" type="button" hidden>retry</button>' + body + "</main>\n"
+        "<script>" + _JS + script + "</script>\n"
+        "</body></html>\n"
     )
 
 
@@ -198,11 +193,6 @@ def enroll_page(token: str) -> str:
     `token` is a URL-supplied single-use enroll token — embed it in the JS."""
     # json.dumps gives a valid JS string literal; additionally escape
     # HTML-significant characters so the value can never close the <script>.
-    token_js = (
-        json.dumps(str(token))
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
+    token_js = json.dumps(str(token)).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     script = _ENROLL_JS.replace("__TOKEN_JSON__", token_js)
     return _page("enroll", _ENROLL_BODY, script)

@@ -17,7 +17,9 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
+
+from .parked import drain_parked
 
 STALE_AFTER = 60.0  # seconds without a heartbeat before a device drops out of placement
 CAPABILITIES = ("fs", "app", "browser", "shell")
@@ -39,15 +41,42 @@ class Device:
 
 
 class DeviceRegistry:
-    def __init__(self, root: Path | str, clock: Callable[[], float] = time.time):
+    def __init__(
+        self,
+        root: Path | str,
+        clock: Callable[[], float] = time.time,
+        *,
+        fs: Any | None = None,
+        audit: Any | None = None,
+    ):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self._path = self.root / "devices.json"
         self._clock = clock
+        self._fs = fs
+        self._audit = audit
         self._devices: dict[str, Device] = {}
         if self._path.exists():
             for d in json.loads(self._path.read_text()).values():
                 self._devices[d["device_id"]] = Device(**d)
+
+    def bind(self, *, fs: Any | None = None, audit: Any | None = None) -> None:
+        """Attach an FSAdapter and AuditLog so heartbeats/registrations auto-drain `device/parked`."""
+        if fs is not None:
+            self._fs = fs
+        if audit is not None:
+            self._audit = audit
+
+    def drain_parked(
+        self,
+        fs: Any | None = None,
+        audit: Any | None = None,
+        *,
+        now: float | None = None,
+    ) -> list[dict[str, Any]]:
+        target_fs = fs if fs is not None else self._fs
+        target_audit = audit if audit is not None else self._audit
+        return drain_parked(target_fs, self, target_audit, now=now)
 
     # ── persistence ────────────────────────────────────────────────
     def _save(self) -> None:
@@ -56,7 +85,13 @@ class DeviceRegistry:
         os.replace(tmp, self._path)
 
     # ── protocol ───────────────────────────────────────────────────
-    def register(self, payload: dict) -> Device:
+    def register(
+        self,
+        payload: dict,
+        *,
+        fs: Any | None = None,
+        audit: Any | None = None,
+    ) -> Device:
         """Idempotent: re-registering a known device updates roots/capabilities and refreshes its heartbeat."""
         did = payload["device_id"]
         caps = [c for c in payload.get("capabilities", []) if c in CAPABILITIES]
@@ -72,14 +107,27 @@ class DeviceRegistry:
         dev.online = bool(payload.get("online", True))
         dev.last_heartbeat = now
         self._save()
+        if (fs is not None or self._fs is not None) and dev.fresh(now):
+            self.drain_parked(fs=fs, audit=audit, now=now)
         return dev
 
-    def heartbeat(self, device_id: str, *, awake: bool = True, now: float | None = None) -> Device:
+    def heartbeat(
+        self,
+        device_id: str,
+        *,
+        awake: bool = True,
+        now: float | None = None,
+        fs: Any | None = None,
+        audit: Any | None = None,
+    ) -> Device:
         dev = self._devices[device_id]  # KeyError: unregistered devices must register first
-        dev.last_heartbeat = self._clock() if now is None else now
+        t = self._clock() if now is None else now
+        dev.last_heartbeat = t
         dev.awake = awake
         dev.online = True
         self._save()
+        if (fs is not None or self._fs is not None) and dev.fresh(t):
+            self.drain_parked(fs=fs, audit=audit, now=t)
         return dev
 
     def get(self, device_id: str) -> Device | None:

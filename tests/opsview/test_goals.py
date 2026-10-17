@@ -46,10 +46,13 @@ def test_goal_post_rejects_empty_and_overlong(console, submitted):
 
 def test_run_list_and_detail_read_disk(console, monkeypatch, tmp_path):
     import time
+
     monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
     rid = goalruns.submit(
         "Do two things",
-        lambda prompt: '[{"id":"a","title":"first","prompt":"p1"},{"id":"b","title":"second","prompt":"p2","deps":["a"]}]',
+        lambda prompt: (
+            '[{"id":"a","title":"first","prompt":"p1"},{"id":"b","title":"second","prompt":"p2","deps":["a"]}]'
+        ),
         lambda task: f"out:{task['prompt']}",
         by="test",
     )
@@ -71,6 +74,7 @@ def test_resume_recovers_interrupted_run(console, monkeypatch, tmp_path):
     """A restart mid-run must not orphan undispatched subtasks (OC-4)."""
     import time
     from services.orchestrator import Orchestrator
+
     monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
     orig = goalruns._start_drive
     monkeypatch.setattr(goalruns, "_start_drive", lambda *a: None)
@@ -84,8 +88,8 @@ def test_resume_recovers_interrupted_run(console, monkeypatch, tmp_path):
     rid = goalruns.submit("Do two things", engine, wfn, by="test")
     orch = Orchestrator(tmp_path / rid)  # a fresh process only sees disk
     assert orch.recover(rid)
-    orch.work(wfn)                       # 'a' completes; 'b' dispatches pending
-    goalruns._live.clear()               # crash: all in-memory state gone
+    orch.work(wfn)  # 'a' completes; 'b' dispatches pending
+    goalruns._live.clear()  # crash: all in-memory state gone
     monkeypatch.setattr(goalruns, "_start_drive", orig)
     assert goalruns.resume(wfn) == 1
     got = None
@@ -95,7 +99,7 @@ def test_resume_recovers_interrupted_run(console, monkeypatch, tmp_path):
             break
         time.sleep(0.05)
     assert [s["state"] for s in got["subtasks"]] == ["DONE", "DONE"]
-    assert goalruns.resume(wfn) == 0     # terminal runs never re-drive
+    assert goalruns.resume(wfn) == 0  # terminal runs never re-drive
 
 
 def test_resume_leaves_preplan_runs_literal(console, monkeypatch, tmp_path):
@@ -103,8 +107,7 @@ def test_resume_leaves_preplan_runs_literal(console, monkeypatch, tmp_path):
     monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
     d = tmp_path / "goal_deadbeef"
     (d / "run").mkdir(parents=True)
-    (d / "orchestrator.ndjson").write_text(
-        '{"event":"run_submit","run":"goal_deadbeef","goal":"x","subtasks":1}\n')
+    (d / "orchestrator.ndjson").write_text('{"event":"run_submit","run":"goal_deadbeef","goal":"x","subtasks":1}\n')
     assert goalruns.resume(lambda task: None) == 0
     assert goalruns.list_runs()[0]["states"]["QUEUED"] == 1
 
@@ -132,16 +135,19 @@ def test_failed_decompose_renders_visible_run(console, monkeypatch, tmp_path):
 def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
     import time
     from services.orchestrator.engines import LocalModelUnavailable
+
     monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
 
     def wfn(task):
-        raise LocalModelUnavailable("local model endpoints unreachable: :8080 refused",
-                                    hint="start llama-local.service")
+        raise LocalModelUnavailable(
+            "local model endpoints unreachable: :8080 refused", hint="start llama-local.service"
+        )
 
     rid = goalruns.submit(
         "One task",
         lambda prompt: '[{"id":"a","title":"t","prompt":"p"}]',
-        wfn, by="test",
+        wfn,
+        by="test",
     )
     got = None
     for _ in range(200):

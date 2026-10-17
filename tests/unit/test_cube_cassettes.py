@@ -66,8 +66,7 @@ def test_adapter_drift_is_a_cassette_miss_not_a_silent_pass(tmp_path):
     with pytest.raises(Exception):
         sb.exec("true")
     with pytest.raises(CassetteMiss):
-        real_create(**{"template": "code-interpreter", "timeout": 300, "env_vars": None,
-                       "allow_internet_access": True})
+        real_create(**{"template": "code-interpreter", "timeout": 300, "env_vars": None, "allow_internet_access": True})
 
 
 def _mutate(path, fn):

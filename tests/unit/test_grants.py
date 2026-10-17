@@ -22,7 +22,7 @@ class Clock:
 
 
 def test_supported_step_kinds_include_p2_fs_verbs():
-    assert SUPPORTED == ("echo", "fs_read", "fs_write", "fs_list")
+    assert {"echo", "fs_read", "fs_write", "fs_list"} <= set(SUPPORTED)
 
 
 def test_resolve_granted_path_blocks_dotdot_absolute_and_symlink_escape(tmp_path: Path):

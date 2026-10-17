@@ -11,8 +11,15 @@ import pytest
 WS = Path(__file__).resolve().parents[2] / "services/workspace"
 STATIC = WS / "static"
 RAW_COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|\boklch\(")
-SCALE = {"var(--text-micro)", "var(--text-caption)", "var(--text-body)", "var(--text-body-lg)", "var(--text-title)",
-         "var(--text-headline)", "var(--text-display)"}
+SCALE = {
+    "var(--text-micro)",
+    "var(--text-caption)",
+    "var(--text-body)",
+    "var(--text-body-lg)",
+    "var(--text-title)",
+    "var(--text-headline)",
+    "var(--text-display)",
+}
 
 
 def strip_comments(t: str) -> str:
@@ -55,31 +62,43 @@ def test_only_one_animation_and_it_respects_reduced_motion():
     css = (STATIC / "workspace.css").read_text()
     assert re.findall(r"@keyframes\s+(\w+)", css) == ["shimmer"]
     uses = re.findall(r"([^{}]+)\{[^{}]*animation:\s*([^;]*);", css)
-    assert [(sel.strip(), a.split()[0]) for sel, a in uses if "none" not in a] == [(".plan-running::after", "shimmer")], uses
-    reduced = css[css.index("prefers-reduced-motion: reduce"):]
+    assert [(sel.strip(), a.split()[0]) for sel, a in uses if "none" not in a] == [
+        (".plan-running::after", "shimmer")
+    ], uses
+    reduced = css[css.index("prefers-reduced-motion: reduce") :]
     assert ".plan-running::after { animation: none; display: none; }" in reduced
 
 
 def test_no_third_party_or_remote_loads_in_the_workspace():
     for f in [*STATIC.glob("*"), WS / "page.py"]:
         text = strip_comments(f.read_text())
-        assert not re.search(r"(src|href)=[\"']https?://|@import\s+url\(|\bimport\s*\(\s*[\"']https?:|fetch\(\s*[\"']https?:", text), f.name
+        assert not re.search(
+            r"(src|href)=[\"']https?://|@import\s+url\(|\bimport\s*\(\s*[\"']https?:|fetch\(\s*[\"']https?:", text
+        ), f.name
         assert "cdn." not in text.lower() and "googleapis" not in text.lower(), f.name
 
 
 def test_no_inline_event_handlers_or_eval_in_js():
     for f in STATIC.glob("*.js"):
         text = strip_comments(f.read_text())
-        assert not re.search(r"\beval\(|new Function\(|\binnerHTML\s*=|insertAdjacentHTML|document\.write", text), f.name
+        assert not re.search(r"\beval\(|new Function\(|\binnerHTML\s*=|insertAdjacentHTML|document\.write", text), (
+            f.name
+        )
 
 
 def test_icon_only_controls_have_names_in_the_template():
     from services.workspace import page
+
     for sym in ("panel-left", "panel-right", "plus", "chev-left", "stop", "send"):
         assert sym in page.EXTRA_ICONS
 
 
 def test_js_bundle_budget_is_far_under_180kb_gzipped():
     import gzip
-    total = sum(len(gzip.compress(f.read_bytes())) for f in STATIC.glob("*.js")) + len(gzip.compress((STATIC / "workspace.css").read_bytes()))
-    assert total < 70_000, f"{total} bytes gzipped: no build step, no dependencies, and well inside the 180kB route budget"
+
+    total = sum(len(gzip.compress(f.read_bytes())) for f in STATIC.glob("*.js")) + len(
+        gzip.compress((STATIC / "workspace.css").read_bytes())
+    )
+    assert total < 70_000, (
+        f"{total} bytes gzipped: no build step, no dependencies, and well inside the 180kB route budget"
+    )

@@ -128,7 +128,9 @@ def _omaseal_get(service: str, account: str) -> str | None:
     try:
         p = subprocess.run(
             ["omaseal", "get", service, account],
-            capture_output=True, text=True, timeout=4,
+            capture_output=True,
+            text=True,
+            timeout=4,
         )
         return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
     except Exception:
@@ -139,7 +141,10 @@ def _omaseal_set(service: str, account: str, value: str) -> bool:
     try:
         p = subprocess.run(
             ["omaseal", "set", service, account],
-            input=value, capture_output=True, text=True, timeout=4,
+            input=value,
+            capture_output=True,
+            text=True,
+            timeout=4,
         )
         return p.returncode == 0
     except Exception:
@@ -224,15 +229,10 @@ class Auth:
         return item[0], item[1]
 
     def begin_register(self, rp: str, user_name: str) -> tuple[dict, str]:
-        user = PublicKeyCredentialUserEntity(
-            id=secrets.token_bytes(16), name=user_name, display_name=user_name
-        )
+        user = PublicKeyCredentialUserEntity(id=secrets.token_bytes(16), name=user_name, display_name=user_name)
         options, state = self._server(rp).register_begin(
             user,
-            credentials=[
-                {"type": "public-key", "id": websafe_decode(c["id"])}
-                for c in self.store.for_rp(rp)
-            ],
+            credentials=[{"type": "public-key", "id": websafe_decode(c["id"])} for c in self.store.for_rp(rp)],
         )
         return _jsonable(dict(options)), self._stash(state, rp, "reg")
 
@@ -241,9 +241,7 @@ class Auth:
         if not got:
             return None
         state, rp = got
-        auth_data = self._server(rp).register_complete(
-            state, RegistrationResponse.from_dict(json.loads(response_json))
-        )
+        auth_data = self._server(rp).register_complete(state, RegistrationResponse.from_dict(json.loads(response_json)))
         cred = auth_data.credential_data
         if cred is None:
             return None
@@ -262,10 +260,7 @@ class Auth:
 
     def begin_auth(self, rp: str) -> tuple[dict, str]:
         options, state = self._server(rp).authenticate_begin(
-            credentials=[
-                {"type": "public-key", "id": websafe_decode(c["id"])}
-                for c in self.store.for_rp(rp)
-            ],
+            credentials=[{"type": "public-key", "id": websafe_decode(c["id"])} for c in self.store.for_rp(rp)],
         )
         return _jsonable(dict(options)), self._stash(state, rp, "auth")
 
@@ -275,9 +270,7 @@ class Auth:
             return None
         state, rp = got
         resp = AuthenticationResponse.from_dict(json.loads(response_json))
-        matched = self._server(rp).authenticate_complete(
-            state, self.store.attested(rp), resp
-        )
+        matched = self._server(rp).authenticate_complete(state, self.store.attested(rp), resp)
         entry = self.store.by_id(rp, resp.raw_id)
         label = entry["label"] if entry else "passkey"
         counter = resp.response.authenticator_data.counter
@@ -323,9 +316,7 @@ class Auth:
         try:
             rp_b64, id_b64, cred_b64, exp_s, sig = raw.rsplit(".", 4)
             body = f"{rp_b64}.{id_b64}.{cred_b64}.{exp_s}"
-            if not hmac.compare_digest(
-                hmac.new(self._key, body.encode(), hashlib.sha256).hexdigest(), sig
-            ):
+            if not hmac.compare_digest(hmac.new(self._key, body.encode(), hashlib.sha256).hexdigest(), sig):
                 return None
             if int(exp_s) < time.time():
                 return None

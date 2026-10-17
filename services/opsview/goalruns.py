@@ -32,6 +32,7 @@ _STATES = ("QUEUED", "LEASED", "RUNNING", "DONE", "FAILED", "AWAITING-APPROVAL")
 def runs_dir() -> Path:
     return Path(os.environ.get("OC_GOALS_DIR", str(Path.home() / ".local/share/oc/goals")))
 
+
 _live: dict[str, Orchestrator] = {}
 _lock = threading.Lock()
 
@@ -84,6 +85,8 @@ def list_runs() -> list[dict]:
             {
                 "run": d.name,
                 "goal": anchor.get("goal", ""),
+                "origin": anchor.get("origin", "cloud"),
+                "device_id": anchor.get("device_id"),
                 "subtasks": (submit or {}).get("subtasks", 0),
                 "states": states,
                 "ts": anchor.get("ts", d.stat().st_mtime),
@@ -146,6 +149,8 @@ def get_run(run_id: str) -> dict | None:
     out = {
         "run": run_id,
         "goal": (submit or failed or {}).get("goal", ""),
+        "origin": (submit or failed or {}).get("origin", "cloud"),
+        "device_id": (submit or failed or {}).get("device_id"),
         "subtasks": subs,
         "declared": (submit or {}).get("subtasks", 0),
         "worker_failures": fails,
@@ -165,6 +170,8 @@ def submit(
     wfn: Callable[[dict], object],
     *,
     by: str = "",
+    origin: str = "cloud",
+    device_id: str | None = None,
 ) -> str:
     """Create a run dir, submit, and drive it on a daemon thread."""
     rid = "goal_" + uuid.uuid4().hex[:8]
@@ -174,7 +181,7 @@ def submit(
     with _lock:
         _live[rid] = orch
     try:
-        orch.submit(goal, engine, run_id=rid)
+        orch.submit(goal, engine, run_id=rid, origin=origin, device_id=device_id)
     except Exception:
         # run_failed audit row is already on disk — the run renders FAILED
         # with the real error; no driver, nothing to resume.
@@ -226,9 +233,12 @@ def resume(wfn) -> int:
             res = orch.results(d.name)
             if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
                 continue
-            if durable and durable.enabled() and any(
-                r.get("event") == "durable_start" for r in _audit_rows(d)
-            ) and durable.ensure_durable(d, d.name) is not None:
+            if (
+                durable
+                and durable.enabled()
+                and any(r.get("event") == "durable_start" for r in _audit_rows(d))
+                and durable.ensure_durable(d, d.name) is not None
+            ):
                 continue  # Temporal owns (or just re-adopted) the drive loop
             with _lock:
                 _live[d.name] = orch

@@ -158,10 +158,18 @@ class CostLedger:
             if st.state == PAUSED:
                 return None
             if st.cap is None or st.spend + st.reserved + est_cost > st.cap:
-                self._notify(self._append({
-                    "event": "run_paused", "run": run, "reason": "cap",
-                    "cap": st.cap, "spend": st.spend, "est_cost": est_cost,
-                }))
+                self._notify(
+                    self._append(
+                        {
+                            "event": "run_paused",
+                            "run": run,
+                            "reason": "cap",
+                            "cap": st.cap,
+                            "spend": st.spend,
+                            "est_cost": est_cost,
+                        }
+                    )
+                )
                 return None
             token = uuid.uuid4().hex[:10]
             self._append({"event": "reserve", "run": run, "token": token, "est": est_cost})
@@ -175,17 +183,34 @@ class CostLedger:
     def record(self, run: str, subtask: str, usage: Usage, token: str | None = None) -> RunState:
         """Record a finished call. Always recorded, even over the cap: money already spent is truth."""
         with self._locked():
-            self._notify(self._append({
-                "event": "cost", "run": run, "subtask": subtask, "model": usage.model,
-                "tokens_in": usage.tokens_in, "tokens_out": usage.tokens_out, "cost": usage.cost,
-            }))
+            self._notify(
+                self._append(
+                    {
+                        "event": "cost",
+                        "run": run,
+                        "subtask": subtask,
+                        "model": usage.model,
+                        "tokens_in": usage.tokens_in,
+                        "tokens_out": usage.tokens_out,
+                        "cost": usage.cost,
+                    }
+                )
+            )
             if token:
                 self._append({"event": "release", "run": run, "token": token})
             st = self.state(run)
             if st.cap is not None and st.state == RUNNING and st.spend + st.reserved >= st.cap:
-                self._notify(self._append({
-                    "event": "run_paused", "run": run, "reason": "cap", "cap": st.cap, "spend": st.spend,
-                }))
+                self._notify(
+                    self._append(
+                        {
+                            "event": "run_paused",
+                            "run": run,
+                            "reason": "cap",
+                            "cap": st.cap,
+                            "spend": st.spend,
+                        }
+                    )
+                )
                 st.state = PAUSED
             return st
 

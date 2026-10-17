@@ -127,8 +127,14 @@ class RecordingSDK:
                 try:
                     sb = rec.real.Sandbox.create(**payload)
                 except Exception as e:
-                    rec.interactions.append({"op": "create", "request": payload, "id": sid,
-                                             "result": {"ok": False, "error": f"{type(e).__name__}: {e}"}})
+                    rec.interactions.append(
+                        {
+                            "op": "create",
+                            "request": payload,
+                            "id": sid,
+                            "result": {"ok": False, "error": f"{type(e).__name__}: {e}"},
+                        }
+                    )
                     raise
                 rec.interactions.append({"op": "create", "request": payload, "id": sid, "result": {"ok": True}})
                 return _Recording(rec, sb, sid, payload.get("env_vars") or {})
@@ -136,8 +142,11 @@ class RecordingSDK:
         self.Sandbox = Sandbox
 
     def save(self) -> None:
-        text = json.dumps({"schema": SCHEMA, "provenance": "recorded", "interactions": normalise(self.interactions)},
-                          indent=2, sort_keys=True)
+        text = json.dumps(
+            {"schema": SCHEMA, "provenance": "recorded", "interactions": normalise(self.interactions)},
+            indent=2,
+            sort_keys=True,
+        )
         for s in self.scrub:
             text = text.replace(s, "<scrubbed>")
         self.path.write_text(text + "\n")
@@ -154,8 +163,14 @@ class _Recording:
                 out = r.stdout
                 for name, val in env.items():  # template guest-visible env values so replay echoes the new ones
                     out = out.replace(val, "{{env:%s}}" % name)
-                rec_.interactions.append({"op": "run", "sandbox": sid_, "cmd": cmd, "result": {
-                    "exit_code": int(r.exit_code or 0), "stdout": out, "stderr": r.stderr}})
+                rec_.interactions.append(
+                    {
+                        "op": "run",
+                        "sandbox": sid_,
+                        "cmd": cmd,
+                        "result": {"exit_code": int(r.exit_code or 0), "stdout": out, "stderr": r.stderr},
+                    }
+                )
                 return r
 
         self.commands = _C

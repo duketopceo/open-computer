@@ -11,7 +11,17 @@ from pathlib import Path
 from .rules import DEVICE_NEEDS, TARGETS, Placement, headroom_from, needs_device, place
 from .health import local_endpoints_up, place_live
 
-__all__ = ["DEVICE_NEEDS", "TARGETS", "Placement", "needs_device", "headroom_from", "place", "place_live", "local_endpoints_up", "adapter"]
+__all__ = [
+    "DEVICE_NEEDS",
+    "TARGETS",
+    "Placement",
+    "needs_device",
+    "headroom_from",
+    "place",
+    "place_live",
+    "local_endpoints_up",
+    "adapter",
+]
 
 
 def adapter(root: Path | str, **_: object):

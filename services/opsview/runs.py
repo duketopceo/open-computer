@@ -32,7 +32,10 @@ def record(out: str, *, by: str, duration_s: float, base: Path | None = None) ->
     status = "failed" if "FAIL" in states or not matrix else ("pending" if "PENDING" in states else "passed")
     run_id = "run_" + uuid.uuid4().hex[:8]
     row = {
-        "id": run_id, "ts": time.time(), "by": by, "status": status,
+        "id": run_id,
+        "ts": time.time(),
+        "by": by,
+        "status": status,
         "duration_s": round(duration_s, 1),
         "rules": {k: list(v) for k, v in matrix.items()},
         "lines": out.count("\n") + (1 if out and not out.endswith("\n") else 0),

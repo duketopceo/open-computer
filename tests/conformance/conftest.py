@@ -67,9 +67,7 @@ def ops(tmp_path):
     opener = urllib.request.build_opener(_NoRedirect)
 
     def get(path, method="GET", data=None, headers=None):
-        req = urllib.request.Request(
-            base + path, method=method, data=data, headers=headers or {}
-        )
+        req = urllib.request.Request(base + path, method=method, data=data, headers=headers or {})
         return opener.open(req, timeout=5)
 
     yield base, auth, get

@@ -90,8 +90,12 @@ def test_execplane_violations_detected(fn, stub_factory):
 def test_every_sandbox_check_has_a_mutant():
     marks = test_execplane_violations_detected.pytestmark[0].args[1]
     covered = {fn for fn, _ in marks}
-    assert {ec.fail_closed_on_boot_failure, ec.empty_allowlist_blocks_egress,
-            ec.allowlist_is_exact, ec.no_credential_material_in_guest} <= covered
+    assert {
+        ec.fail_closed_on_boot_failure,
+        ec.empty_allowlist_blocks_egress,
+        ec.allowlist_is_exact,
+        ec.no_credential_material_in_guest,
+    } <= covered
 
 
 def test_policy_violations_detected():

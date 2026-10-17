@@ -59,7 +59,9 @@ def token_single_use(ops) -> None:
         raise CheckFailed(f"second use → {c2} (replay accepted)")
     wrong_rp = auth.mint_token("other.example")
     c3, _h, _ = _status(
-        get, "/webauthn/register/begin", method="POST",
+        get,
+        "/webauthn/register/begin",
+        method="POST",
         data=json.dumps({"token": wrong_rp}).encode(),
     )
     if c3 != 403:

@@ -15,7 +15,7 @@ RAW_COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|\boklch\(")
 
 def block(selector_start: str) -> dict[str, str]:
     i = TOKENS.index(selector_start)
-    body = TOKENS[TOKENS.index("{", i) + 1: TOKENS.index("}", i)]
+    body = TOKENS[TOKENS.index("{", i) + 1 : TOKENS.index("}", i)]
     return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", body))
 
 
@@ -26,7 +26,7 @@ SYSTEM_LIGHT = block(':root:not([data-theme="dark"])')
 
 def lum(hexv: str) -> float:
     h = hexv.lstrip("#")
-    c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    c = [int(h[i : i + 2], 16) / 255 for i in (0, 2, 4)]
     c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
     return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 

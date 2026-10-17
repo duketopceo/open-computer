@@ -41,8 +41,18 @@ def install_burst(server):
         em = routes.ws().emitter(goal, {"name": "burst-test", "kind": "agent"})
         em.step("step_burst", "Burst of activity", "running")
         for i in range(n // 2):
-            em.tool_call(f"tool_burst{i}", "shell.exec", "ok", step="step_burst", summary=f"command {i}", destination="sbx-burst", duration_ms=5)
-            em.note(f"note_burst{i}", "agent", f"Burst message {i} with **bold** text and a citation [1].", kind="message")
+            em.tool_call(
+                f"tool_burst{i}",
+                "shell.exec",
+                "ok",
+                step="step_burst",
+                summary=f"command {i}",
+                destination="sbx-burst",
+                duration_ms=5,
+            )
+            em.note(
+                f"note_burst{i}", "agent", f"Burst message {i} with **bold** text and a citation [1].", kind="message"
+            )
         self._json(200, {"ok": True, "events": 1 + (n // 2) * 2})
 
     server.Handler.do_POST = do_POST
@@ -50,14 +60,24 @@ def install_burst(server):
 
 def main():
     port = int(sys.argv[1])
-    base = Path(sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else tempfile.mkdtemp(prefix="oc-fixture-"))
+    base = Path(
+        sys.argv[2]
+        if len(sys.argv) > 2 and not sys.argv[2].startswith("--")
+        else tempfile.mkdtemp(prefix="oc-fixture-")
+    )
     env = seed(base) if "--empty" not in sys.argv else {}
     for k, v in env.items():
         if k != "pending":
             os.environ[k] = v
     if "--empty" in sys.argv:
-        os.environ.update({"OC_AUDIT": str(base / "a.ndjson"), "OC_APPROVALS": str(base / "p.ndjson"),
-                           "OC_ROUTER_LEDGER": str(base / "l.jsonl"), "OC_RUNS_DIR": str(base / "runs")})
+        os.environ.update(
+            {
+                "OC_AUDIT": str(base / "a.ndjson"),
+                "OC_APPROVALS": str(base / "p.ndjson"),
+                "OC_ROUTER_LEDGER": str(base / "l.jsonl"),
+                "OC_RUNS_DIR": str(base / "runs"),
+            }
+        )
     if "--no-cube" not in sys.argv:
         _, url = start_fake_cube()
         os.environ["CUBE_API_URL"] = url
@@ -67,6 +87,7 @@ def main():
         os.environ["OC_REPLAY"] = "1"
         os.environ["OC_WORKSPACE_DIR"] = str(base / "workspace")
     from services.opsview import server
+
     server.Handler.auth = FakeAuth()
     if "--replay" in sys.argv:
         install_burst(server)

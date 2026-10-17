@@ -29,6 +29,7 @@ class Tripped(AssertionError):
 def trip(name):
     def _t(*a, **k):
         raise Tripped(f"a GET reached {name}")
+
     return _t
 
 
@@ -49,8 +50,16 @@ def tripwires(monkeypatch):
     monkeypatch.setattr(exec_client.ExecplaneAdapter, "__init__", trip("ExecplaneAdapter()"))
 
 
-QUERIES = ["", "?q=boom", "?f=blocked", "?run=1", "?confirm=1&q=x", "?approve=1&id=ap_00000000",
-           "?inline=1", "?cmd=rm%20-rf"]
+QUERIES = [
+    "",
+    "?q=boom",
+    "?f=blocked",
+    "?run=1",
+    "?confirm=1&q=x",
+    "?approve=1&id=ap_00000000",
+    "?inline=1",
+    "?cmd=rm%20-rf",
+]
 
 
 def get_paths():
@@ -77,8 +86,25 @@ def test_old_side_effecting_get_urls_refuse(console, tripwires, calls):
     assert calls == {"matrix": 0, "route": 0}
 
 
-FORBIDDEN = {"_run_matrix", "_route", "decide", "submit", "record", "Gate", "AuditLog", "Budget",
-             "subprocess", "write_text", "write", "open", "os.remove", "unlink", "mkdir", "touch", "append"}
+FORBIDDEN = {
+    "_run_matrix",
+    "_route",
+    "decide",
+    "submit",
+    "record",
+    "Gate",
+    "AuditLog",
+    "Budget",
+    "subprocess",
+    "write_text",
+    "write",
+    "open",
+    "os.remove",
+    "unlink",
+    "mkdir",
+    "touch",
+    "append",
+}
 
 
 def test_get_handlers_do_not_name_a_mutation_path():

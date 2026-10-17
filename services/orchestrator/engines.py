@@ -164,9 +164,7 @@ def local_work(task: dict) -> str:
     model = os.environ.get("OC_LOCAL_MODEL", "qwen3-4b")
     attempts = []
     try:
-        text, _ = _chat(
-            "http://127.0.0.1:8080/v1/chat/completions", model, prompt, timeout=90
-        )
+        text, _ = _chat("http://127.0.0.1:8080/v1/chat/completions", model, prompt, timeout=90)
         return text
     except (OSError, RuntimeError) as e:
         attempts.append(f"llama.cpp :8080 — {e}")

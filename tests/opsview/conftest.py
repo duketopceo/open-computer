@@ -37,8 +37,15 @@ class Console:
     def __init__(self, port: int, base: Path, env: dict):
         self.port, self.base, self.env = port, base, env
 
-    def request(self, method: str, path: str, *, body: str | bytes | None = None,
-                headers: dict | None = None, cookie: bool = True):
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: str | bytes | None = None,
+        headers: dict | None = None,
+        cookie: bool = True,
+    ):
         h = {"Host": f"127.0.0.1:{self.port}", **(headers or {})}
         if cookie:
             h["Cookie"] = COOKIE
@@ -54,22 +61,32 @@ class Console:
 
     def csrf(self) -> str:
         import re
+
         _, _, html = self.get("/runs/new")
         return re.search(r'name="csrf-token" content="([0-9a-f]+)"', html).group(1)
 
     def post(self, path, fields: dict, *, csrf: bool | str = True, headers: dict | None = None, cookie=True):
         from urllib.parse import urlencode
+
         data = dict(fields)
         if csrf is True:
             data["csrf"] = self.csrf()
         elif csrf:
             data["csrf"] = csrf
-        return self.request("POST", path, body=urlencode(data),
-                            headers={"Content-Type": "application/x-www-form-urlencoded", **(headers or {})}, cookie=cookie)
+        return self.request(
+            "POST",
+            path,
+            body=urlencode(data),
+            headers={"Content-Type": "application/x-www-form-urlencoded", **(headers or {})},
+            cookie=cookie,
+        )
 
     def snapshot(self) -> dict:
-        return {str(p.relative_to(self.base)): (p.stat().st_size, p.stat().st_mtime_ns)
-                for p in sorted(self.base.rglob("*")) if p.is_file()}
+        return {
+            str(p.relative_to(self.base)): (p.stat().st_size, p.stat().st_mtime_ns)
+            for p in sorted(self.base.rglob("*"))
+            if p.is_file()
+        }
 
 
 @pytest.fixture
