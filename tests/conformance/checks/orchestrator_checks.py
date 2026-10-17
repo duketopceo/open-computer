@@ -87,9 +87,7 @@ def worker_failure_fails_closed(orch, tmp_path) -> None:
         raise CheckFailed(f"failed task reported {r['state']}, wanted FAILED")
     if "result" in r:
         raise CheckFailed("failed task carries a fabricated result")
-    if not any(
-        row.get("event") == "worker_fail" for row in orch.audit.rows()
-    ):
+    if not any(row.get("event") == "worker_fail" for row in orch.audit.rows()):
         raise CheckFailed("worker failure wrote no audit row")
 
 
@@ -106,11 +104,7 @@ def dep_failure_cascades(orch, tmp_path) -> None:
             raise CheckFailed(f"{sid} reports {res[sid]['state']}, wanted FAILED")
         if "result" in res[sid]:
             raise CheckFailed(f"{sid} fabricated a result")
-    kinds = {
-        row.get("kind")
-        for row in orch.audit.rows()
-        if row.get("event") == "worker_fail"
-    }
+    kinds = {row.get("kind") for row in orch.audit.rows() if row.get("event") == "worker_fail"}
     if "DependencyFailed" not in kinds:
         raise CheckFailed("dep-blocked subtasks wrote no DependencyFailed rows")
     recs = {d["subtask"]: d for d in orch.dispatches[run_id]}

@@ -11,6 +11,7 @@ from checks.execplane_checks import (
 
 pytestmark = pytest.mark.live  # boots real microVMs: never in CI; run by hand against CubeSandbox
 
+
 def test_r2_empty_allowlist_blocks_egress(make_sandbox):
     empty_allowlist_blocks_egress(make_sandbox)
 

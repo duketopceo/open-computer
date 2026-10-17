@@ -7,9 +7,9 @@ these words, they are never inferred later.
 
 from __future__ import annotations
 
-import os
 from typing import Callable
 
+from services.device.parked import pick_device_for_task, required_capability
 from services.device.protocol import seal
 from services.placement import DEVICE_NEEDS, headroom_from
 
@@ -20,30 +20,9 @@ def device_mailbox(device_id: str) -> str:
     return f"device/{device_id}"
 
 
-def _required_capability(sub: dict) -> str | None:
-    if sub.get("capability"):
-        return str(sub["capability"])
-    if sub.get("needs_local_browser"):
-        return "browser"
-    if sub.get("needs_local_app"):
-        return "app"
-    return None
-
-
-def _root_covers(granted: str, requested: str) -> bool:
-    g = os.path.normpath(os.path.expanduser(str(granted)))
-    r = os.path.normpath(os.path.expanduser(str(requested)))
-    return r == g or r.startswith(g + os.sep)
-
-
 def _pick_device(devices, sub: dict, *, now: float | None = None):
-    """First eligible device matching the step's capability and `device_root` needs."""
-    cap = _required_capability(sub)
-    root = sub.get("device_root")
-    for dev in devices.eligible(now=now, capability=cap):
-        if root is None or any(_root_covers(gr, root) for gr in dev.roots):
-            return dev
-    return None
+    """First eligible device matching the step's capability, `device_id` pin, and `device_root`."""
+    return pick_device_for_task(devices, sub, now=now)
 
 
 def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, ledger=None, devices=None) -> dict:
@@ -82,7 +61,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
     }
     if placement.target == "device":
-        cap = _required_capability(sub)
+        cap = required_capability(sub)
         step = {
             "kind": sub.get("kind", "echo"),
             "text": sub["prompt"],

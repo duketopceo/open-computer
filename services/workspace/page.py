@@ -13,8 +13,15 @@ from services.opsview import registry, views
 e = views.e
 ASSET_V = "1"
 
-TABS = [("progress", "Progress", "list"), ("sources", "Sources", "globe"), ("artifacts", "Artifacts", "doc"),
-        ("changes", "Changes", "diff"), ("outbox", "Outbox", "outbox"), ("box", "Box", "cube"), ("cost", "Cost", "coin")]
+TABS = [
+    ("progress", "Progress", "list"),
+    ("sources", "Sources", "globe"),
+    ("artifacts", "Artifacts", "doc"),
+    ("changes", "Changes", "diff"),
+    ("outbox", "Outbox", "outbox"),
+    ("box", "Box", "cube"),
+    ("cost", "Cost", "coin"),
+]
 
 EXTRA_ICONS = {
     "dot": '<circle cx="8" cy="8" r="3" class="fill"/>',
@@ -58,6 +65,7 @@ def icon(name: str, cls: str = "") -> str:
 
 def render(h, goal: str | None, code: int = 200) -> str:
     from . import routes
+
     w = routes.ws()
     boot = {"goal": goal, "replay": w.replay, "who": h._identity() or "", "tabs": [t[0] for t in TABS]}
     tabs = "".join(
@@ -65,10 +73,13 @@ def render(h, goal: str | None, code: int = 200) -> str:
         f'aria-selected="{"true" if k == "progress" else "false"}" tabindex="{"0" if k == "progress" else "-1"}" title="{label} ({i + 1})">'
         f'{icon(ic)}<span class="tab-label">{label}</span><kbd class="tab-key" aria-hidden="true">{i + 1}</kbd>'
         f'<span class="tab-badge" data-badge="{k}" hidden></span></button>'
-        for i, (k, label, ic) in enumerate(TABS))
+        for i, (k, label, ic) in enumerate(TABS)
+    )
     panels = "".join(
         f'<section role="tabpanel" id="panel-{k}" class="panel" data-panel="{k}" aria-labelledby="tab-{k}" tabindex="-1"'
-        f'{"" if k == "progress" else " hidden"}></section>' for k, _, _ in TABS)
+        f"{'' if k == 'progress' else ' hidden'}></section>"
+        for k, _, _ in TABS
+    )
     body_class = "has-goal" if goal else "no-goal"
     return f"""<!doctype html>
 <html lang="en" data-page="workspace">

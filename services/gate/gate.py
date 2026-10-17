@@ -83,13 +83,19 @@ class Gate:
             if self._decision_row(aid) is not None:
                 raise ValueError(f"approval {aid} already decided")
             h = payload_hash(payload)
-            self.audit.append({
-                "event": "human_decision", "approved": True, "model": payload.get("model"),
-                "approval_id": aid, "by": by, "payload_hash": h,
-                "expires": self.clock() + self.approval_ttl,
-                "pii_categories": self.scan(str(payload)).categories,
-                **({"note": note} if note else {}),
-            })
+            self.audit.append(
+                {
+                    "event": "human_decision",
+                    "approved": True,
+                    "model": payload.get("model"),
+                    "approval_id": aid,
+                    "by": by,
+                    "payload_hash": h,
+                    "expires": self.clock() + self.approval_ttl,
+                    "pii_categories": self.scan(str(payload)).categories,
+                    **({"note": note} if note else {}),
+                }
+            )
         return Approval(id=aid, payload_hash=h)
 
     def deny(self, payload: dict, *, by: str = "human", approval_id: str | None = None, note: str = "") -> CallResult:
@@ -98,11 +104,17 @@ class Gate:
             if self._decision_row(aid) is not None:
                 raise ValueError(f"approval {aid} already decided")
             h = payload_hash(payload)
-            self.audit.append({
-                "event": "human_decision", "approved": False, "model": payload.get("model"),
-                "approval_id": aid, "by": by, "payload_hash": h,
-                **({"note": note} if note else {}),
-            })
+            self.audit.append(
+                {
+                    "event": "human_decision",
+                    "approved": False,
+                    "model": payload.get("model"),
+                    "approval_id": aid,
+                    "by": by,
+                    "payload_hash": h,
+                    **({"note": note} if note else {}),
+                }
+            )
             self._blocked(payload, "sent_back", aid)
         return CallResult(allowed=False, bytes_sent=0, reason="sent_back")
 
@@ -119,17 +131,21 @@ class Gate:
                 return CallResult(allowed=False, bytes_sent=0, reason=reason)
             assert approval is not None and sender is not None
             # Consume first: if the process dies mid-send the approval is spent, never replayable.
-            self.audit.append({
-                "event": "cloud_call_allowed", "approved": True, "model": payload.get("model"),
-                "approval_id": approval.id, "payload_hash": payload_hash(payload),
-                "payload_bytes": len(str(payload)),
-                "pii_categories": self.scan(str(payload)).categories,
-            })
+            self.audit.append(
+                {
+                    "event": "cloud_call_allowed",
+                    "approved": True,
+                    "model": payload.get("model"),
+                    "approval_id": approval.id,
+                    "payload_hash": payload_hash(payload),
+                    "payload_bytes": len(str(payload)),
+                    "pii_categories": self.scan(str(payload)).categories,
+                }
+            )
         try:
             sent = int(sender(payload))
         except Exception as e:  # the approval is already spent; record the failure, send nothing more
-            self.audit.append({"event": "cloud_call_failed", "approval_id": approval.id,
-                               "error": type(e).__name__})
+            self.audit.append({"event": "cloud_call_failed", "approval_id": approval.id, "error": type(e).__name__})
             return CallResult(allowed=True, bytes_sent=0, reason="sender_error")
         return CallResult(allowed=True, bytes_sent=sent)
 
@@ -153,8 +169,7 @@ class Gate:
 
     def _is_consumed(self, approval_id: str) -> bool:
         return any(
-            r.get("event") == "cloud_call_allowed" and r.get("approval_id") == approval_id
-            for r in self.audit.rows()
+            r.get("event") == "cloud_call_allowed" and r.get("approval_id") == approval_id for r in self.audit.rows()
         )
 
     def _is_expired(self, row: dict) -> bool:
@@ -162,17 +177,24 @@ class Gate:
 
     def _decision_row(self, approval_id: str) -> dict | None:
         return next(
-            (r for r in self.audit.rows()
-             if r.get("event") == "human_decision" and r.get("approval_id") == approval_id),
+            (
+                r
+                for r in self.audit.rows()
+                if r.get("event") == "human_decision" and r.get("approval_id") == approval_id
+            ),
             None,
         )
 
     def _blocked(self, payload: dict, reason: str, approval_id: str | None) -> None:
-        self.audit.append({
-            "event": "cloud_call_blocked", "reason": reason, "model": payload.get("model"),
-            "payload_bytes": len(str(payload)),
-            **({"approval_id": approval_id} if approval_id else {}),
-        })
+        self.audit.append(
+            {
+                "event": "cloud_call_blocked",
+                "reason": reason,
+                "model": payload.get("model"),
+                "payload_bytes": len(str(payload)),
+                **({"approval_id": approval_id} if approval_id else {}),
+            }
+        )
 
     @contextmanager
     def _locked(self) -> Iterator[None]:

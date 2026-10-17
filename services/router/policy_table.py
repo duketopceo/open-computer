@@ -63,11 +63,7 @@ _KW = [
 
 def candidates(task_type: str, complexity: str, latency: str) -> list[str]:
     """task_type x complexity x latency -> concrete model candidates."""
-    tier = (
-        "local"
-        if latency == "low" or complexity == "trivial"
-        else complexity if complexity in TIERS else "cheap"
-    )
+    tier = "local" if latency == "low" or complexity == "trivial" else complexity if complexity in TIERS else "cheap"
     return TIER_MODELS.get(tier, TIER_MODELS["cheap"])
 
 

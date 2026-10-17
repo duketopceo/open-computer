@@ -13,6 +13,8 @@ from typing import Callable
 
 import json as _json  # keep import surface obvious for the schema check
 
+from services.placement import DEVICE_NEEDS
+
 
 class DecomposeError(ValueError):
     """Engine output failed schema or topology validation."""
@@ -54,7 +56,7 @@ def _canon(raw: dict, i: int) -> dict:
         raise DecomposeError(f"subtask {sid}: bad tier {tier!r}")
     if latency not in _LATENCY:
         raise DecomposeError(f"subtask {sid}: bad latency {latency!r}")
-    return {
+    out = {
         "id": sid,
         "title": title.strip(),
         "prompt": prompt.strip(),
@@ -64,6 +66,10 @@ def _canon(raw: dict, i: int) -> dict:
         "est_cost": float(raw.get("est_cost", 0.0) or 0.0),
         "needs_sandbox": bool(raw.get("needs_sandbox", False)),
     }
+    for k in (*DEVICE_NEEDS, "device_id", "capability", "kind", "app", "action"):
+        if k in raw:
+            out[k] = raw[k]
+    return out
 
 
 def _topo(tasks: list[dict]) -> None:

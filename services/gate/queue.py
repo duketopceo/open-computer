@@ -21,6 +21,7 @@ import uuid
 from pathlib import Path
 
 from .gate import Gate, payload_hash  # noqa: F401  (payload_hash re-exported: the one binding hash)
+from .pii import scan
 
 
 class QueueError(Exception):
@@ -76,24 +77,40 @@ class ApprovalQueue:
             f.write(json.dumps(row) + "\n")
 
     def submit(
-        self, *, who: str, what: str, payload: dict, session: str = "",
-        est_cost: float = 0.0, ts: float | None = None, item_id: str | None = None,
+        self,
+        *,
+        who: str,
+        what: str,
+        payload: dict,
+        session: str = "",
+        est_cost: float = 0.0,
+        ts: float | None = None,
+        item_id: str | None = None,
         bound_hash: str | None = None,
     ) -> str:
-        decision = self.gate.scan(str(payload))
+        decision = self.gate.scan(str(payload)) if self.gate is not None else scan(str(payload))
         egress = str(payload.get("egress", "<unset>"))
         if item_id is None:
             item_id = "ap_" + uuid.uuid4().hex[:8]
         elif self.get(item_id) is not None:
             raise QueueError(f"{item_id} already exists. A changed payload is a new request.", 409)
-        self._append({
-            "event": "request", "id": item_id, "ts": ts if ts is not None else time.time(),
-            "who": who, "session": session, "what": what,
-            "model": payload.get("model", "<unset>"), "egress": egress,
-            "est_cost": est_cost, "pii": decision.categories,
-            "payload_hash": bound_hash or payload_hash(payload),
-            "payload_bytes": len(str(payload)), "payload": payload,
-        })
+        self._append(
+            {
+                "event": "request",
+                "id": item_id,
+                "ts": ts if ts is not None else time.time(),
+                "who": who,
+                "session": session,
+                "what": what,
+                "model": payload.get("model", "<unset>"),
+                "egress": egress,
+                "est_cost": est_cost,
+                "pii": decision.categories,
+                "payload_hash": bound_hash or payload_hash(payload),
+                "payload_bytes": len(str(payload)),
+                "payload": payload,
+            }
+        )
         return item_id
 
     def supersede(self, item_id: str, *, by: str = "system") -> None:
@@ -101,10 +118,17 @@ class ApprovalQueue:
         item = self.get(item_id)
         if item is None or item["status"] != "pending":
             raise QueueError("Only a pending approval can be superseded.", 409)
-        self._append({"event": "decision", "id": item_id, "ts": time.time(), "decision": "superseded", "by": by, "note": ""})
+        self._append(
+            {"event": "decision", "id": item_id, "ts": time.time(), "decision": "superseded", "by": by, "note": ""}
+        )
 
     def decide(
-        self, item_id: str, *, approve: bool, by: str, note: str = "",
+        self,
+        item_id: str,
+        *,
+        approve: bool,
+        by: str,
+        note: str = "",
         expect_hash: str | None = None,
     ) -> dict:
         assert self.gate is not None, "deciding needs a Gate"
@@ -114,9 +138,7 @@ class ApprovalQueue:
         if item["status"] != "pending":
             raise QueueError(f"Already {item['status'].replace('_', ' ')}.", 409)
         if expect_hash is not None and expect_hash != item["payload_hash"]:
-            raise QueueError(
-                "The request changed since you opened it. Reload and review it again.", 409
-            )
+            raise QueueError("The request changed since you opened it. Reload and review it again.", 409)
         note = note.strip()
         if not approve and not note:
             raise QueueError("Add a note so the agent knows what to change.", 422)
@@ -128,9 +150,20 @@ class ApprovalQueue:
                 self.gate.deny(payload, by=by, approval_id=item_id, note=note)
         except ValueError as e:
             raise QueueError(str(e), 409) from e
-        self._append({
-            "event": "decision", "id": item_id, "ts": time.time(),
-            "decision": "approved" if approve else "sent_back", "by": by, "note": note,
-        })
-        return {"id": item_id, "approved": approve, "allowed": approve, "sent": False,
-                "decision": "approved" if approve else "sent_back"}
+        self._append(
+            {
+                "event": "decision",
+                "id": item_id,
+                "ts": time.time(),
+                "decision": "approved" if approve else "sent_back",
+                "by": by,
+                "note": note,
+            }
+        )
+        return {
+            "id": item_id,
+            "approved": approve,
+            "allowed": approve,
+            "sent": False,
+            "decision": "approved" if approve else "sent_back",
+        }

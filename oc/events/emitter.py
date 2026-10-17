@@ -39,8 +39,15 @@ class ApprovalStateError(Exception):
 
 
 class Emitter:
-    def __init__(self, log: _Base, goal: str, *, actor: dict | None = None,
-                 clock: Callable[[], float] = time.time, approvals=None):
+    def __init__(
+        self,
+        log: _Base,
+        goal: str,
+        *,
+        actor: dict | None = None,
+        clock: Callable[[], float] = time.time,
+        approvals=None,
+    ):
         self.log, self.goal, self.actor, self.clock = log, goal, actor, clock
         self.approvals = approvals  # optional services.gate.queue.ApprovalQueue to register requests with
         self._fired: set[float] = set()
@@ -74,7 +81,9 @@ class Emitter:
         return self.emit("artifact", self._clean(id=id, name=name, kind=kind, version=version, url=url, **data))
 
     def change(self, id: str, path: str, op: str, additions: int, deletions: int, **data) -> dict:
-        return self.emit("change", self._clean(id=id, path=path, op=op, additions=additions, deletions=deletions, **data))
+        return self.emit(
+            "change", self._clean(id=id, path=path, op=op, additions=additions, deletions=deletions, **data)
+        )
 
     def note(self, id: str, role: str, text: str, **data) -> dict:
         return self.emit("note", self._clean(id=id, role=role, text=text, **data))
@@ -85,8 +94,9 @@ class Emitter:
     def cost(self, spent_usd: float, cap_usd: float, **data) -> dict:
         """Emit a cumulative cost snapshot. `threshold` is set automatically the first time
         spend crosses 80% and 100% of the cap, so the UI can post the inline event."""
-        crossed = [t for t in DEFAULT_COST_CAP_THRESHOLDS
-                   if cap_usd > 0 and spent_usd >= t * cap_usd and t not in self._fired]
+        crossed = [
+            t for t in DEFAULT_COST_CAP_THRESHOLDS if cap_usd > 0 and spent_usd >= t * cap_usd and t not in self._fired
+        ]
         if crossed and "threshold" not in data:
             data["threshold"] = max(crossed)
             self._fired.update(crossed)
@@ -106,7 +116,8 @@ class Emitter:
         if prior is not None:
             raise ApprovalStateError(
                 f"{id} already exists ({prior['status']}). A changed payload is a new request: "
-                f"use a new id and supersedes={id!r}.")
+                f"use a new id and supersedes={id!r}."
+            )
         sup = data.get("supersedes")
         if sup:
             old = self._approval_state(sup)
@@ -116,16 +127,34 @@ class Emitter:
                 self.approval_resolve(sup, "superseded")
                 if self.approvals is not None:
                     self.approvals.supersede(sup)
-        ev = self.emit("approval", self._clean(id=id, status="pending", kind=kind, action=action, payload=payload,
-                                               payload_hash=h, risk=risk, **data))
+        ev = self.emit(
+            "approval",
+            self._clean(
+                id=id, status="pending", kind=kind, action=action, payload=payload, payload_hash=h, risk=risk, **data
+            ),
+        )
         if self.approvals is not None:
-            self.approvals.submit(who=(self.actor or {}).get("name", "agent"), session=(self.actor or {}).get("session", ""),
-                                  what=action, est_cost=float(data.get("cost_usd") or 0), item_id=id, ts=ev["ts"], bound_hash=h,
-                                  payload={"egress": data.get("destination", "<unset>"), "model": kind, "payload": payload})
+            self.approvals.submit(
+                who=(self.actor or {}).get("name", "agent"),
+                session=(self.actor or {}).get("session", ""),
+                what=action,
+                est_cost=float(data.get("cost_usd") or 0),
+                item_id=id,
+                ts=ev["ts"],
+                bound_hash=h,
+                payload={"egress": data.get("destination", "<unset>"), "model": kind, "payload": payload},
+            )
         return ev
 
-    def approval_resolve(self, id: str, status: str, *, decision: str | None = None, decided_by: str | None = None,
-                         note: str | None = None) -> dict:
+    def approval_resolve(
+        self,
+        id: str,
+        status: str,
+        *,
+        decision: str | None = None,
+        decided_by: str | None = None,
+        note: str | None = None,
+    ) -> dict:
         prior = self._approval_state(id)
         if prior is None:
             raise ApprovalStateError(f"unknown approval {id}")
@@ -133,7 +162,16 @@ class Emitter:
             raise ApprovalStateError(f"{id} is already {prior['status']}; approvals are single-use")
         if status == "pending":
             raise ApprovalStateError("resolve needs a final status")
-        data = self._clean(id=id, status=status, kind=prior["kind"], action=prior["action"],
-                           payload_hash=prior["payload_hash"], risk=prior["risk"], decision=decision,
-                           decided_by=decided_by, decided_at=round(self.clock(), 3), note=note or None)
+        data = self._clean(
+            id=id,
+            status=status,
+            kind=prior["kind"],
+            action=prior["action"],
+            payload_hash=prior["payload_hash"],
+            risk=prior["risk"],
+            decision=decision,
+            decided_by=decided_by,
+            decided_at=round(self.clock(), 3),
+            note=note or None,
+        )
         return self.emit("approval", data)

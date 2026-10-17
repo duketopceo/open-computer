@@ -101,6 +101,4 @@ def default_router(
     if key:
         engines.append(_http_engine("decider", _decide.DECIDER_MODEL, base, key))
         engines.append(_http_engine("jev", _decide.JEV_MODEL, base, key))
-    return Router(
-        Budget(ledger_path, daily_cap=daily_cap, task_cap=task_cap), engines
-    )
+    return Router(Budget(ledger_path, daily_cap=daily_cap, task_cap=task_cap), engines)

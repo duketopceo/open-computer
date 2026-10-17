@@ -31,9 +31,12 @@ def test_csrf_token_is_bound_to_the_session(console, calls):
     good = console.csrf()
     # same token, different cookie value: must not validate (token = HMAC of the cookie)
     status, _, _ = console.request(
-        "POST", "/runs", body=f"csrf={good}&confirm=1",
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Cookie": "oc_sess=other",
-                 "Host": "remote.test"}, cookie=False)
+        "POST",
+        "/runs",
+        body=f"csrf={good}&confirm=1",
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Cookie": "oc_sess=other", "Host": "remote.test"},
+        cookie=False,
+    )
     assert status == 401  # FakeAuth rejects the other cookie before the token is even compared
     assert calls["matrix"] == 0
 
@@ -97,4 +100,5 @@ def test_csp_forbids_inline_and_remote(console):
     assert "'unsafe-inline'" not in csp and "http" not in csp
     assert " style=" not in html and "<style" not in html
     import re
+
     assert not re.search(r"<script(?![^>]*(src=|type=\"application/json\"))", html)

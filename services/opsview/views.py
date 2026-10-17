@@ -18,9 +18,16 @@ from . import registry
 e = html.escape
 
 PAGE_TITLES = {
-    "work": "Work", "overview": "Overview", "goals": "Goals", "automations": "Automations",
-    "skills": "Skills", "sandboxes": "Sandboxes",
-    "runs": "Runs", "approvals": "Approvals", "router": "Router", "audit": "Audit",
+    "work": "Work",
+    "overview": "Overview",
+    "goals": "Goals",
+    "automations": "Automations",
+    "skills": "Skills",
+    "sandboxes": "Sandboxes",
+    "runs": "Runs",
+    "approvals": "Approvals",
+    "router": "Router",
+    "audit": "Audit",
 }
 NAV_PAGE = {a.id.split(".", 1)[1]: a for a in registry.nav_actions()}
 
@@ -109,19 +116,32 @@ def icon(name: str) -> str:
 
 # state word -> (token class, icon). Always glyph + word, never color alone.
 STATES = {
-    "passed": ("healthy", "ok"), "pass": ("healthy", "ok"), "up": ("healthy", "ok"),
-    "approved": ("healthy", "ok"), "allowed": ("healthy", "ok"), "running": ("healthy", "ok"),
-    "failed": ("urgent", "urgent"), "fail": ("urgent", "urgent"), "down": ("urgent", "urgent"),
-    "blocked": ("urgent", "urgent"), "high": ("urgent", "urgent"),
-    "pending": ("attention", "attention"), "waiting": ("attention", "attention"),
+    "passed": ("healthy", "ok"),
+    "pass": ("healthy", "ok"),
+    "up": ("healthy", "ok"),
+    "approved": ("healthy", "ok"),
+    "allowed": ("healthy", "ok"),
+    "running": ("healthy", "ok"),
+    "failed": ("urgent", "urgent"),
+    "fail": ("urgent", "urgent"),
+    "down": ("urgent", "urgent"),
+    "blocked": ("urgent", "urgent"),
+    "high": ("urgent", "urgent"),
+    "pending": ("attention", "attention"),
+    "waiting": ("attention", "attention"),
     "elevated": ("attention", "attention"),
-    "sent back": ("neutral", "back"), "sent_back": ("neutral", "back"),
-    "ready": ("healthy", "ok"), "active": ("healthy", "ok"),
+    "sent back": ("neutral", "back"),
+    "sent_back": ("neutral", "back"),
+    "ready": ("healthy", "ok"),
+    "active": ("healthy", "ok"),
     "paused": ("neutral", "neutral"),
-    "not configured": ("neutral", "neutral"), "low": ("neutral", "neutral"),
+    "not configured": ("neutral", "neutral"),
+    "low": ("neutral", "neutral"),
     "unknown": ("neutral", "neutral"),
-    "queued": ("neutral", "neutral"), "leased": ("attention", "attention"),
-    "done": ("healthy", "ok"), "awaiting-approval": ("attention", "attention"),
+    "queued": ("neutral", "neutral"),
+    "leased": ("attention", "attention"),
+    "done": ("healthy", "ok"),
+    "awaiting-approval": ("attention", "attention"),
 }
 
 
@@ -134,9 +154,11 @@ def glint(who: str, session: str, ts) -> str:
     """Agent provenance glint (foundation section 10): the only use of the mark."""
     tip = f"Agent {who}" + (f", session {session}" if session else "") + f", {abs_time(ts)}"
     href = f"/audit?q={quote(session or who)}"
-    return (f'<a class="glint" href="{e(href)}" title="{e(tip)}" '
-            f'aria-label="{e(tip)}. Open its audit trail"><svg class="ic" aria-hidden="true" '
-            f'focusable="false"><use href="#i-glint"/></svg></a>')
+    return (
+        f'<a class="glint" href="{e(href)}" title="{e(tip)}" '
+        f'aria-label="{e(tip)}. Open its audit trail"><svg class="ic" aria-hidden="true" '
+        f'focusable="false"><use href="#i-glint"/></svg></a>'
+    )
 
 
 def empty(title: str, body: str, action: str = "") -> str:
@@ -145,24 +167,29 @@ def empty(title: str, body: str, action: str = "") -> str:
 
 def skeleton_rows(n: int = 5, cols: int = 4) -> str:
     row = "".join('<span class="sk-cell"></span>' for _ in range(cols))
-    return ('<div class="skeleton" aria-hidden="true">'
-            + "".join(f'<div class="sk-row">{row}</div>' for _ in range(n)) + "</div>")
+    return (
+        '<div class="skeleton" aria-hidden="true">'
+        + "".join(f'<div class="sk-row">{row}</div>' for _ in range(n))
+        + "</div>"
+    )
 
 
 # ------------------------------------------------------------------- shell
 
 
-def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "",
-          conn: str = "", sub: str = "") -> str:
+def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "", conn: str = "", sub: str = "") -> str:
     nav = []
     for key in registry.PAGES:
         a = NAV_PAGE[key]
         cur = ' aria-current="page"' if key == page else ""
-        badge = (f'<span class="badge" aria-label="{pending} waiting">{pending}</span>'
-                 if key == "approvals" and pending else "")
+        badge = (
+            f'<span class="badge" aria-label="{pending} waiting">{pending}</span>'
+            if key == "approvals" and pending
+            else ""
+        )
         nav.append(
             f'<li><a href="{a.href}" data-action="{a.id}"{cur}><span>{e(a.label)}</span>'
-            f'{badge}<kbd>{e(a.keys)}</kbd></a></li>'
+            f"{badge}<kbd>{e(a.keys)}</kbd></a></li>"
         )
     bottom = "".join(
         f'<a href="{NAV_PAGE[k].href}"{" aria-current=page" if k == page else ""}>{e(NAV_PAGE[k].label)}</a>'
@@ -231,28 +258,35 @@ def conn_pill(fleet: dict) -> str:
 
 def fleet_rows(fleet: dict) -> str:
     if not fleet["configured"]:
-        return empty("Control plane not configured",
-                     "Set <code>CUBE_API_URL</code> and <code>CUBE_API_KEY</code> to list sandboxes. "
-                     "Nothing here is guessed.")
+        return empty(
+            "Control plane not configured",
+            "Set <code>CUBE_API_URL</code> and <code>CUBE_API_KEY</code> to list sandboxes. Nothing here is guessed.",
+        )
     if not fleet["up"]:
-        return empty("Control plane is down",
-                     f"{e(fleet['api_host'])} did not answer. The sandbox inventory is unknown, not empty. "
-                     "Check that CubeSandbox is running, then reload.")
+        return empty(
+            "Control plane is down",
+            f"{e(fleet['api_host'])} did not answer. The sandbox inventory is unknown, not empty. "
+            "Check that CubeSandbox is running, then reload.",
+        )
     sb = fleet["sandboxes"]
     if not sb:
-        return empty("No sandboxes running",
-                     "A sandbox appears here while a run holds it. Start one with a matrix run.",
-                     '<a class="btn primary" href="/runs/new">New matrix run</a>')
+        return empty(
+            "No sandboxes running",
+            "A sandbox appears here while a run holds it. Start one with a matrix run.",
+            '<a class="btn primary" href="/runs/new">New matrix run</a>',
+        )
     rows = "".join(
         f'<tr data-row data-href="/sandboxes/{quote(str(s.get("sandboxID", "?")), safe="")}">'
         f'<td class="mono"><a href="/sandboxes/{quote(str(s.get("sandboxID", "?")), safe="")}">{e(str(s.get("sandboxID", "?")))}</a></td>'
         f'<td class="mono">{e(str(s.get("templateID", "?")))}</td>'
-        f'<td>{status(str(s.get("status", "unknown")))}</td></tr>'
+        f"<td>{status(str(s.get('status', 'unknown')))}</td></tr>"
         for s in sb
     )
-    return (f'<table class="dense" data-table><caption class="sr">Sandboxes</caption>'
-            f'<thead><tr><th scope="col">Sandbox</th><th scope="col">Template</th>'
-            f'<th scope="col">State</th></tr></thead><tbody>{rows}</tbody></table>')
+    return (
+        f'<table class="dense" data-table><caption class="sr">Sandboxes</caption>'
+        f'<thead><tr><th scope="col">Sandbox</th><th scope="col">Template</th>'
+        f'<th scope="col">State</th></tr></thead><tbody>{rows}</tbody></table>'
+    )
 
 
 def page_sandboxes(fleet: dict, inline: bool) -> str:
@@ -262,15 +296,21 @@ def page_sandboxes(fleet: dict, inline: bool) -> str:
     else:
         inner = skeleton_rows(5, 3)
         attrs = ' data-frag="/_frag/fleet" aria-busy="true"'
-    dest = (f'Inventory read from <span class="mono">{e(fleet["api_host"])}</span>. Read only.'
-            if fleet["configured"] else "No control plane configured.")
+    dest = (
+        f'Inventory read from <span class="mono">{e(fleet["api_host"])}</span>. Read only.'
+        if fleet["configured"]
+        else "No control plane configured."
+    )
     return f'<p class="muted note">{dest}</p><section aria-label="Sandboxes"{attrs}>{inner}</section>'
 
 
 def page_sandbox_detail(sid: str, row: dict | None) -> str:
     if row is None:
-        return empty("Sandbox not found", f"{e(sid)} is not in the current inventory. It may have been reclaimed.",
-                     '<a class="btn" href="/sandboxes">Back to sandboxes</a>')
+        return empty(
+            "Sandbox not found",
+            f"{e(sid)} is not in the current inventory. It may have been reclaimed.",
+            '<a class="btn" href="/sandboxes">Back to sandboxes</a>',
+        )
     rows = "".join(
         f'<tr><th scope="row">{e(str(k))}</th><td class="mono">{e(json.dumps(v) if not isinstance(v, str) else v)}</td></tr>'
         for k, v in sorted(row.items())
@@ -294,11 +334,11 @@ def approval_row(item: dict, now: float) -> str:
     cost = money(item.get("est_cost", 0))
     payload = json.dumps(item.get("payload", {}), indent=2, sort_keys=True)
     iid = e(item["id"])
-    return f"""<tbody class="item" data-row data-approval="{iid}" data-hash="{e(item['payload_hash'])}" id="{iid}">
+    return f"""<tbody class="item" data-row data-approval="{iid}" data-hash="{e(item["payload_hash"])}" id="{iid}">
 <tr class="item-main">
 <td class="who">{glint(item.get("who", "agent"), item.get("session", ""), item["ts"])}<span>{e(item.get("who", "agent"))}</span></td>
 <td class="what" title="{e(item.get("what", ""))}">{e(item.get("what", ""))}</td>
-<td class="dest mono" title="Leaves this box for {e(item['egress'])}">{icon("external")}{e(item["egress"])}</td>
+<td class="dest mono" title="Leaves this box for {e(item["egress"])}">{icon("external")}{e(item["egress"])}</td>
 <td class="num">{cost}</td>
 <td>{status(risk, f"{risk.title()} risk")}<span class="sr"> {e(why)}</span></td>
 <td class="num">{time_tag(item["ts"], now)}</td>
@@ -325,29 +365,47 @@ def page_approvals(items: list[dict], now: float) -> str:
     pend = [i for i in items if i["status"] == "pending"]
     done = [i for i in items if i["status"] != "pending"][::-1][:10]
     if pend:
-        head = ('<thead><tr><th scope="col">Who</th><th scope="col">What</th><th scope="col">Goes to</th>'
-                '<th scope="col" class="num">Cost</th><th scope="col">Risk</th><th scope="col" class="num">Asked</th>'
-                '<th scope="col"><span class="sr">Actions</span></th></tr></thead>')
-        table = ('<table class="dense approvals" data-table><caption class="sr">Pending approvals, oldest first</caption>'
-                 + head + "".join(approval_row(i, now) for i in pend) + "</table>")
-        lead = (f'<p class="muted note">{len(pend)} waiting, oldest first. '
-                '<kbd>j</kbd>/<kbd>k</kbd> move, <kbd>enter</kbd> shows the payload, '
-                '<kbd>a</kbd> approves, <kbd>r</kbd> sends back with a note.</p>')
+        head = (
+            '<thead><tr><th scope="col">Who</th><th scope="col">What</th><th scope="col">Goes to</th>'
+            '<th scope="col" class="num">Cost</th><th scope="col">Risk</th><th scope="col" class="num">Asked</th>'
+            '<th scope="col"><span class="sr">Actions</span></th></tr></thead>'
+        )
+        table = (
+            '<table class="dense approvals" data-table><caption class="sr">Pending approvals, oldest first</caption>'
+            + head
+            + "".join(approval_row(i, now) for i in pend)
+            + "</table>"
+        )
+        lead = (
+            f'<p class="muted note">{len(pend)} waiting, oldest first. '
+            "<kbd>j</kbd>/<kbd>k</kbd> move, <kbd>enter</kbd> shows the payload, "
+            "<kbd>a</kbd> approves, <kbd>r</kbd> sends back with a note.</p>"
+        )
     else:
-        table, lead = "", empty(
-            "Nothing waiting on you",
-            "When an agent needs to send a payload off this box, the request lands here with who asked, "
-            "what leaves, where it goes and what it costs.")
+        table, lead = (
+            "",
+            empty(
+                "Nothing waiting on you",
+                "When an agent needs to send a payload off this box, the request lands here with who asked, "
+                "what leaves, where it goes and what it costs.",
+            ),
+        )
     drows = "".join(
-        f'<tr><td>{status(i["status"].replace("_", " "))}</td><td>{e(i.get("what", ""))}</td>'
+        f"<tr><td>{status(i['status'].replace('_', ' '))}</td><td>{e(i.get('what', ''))}</td>"
         f'<td class="mono">{e(i["egress"])}</td><td>{e(i.get("decided_by") or "")}</td>'
         f'<td class="muted">{e(i.get("note", ""))}</td><td class="num">{time_tag(i.get("decided_ts", i["ts"]), now)}</td></tr>'
         for i in done
     )
-    decided = (f'<h2>Decided</h2><table class="dense"><caption class="sr">Recent decisions</caption><thead><tr>'
-               '<th scope="col">Result</th><th scope="col">What</th><th scope="col">Went to</th>'
-               '<th scope="col">By</th><th scope="col">Note</th><th scope="col" class="num">When</th></tr></thead>'
-               f'<tbody>{drows}</tbody></table>') if done else ""
+    decided = (
+        (
+            f'<h2>Decided</h2><table class="dense"><caption class="sr">Recent decisions</caption><thead><tr>'
+            '<th scope="col">Result</th><th scope="col">What</th><th scope="col">Went to</th>'
+            '<th scope="col">By</th><th scope="col">Note</th><th scope="col" class="num">When</th></tr></thead>'
+            f"<tbody>{drows}</tbody></table>"
+        )
+        if done
+        else ""
+    )
     return f'{lead}<div id="queue">{table}</div>{decided}'
 
 
@@ -363,26 +421,33 @@ def rules_summary(rules: dict) -> str:
 
 def page_runs(runs: list[dict], now: float) -> str:
     if not runs:
-        return empty("No runs yet",
-                     "A matrix run executes the determinism conformance checks and keeps its log here.",
-                     '<a class="btn primary" href="/runs/new">New matrix run</a>')
+        return empty(
+            "No runs yet",
+            "A matrix run executes the determinism conformance checks and keeps its log here.",
+            '<a class="btn primary" href="/runs/new">New matrix run</a>',
+        )
     rows = "".join(
         f'<tr data-row data-href="/runs/{r["id"]}"><td>{status(r["status"])}</td>'
         f'<td class="mono"><a href="/runs/{r["id"]}">{r["id"]}</a></td><td>{e(r.get("by", ""))}</td>'
-        f'<td>{e(rules_summary({k: tuple(v) for k, v in r.get("rules", {}).items()}))}</td>'
+        f"<td>{e(rules_summary({k: tuple(v) for k, v in r.get('rules', {}).items()}))}</td>"
         f'<td class="num">{duration(r["duration_s"])}</td><td class="num">{r["lines"]}</td>'
         f'<td class="num">{time_tag(r["ts"], now)}</td></tr>'
         for r in runs
     )
-    return ('<table class="dense" data-table><caption class="sr">Matrix runs, newest first</caption><thead><tr>'
-            '<th scope="col">Result</th><th scope="col">Run</th><th scope="col">Started by</th>'
-            '<th scope="col">Rules</th><th scope="col" class="num">Took</th><th scope="col" class="num">Log lines</th>'
-            f'<th scope="col" class="num">Started</th></tr></thead><tbody>{rows}</tbody></table>')
+    return (
+        '<table class="dense" data-table><caption class="sr">Matrix runs, newest first</caption><thead><tr>'
+        '<th scope="col">Result</th><th scope="col">Run</th><th scope="col">Started by</th>'
+        '<th scope="col">Rules</th><th scope="col" class="num">Took</th><th scope="col" class="num">Log lines</th>'
+        f'<th scope="col" class="num">Started</th></tr></thead><tbody>{rows}</tbody></table>'
+    )
 
 
 def page_run_confirm(csrf: str, fleet: dict) -> str:
-    dest = (f'<span class="mono">{e(fleet["api_host"])}</span>' if fleet["configured"]
-            else "no control plane configured, so rules R1 to R3 will report PENDING")
+    dest = (
+        f'<span class="mono">{e(fleet["api_host"])}</span>'
+        if fleet["configured"]
+        else "no control plane configured, so rules R1 to R3 will report PENDING"
+    )
     return f"""<section class="confirm" aria-labelledby="ct">
 <h2 id="ct">Run the determinism matrix?</h2>
 <table class="kv dense"><tbody>
@@ -420,11 +485,16 @@ def page_run_detail(row: dict, text: str, now: float) -> str:
         f'<tr><td class="mono">{e(k)}</td><td>{status(v[0])}</td><td class="num">{v[1]} checks</td></tr>'
         for k, v in sorted(row.get("rules", {}).items())
     )
-    rt = (f'<table class="dense kv"><caption class="sr">Rules in this run</caption><thead><tr><th scope="col">Rule</th>'
-          f'<th scope="col">State</th><th scope="col" class="num">Checks</th></tr></thead><tbody>{rules}</tbody></table>'
-          if rules else "")
-    return (f'<p class="muted note">{status(row["status"])} · started {time_tag(row["ts"], now)} by {e(row.get("by", ""))} · '
-            f'took {duration(row["duration_s"])}</p>{rt}<h2>Log</h2>{log_viewer(text)}')
+    rt = (
+        f'<table class="dense kv"><caption class="sr">Rules in this run</caption><thead><tr><th scope="col">Rule</th>'
+        f'<th scope="col">State</th><th scope="col" class="num">Checks</th></tr></thead><tbody>{rules}</tbody></table>'
+        if rules
+        else ""
+    )
+    return (
+        f'<p class="muted note">{status(row["status"])} · started {time_tag(row["ts"], now)} by {e(row.get("by", ""))} · '
+        f"took {duration(row['duration_s'])}</p>{rt}<h2>Log</h2>{log_viewer(text)}"
+    )
 
 
 # ------------------------------------------------------------------ router
@@ -432,13 +502,16 @@ def page_run_detail(row: dict, text: str, now: float) -> str:
 
 def router_dest(paid: bool, base: str) -> str:
     if paid:
-        return (f'Decider engine sends the utterance to <span class="mono">{e(host_of(base))}</span> '
-                'and costs about $0.000004 per route. The table engine stays on this box.')
+        return (
+            f'Decider engine sends the utterance to <span class="mono">{e(host_of(base))}</span> '
+            "and costs about $0.000004 per route. The table engine stays on this box."
+        )
     return "No cloud key configured. Routes resolve in the local table engine: $0.00, nothing leaves this box."
 
 
-def page_router(csrf: str, ledger: list[dict], spend: float, cap: float, paid: bool, base: str,
-                now: float, result: str = "") -> str:
+def page_router(
+    csrf: str, ledger: list[dict], spend: float, cap: float, paid: bool, base: str, now: float, result: str = ""
+) -> str:
     pct = min(spend / cap, 1) if cap else 0
     cost = "~$0.000004" if paid else "$0.00"
     rows = "".join(
@@ -447,10 +520,17 @@ def page_router(csrf: str, ledger: list[dict], spend: float, cap: float, paid: b
         f'<td class="num">{money(r.get("cost", 0))}</td></tr>'
         for r in reversed(ledger)
     )
-    ledger_t = (f'<table class="dense"><caption class="sr">Decision ledger, newest first</caption><thead><tr><th scope="col" class="num">When</th>'
-                '<th scope="col">Event</th><th scope="col">Route</th><th scope="col">Engine</th><th scope="col" class="num">Cost</th></tr></thead>'
-                f'<tbody>{rows}</tbody></table>') if rows else empty(
-        "No decisions yet", "Every route decision is recorded here with the engine that made it and what it cost.")
+    ledger_t = (
+        (
+            f'<table class="dense"><caption class="sr">Decision ledger, newest first</caption><thead><tr><th scope="col" class="num">When</th>'
+            '<th scope="col">Event</th><th scope="col">Route</th><th scope="col">Engine</th><th scope="col" class="num">Cost</th></tr></thead>'
+            f"<tbody>{rows}</tbody></table>"
+        )
+        if rows
+        else empty(
+            "No decisions yet", "Every route decision is recorded here with the engine that made it and what it cost."
+        )
+    )
     return f"""<section aria-labelledby="rt"><h2 id="rt">Route tester</h2>
 <p class="muted note">{router_dest(paid, base)}</p>
 <form method="post" action="/router/test" class="inline-form">
@@ -479,11 +559,17 @@ def router_confirm(csrf: str, q: str, base: str) -> str:
 
 
 def route_result(d: dict) -> str:
-    rows = "".join(f"<tr><th scope=\"row\">{k}</th><td>{v}</td></tr>" for k, v in [
-        ("Route", e(str(d["route"]))), ("Tier", e(str(d["tier"]))),
-        ("Engine", f'<span class="mono">{e(str(d["engine"]))}</span>'),
-        ("Confidence", e(str(d["confidence"]))), ("Cost", money(d["cost"])), ("Took", f'{d["ms"]} ms'),
-    ])
+    rows = "".join(
+        f'<tr><th scope="row">{k}</th><td>{v}</td></tr>'
+        for k, v in [
+            ("Route", e(str(d["route"]))),
+            ("Tier", e(str(d["tier"]))),
+            ("Engine", f'<span class="mono">{e(str(d["engine"]))}</span>'),
+            ("Confidence", e(str(d["confidence"]))),
+            ("Cost", money(d["cost"])),
+            ("Took", f"{d['ms']} ms"),
+        ]
+    )
     return f'<table class="kv dense result" aria-label="Route result"><tbody>{rows}</tbody></table>'
 
 
@@ -496,14 +582,13 @@ def _fail_item(f: dict) -> str:
     kind_t = f'<span class="chip err-chip mono">{e(str(kind))}</span> ' if kind else ""
     hint = f.get("hint")
     hint_t = f'<p class="muted caption w-hint">{e(str(hint))}</p>' if hint else ""
-    return (f'<li><span class="mono">{e(str(f.get("task", "")))}</span> {kind_t}'
-            f'{e(str(f.get("error", "")))}{hint_t}</li>')
+    return (
+        f'<li><span class="mono">{e(str(f.get("task", "")))}</span> {kind_t}{e(str(f.get("error", "")))}{hint_t}</li>'
+    )
 
 
 def _state_chips(states: dict) -> str:
-    chips = " ".join(
-        f'{status(s)}<span class="muted caption">&nbsp;×{n}</span>' for s, n in states.items() if n
-    )
+    chips = " ".join(f'{status(s)}<span class="muted caption">&nbsp;×{n}</span>' for s, n in states.items() if n)
     return chips or '<span class="muted">—</span>'
 
 
@@ -514,13 +599,20 @@ def page_goals(goals: list[dict], now: float) -> str:
         f'<td class="num">{time_tag(g["ts"], now)}</td></tr>'
         for g in goals
     )
-    table = (f'<table class="dense"><caption class="sr">Goal runs, newest first</caption><thead>'
-             '<tr><th scope="col">Run</th><th scope="col">Goal</th><th scope="col">Subtasks</th>'
-             '<th scope="col" class="num">Started</th></tr></thead>'
-             f'<tbody>{rows}</tbody></table>') if rows else empty(
-        "No goals yet",
-        "Submit a goal and it decomposes into subtasks — each routed, placed, gated and worked.",
-        action='<a class="btn primary" href="/goals/new">New goal</a>')
+    table = (
+        (
+            f'<table class="dense"><caption class="sr">Goal runs, newest first</caption><thead>'
+            '<tr><th scope="col">Run</th><th scope="col">Goal</th><th scope="col">Subtasks</th>'
+            '<th scope="col" class="num">Started</th></tr></thead>'
+            f"<tbody>{rows}</tbody></table>"
+        )
+        if rows
+        else empty(
+            "No goals yet",
+            "Submit a goal and it decomposes into subtasks — each routed, placed, gated and worked.",
+            action='<a class="btn primary" href="/goals/new">New goal</a>',
+        )
+    )
     return f"<section>{table}</section>"
 
 
@@ -565,46 +657,51 @@ dispatching. The run page fills in as subtasks settle.</p></div>
 
 def page_goal_detail(run: dict, now: float) -> str:
     subs = run["subtasks"]
-    active = (any(s["state"] not in ("DONE", "FAILED") for s in subs)
-              or len(subs) < run["declared"])
+    active = any(s["state"] not in ("DONE", "FAILED") for s in subs) or len(subs) < run["declared"]
     items = []
     for s in subs:
         meta = []
         if s.get("route"):
-            meta.append(f'route {e(str(s["route"]))}')
+            meta.append(f"route {e(str(s['route']))}")
         if s.get("engine"):
-            meta.append(f'engine {e(str(s["engine"]))}')
+            meta.append(f"engine {e(str(s['engine']))}")
         if s.get("placement"):
-            meta.append(f'→ {e(str(s["placement"]))}')
+            meta.append(f"→ {e(str(s['placement']))}")
         if s.get("reason"):
-            meta.append(f'({e(str(s["reason"]))})')
+            meta.append(f"({e(str(s['reason']))})")
         if s.get("gate_required"):
             meta.append("gate: approval required")
         if s.get("pii"):
             meta.append("pii: " + e(", ".join(map(str, s["pii"]))))
         if s.get("cost") is not None:
             meta.append(money(s["cost"]))
-        res = (f'<pre class="mono result">{e(str(s["result"]))}</pre>'
-               if s.get("result") else "")
+        res = f'<pre class="mono result">{e(str(s["result"]))}</pre>' if s.get("result") else ""
         title = s.get("title") or str(s.get("subtask") or "")
         items.append(
             f'<li class="task"><header>{status(s["state"])} <span class="task-title">{e(title)}</span></header>'
-            f'<p class="muted caption">{" · ".join(meta)}</p>{res}</li>')
+            f'<p class="muted caption">{" · ".join(meta)}</p>{res}</li>'
+        )
     fails = "".join(_fail_item(f) for f in run["worker_failures"])
-    fails_t = (f'<h2>Worker failures</h2><ul class="task-list">{fails}</ul>' if fails else "")
+    fails_t = f'<h2>Worker failures</h2><ul class="task-list">{fails}</ul>' if fails else ""
     refresh = ' data-refresh="3"' if active else ""
-    pending_note = (f'<p class="muted caption">{run["declared"] - len(subs)} subtask(s) still queued '
-                    'behind dependencies.</p>' if len(subs) < run["declared"] else "")
-    head = (f'<p class="muted note">{e(run["goal"])}'
-            + (f' · started {time_tag(run["started"], now)}' if run.get("started") else "")
-            + '</p>')
+    pending_note = (
+        f'<p class="muted caption">{run["declared"] - len(subs)} subtask(s) still queued behind dependencies.</p>'
+        if len(subs) < run["declared"]
+        else ""
+    )
+    head = (
+        f'<p class="muted note">{e(run["goal"])}'
+        + (f" · started {time_tag(run['started'], now)}" if run.get("started") else "")
+        + "</p>"
+    )
     run_err = ""
     if run.get("error"):
         kind = f'<span class="chip err-chip mono">{e(str(run["error_kind"]))}</span> ' if run.get("error_kind") else ""
         hint = f'<p class="muted caption w-hint">{e(str(run["hint"]))}</p>' if run.get("hint") else ""
         run_err = f'<div class="w-err" role="alert">{kind}{e(str(run["error"]))}{hint}</div>'
-    return (f'<section{refresh}>{head}{run_err}<ul class="task-list">{"".join(items)}</ul>'
-            f'{pending_note}{fails_t}</section>')
+    return (
+        f'<section{refresh}>{head}{run_err}<ul class="task-list">{"".join(items)}</ul>{pending_note}{fails_t}</section>'
+    )
 
 
 # -------------------------------------------------------------------- work
@@ -671,23 +768,27 @@ _STEP = {  # task state -> (css, icon, live verb)
 
 def work_rail(runs: list[dict], now: float, sel: str) -> str:
     if not runs:
-        return ('<h2>Runs</h2><p class="muted caption">No goal runs yet. '
-                'Describe a goal above and it becomes one.</p>')
+        return '<h2>Runs</h2><p class="muted caption">No goal runs yet. Describe a goal above and it becomes one.</p>'
     items = []
     for r in runs:
         cur = ' cur" aria-current="true' if r["run"] == sel else ""
         st = _rail_state(r["states"])
         done = r["states"].get("DONE", 0)
         total = r["subtasks"] or sum(v for k, v in r["states"].items() if k != "QUEUED")
-        meta = " · ".join(m for m in (
-            rel_time(r["ts"], now) if r.get("ts") else "",
-            f"{done}/{total}" if total else ("failed" if st == "failed" else ""),
-        ) if m)
+        meta = " · ".join(
+            m
+            for m in (
+                rel_time(r["ts"], now) if r.get("ts") else "",
+                f"{done}/{total}" if total else ("failed" if st == "failed" else ""),
+            )
+            if m
+        )
         items.append(
             f'<li><button type="button" class="w-run{cur}" data-run="{e(r["run"])}">'
             f'<span class="w-run-top"><span class="w-dot w-dot-{st}"></span>'
             f'<span class="w-run-goal">{e(r["goal"] or r["run"])}</span></span>'
-            f'<span class="w-run-meta muted caption">{e(meta)}</span></button></li>')
+            f'<span class="w-run-meta muted caption">{e(meta)}</span></button></li>'
+        )
     return f'<h2>Runs</h2><ul class="w-runs">{"".join(items)}</ul>'
 
 
@@ -749,9 +850,11 @@ as it thinks — routed, placed, gated, worked. Nothing spends without your conf
     plan = ""
     if subs:
         titles = "".join(f"<li>{e(s.get('title') or str(s.get('subtask') or ''))}</li>" for s in subs)
-        plan = (f'<div class="w-thought"><header>{icon("neutral")}'
-                f'<span>Planned {n or len(subs)} step{"s" if (n or len(subs)) != 1 else ""}</span></header>'
-                f"<ol>{titles}</ol></div>")
+        plan = (
+            f'<div class="w-thought"><header>{icon("neutral")}'
+            f"<span>Planned {n or len(subs)} step{'s' if (n or len(subs)) != 1 else ''}</span></header>"
+            f"<ol>{titles}</ol></div>"
+        )
     steps = []
     for i, s in enumerate(subs):
         cls, ic, verb = _STEP.get(s.get("state", "QUEUED"), _STEP["QUEUED"])
@@ -788,42 +891,59 @@ def _doc_cls(s: str) -> str:
 def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> str:
     out = []
     if pend:
-        head = ('<thead><tr><th scope="col">Who</th><th scope="col">What</th><th scope="col">Goes to</th>'
-                '<th scope="col" class="num">Cost</th><th scope="col">Risk</th><th scope="col" class="num">Asked</th>'
-                '<th scope="col"><span class="sr">Actions</span></th></tr></thead>')
-        table = ('<table class="dense approvals" data-table><caption class="sr">Pending approvals</caption>'
-                 + head + "".join(approval_row(i, now) for i in pend) + "</table>")
-        out.append(f'<h2>Needs you ({len(pend)})</h2>{table}')
+        head = (
+            '<thead><tr><th scope="col">Who</th><th scope="col">What</th><th scope="col">Goes to</th>'
+            '<th scope="col" class="num">Cost</th><th scope="col">Risk</th><th scope="col" class="num">Asked</th>'
+            '<th scope="col"><span class="sr">Actions</span></th></tr></thead>'
+        )
+        table = (
+            '<table class="dense approvals" data-table><caption class="sr">Pending approvals</caption>'
+            + head
+            + "".join(approval_row(i, now) for i in pend)
+            + "</table>"
+        )
+        out.append(f"<h2>Needs you ({len(pend)})</h2>{table}")
     sub = None
     if run is not None and sel.isdigit():
         i = int(sel)
         if 0 <= i < len(run["subtasks"]):
             sub = run["subtasks"][i]
     if sub is not None:
-        rows = "".join(f'<tr><th scope="row">{e(k)}</th><td>{v}</td></tr>' for k, v in [
-            ("State", status(sub["state"])),
-            ("Route", f'<span class="mono">{e(str(sub["route"]))}</span>' if sub.get("route") else ""),
-            ("Engine", f'<span class="mono">{e(str(sub["engine"]))}</span>' if sub.get("engine") else ""),
-            ("Placement", f'<span class="mono">{e(str(sub["placement"]))}</span>' if sub.get("placement") else ""),
-            ("Why placed", e(str(sub["reason"])) if sub.get("reason") else ""),
-            ("Duration", e(_dur(sub.get("ts"), sub.get("finished_ts"))) if sub.get("finished_ts") else ""),
-            ("Gate", "approval required" if sub.get("gate_required") else ""),
-            ("PII", e(", ".join(map(str, sub["pii"]))) if sub.get("pii") else ""),
-            ("Cost", money(sub["cost"]) if sub.get("cost") is not None else ""),
-        ] if v)
+        rows = "".join(
+            f'<tr><th scope="row">{e(k)}</th><td>{v}</td></tr>'
+            for k, v in [
+                ("State", status(sub["state"])),
+                ("Route", f'<span class="mono">{e(str(sub["route"]))}</span>' if sub.get("route") else ""),
+                ("Engine", f'<span class="mono">{e(str(sub["engine"]))}</span>' if sub.get("engine") else ""),
+                ("Placement", f'<span class="mono">{e(str(sub["placement"]))}</span>' if sub.get("placement") else ""),
+                ("Why placed", e(str(sub["reason"])) if sub.get("reason") else ""),
+                ("Duration", e(_dur(sub.get("ts"), sub.get("finished_ts"))) if sub.get("finished_ts") else ""),
+                ("Gate", "approval required" if sub.get("gate_required") else ""),
+                ("PII", e(", ".join(map(str, sub["pii"]))) if sub.get("pii") else ""),
+                ("Cost", money(sub["cost"]) if sub.get("cost") is not None else ""),
+            ]
+            if v
+        )
         res = str(sub["result"]) if sub.get("result") else ""
         err_t = ""
         if sub.get("error"):
-            kind = f'<span class="chip err-chip mono">{e(str(sub["error_kind"]))}</span> ' if sub.get("error_kind") else ""
+            kind = (
+                f'<span class="chip err-chip mono">{e(str(sub["error_kind"]))}</span> ' if sub.get("error_kind") else ""
+            )
             hint = f'<p class="muted caption w-hint">{e(str(sub["hint"]))}</p>' if sub.get("hint") else ""
             err_t = f'<div class="w-err" role="alert">{kind}{e(str(sub["error"]))}{hint}</div>'
         title = sub.get("title") or str(sub.get("subtask") or "")
-        doc = (f'<div class="w-doc{_doc_cls(res)}">{e(res)}</div>' if res
-               else '<p class="muted caption">No result yet — the worker has not finished.</p>')
-        out.append(f'<h2>Subtask</h2><div class="w-card"><p class="w-card-t">{e(title)}</p>'
-                   f'<p class="w-card-sub muted caption">{_thought_line(sub, now)}</p>{err_t}{doc}'
-                   f'<details class="w-details"><summary>Details</summary>'
-                   f'<table class="kv dense"><tbody>{rows}</tbody></table></details></div>')
+        doc = (
+            f'<div class="w-doc{_doc_cls(res)}">{e(res)}</div>'
+            if res
+            else '<p class="muted caption">No result yet — the worker has not finished.</p>'
+        )
+        out.append(
+            f'<h2>Subtask</h2><div class="w-card"><p class="w-card-t">{e(title)}</p>'
+            f'<p class="w-card-sub muted caption">{_thought_line(sub, now)}</p>{err_t}{doc}'
+            f'<details class="w-details"><summary>Details</summary>'
+            f'<table class="kv dense"><tbody>{rows}</tbody></table></details></div>'
+        )
     elif run is not None:
         counts = {s["state"]: 0 for s in run["subtasks"]}
         for s in run["subtasks"]:
@@ -834,17 +954,26 @@ def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> st
         fails = "".join(_fail_item(f) for f in run["worker_failures"])
         run_err = ""
         if run.get("error"):
-            kind = f'<span class="chip err-chip mono">{e(str(run["error_kind"]))}</span> ' if run.get("error_kind") else ""
+            kind = (
+                f'<span class="chip err-chip mono">{e(str(run["error_kind"]))}</span> ' if run.get("error_kind") else ""
+            )
             hint = f'<p class="muted caption w-hint">{e(str(run["hint"]))}</p>' if run.get("hint") else ""
             run_err = f'<div class="w-err" role="alert">{kind}{e(str(run["error"]))}{hint}</div>'
-        out.append(f'<h2>Run summary</h2><div class="w-card"><p class="w-card-t">{e(run["run"])}</p>'
-                   f'<p class="w-chips">{_state_chips(counts)}</p>' + run_err
-                   + (f'<h3 class="w-sub-h">Worker failures</h3><ul class="w-fails">{fails}</ul>' if fails else "")
-                   + "</div>")
+        out.append(
+            f'<h2>Run summary</h2><div class="w-card"><p class="w-card-t">{e(run["run"])}</p>'
+            f'<p class="w-chips">{_state_chips(counts)}</p>'
+            + run_err
+            + (f'<h3 class="w-sub-h">Worker failures</h3><ul class="w-fails">{fails}</ul>' if fails else "")
+            + "</div>"
+        )
     else:
-        out.append(empty("Nothing selected",
-                         "Pick a run on the left to see its plan; select a subtask for its output. "
-                         "Pending approvals land here too."))
+        out.append(
+            empty(
+                "Nothing selected",
+                "Pick a run on the left to see its plan; select a subtask for its output. "
+                "Pending approvals land here too.",
+            )
+        )
     return "".join(out)
 
 
@@ -854,8 +983,9 @@ def work_active(runs: list[dict], run: dict | None) -> bool:
         if any(r["states"].get(k) for k in ("QUEUED", "LEASED", "RUNNING", "AWAITING-APPROVAL")):
             return True
     if run:
-        return (len(run["subtasks"]) < run["declared"]
-                or any(s["state"] not in ("DONE", "FAILED") for s in run["subtasks"]))
+        return len(run["subtasks"]) < run["declared"] or any(
+            s["state"] not in ("DONE", "FAILED") for s in run["subtasks"]
+        )
     return False
 
 
@@ -869,14 +999,16 @@ def page_skills(caps: list[dict]) -> str:
         f'<td>{status(c["status"])}</td><td class="muted">{e(c["detail"])}</td></tr>'
         for c in caps
     )
-    return ("<section aria-labelledby=\"cap\"><h2 id=\"cap\">What a run can invoke</h2>"
-            '<p class="muted note">The capability surface — each row is a real engine, worker or '
-            'safety check. Health is probed live; a down engine is reported, not hidden. '
-            'Placement picks among these per subtask.</p>'
-            '<table class="dense"><caption class="sr">Capabilities and live health</caption><thead><tr>'
-            '<th scope="col">Capability</th><th scope="col">Kind</th><th scope="col">Status</th>'
-            '<th scope="col">Detail</th></tr></thead>'
-            f'<tbody>{rows}</tbody></table></section>')
+    return (
+        '<section aria-labelledby="cap"><h2 id="cap">What a run can invoke</h2>'
+        '<p class="muted note">The capability surface — each row is a real engine, worker or '
+        "safety check. Health is probed live; a down engine is reported, not hidden. "
+        "Placement picks among these per subtask.</p>"
+        '<table class="dense"><caption class="sr">Capabilities and live health</caption><thead><tr>'
+        '<th scope="col">Capability</th><th scope="col">Kind</th><th scope="col">Status</th>'
+        '<th scope="col">Detail</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table></section>"
+    )
 
 
 def _auto_row(a: dict, csrf: str, now: float) -> str:
@@ -902,7 +1034,7 @@ def _auto_row(a: dict, csrf: str, now: float) -> str:
         f'<input type="hidden" name="csrf" value="{e(csrf)}">'
         f'<input type="hidden" name="desc" value="{e(a["goal"])}">'
         '<button class="btn ghost" type="submit">Delete</button></form>'
-        '</td></tr>'
+        "</td></tr>"
     )
 
 
@@ -928,18 +1060,20 @@ and driven to terminal state through the same protocol a manual goal uses.</p>
         table = empty(
             "Scheduler unreachable",
             "Temporal isn't answering — schedules are durable state and nothing here will guess. "
-            "Check the temporal stack and reload.")
+            "Check the temporal stack and reload.",
+        )
         return form + err + table
     if not items:
-        table = empty("No automations",
-                      "Nothing is scheduled. Add one above — it fires real goal runs on a cadence.")
+        table = empty("No automations", "Nothing is scheduled. Add one above — it fires real goal runs on a cadence.")
     else:
         rows = "".join(_auto_row(a, csrf, now) for a in items)
-        table = ('<table class="dense"><caption class="sr">Automations</caption><thead><tr>'
-                 '<th scope="col">Goal</th><th scope="col">Cadence</th>'
-                 '<th scope="col" class="num">Next</th><th scope="col" class="num">Fired</th>'
-                 '<th scope="col">State</th><th scope="col"></th></tr></thead>'
-                 f'<tbody>{rows}</tbody></table>')
+        table = (
+            '<table class="dense"><caption class="sr">Automations</caption><thead><tr>'
+            '<th scope="col">Goal</th><th scope="col">Cadence</th>'
+            '<th scope="col" class="num">Next</th><th scope="col" class="num">Fired</th>'
+            '<th scope="col">State</th><th scope="col"></th></tr></thead>'
+            f"<tbody>{rows}</tbody></table>"
+        )
     return form + err + f"<section>{table}</section>"
 
 
@@ -1005,28 +1139,36 @@ def audit_rows(rows: list[dict], now: float) -> str:
 def page_audit(rows: list[dict], total: int, f: str, q: str, now: float) -> str:
     chips = "".join(
         f'<a class="chip" href="/audit?f={k}{"&q=" + quote(q) if q else ""}"'
-        f'{" aria-current=true" if k == f else ""}>{lbl}</a>' for k, lbl in AUDIT_FILTERS
+        f"{' aria-current=true' if k == f else ''}>{lbl}</a>"
+        for k, lbl in AUDIT_FILTERS
     )
-    form = (f'<form method="get" action="/audit" class="inline-form"><input type="hidden" name="f" value="{e(f)}">'
-            f'<label for="aq" class="sr">Filter audit rows</label>'
-            f'<input id="aq" name="q" type="search" class="input" placeholder="Filter by text, session or model" value="{e(q)}" aria-keyshortcuts="/">'
-            '<button class="btn" type="submit">Filter</button></form>')
+    form = (
+        f'<form method="get" action="/audit" class="inline-form"><input type="hidden" name="f" value="{e(f)}">'
+        f'<label for="aq" class="sr">Filter audit rows</label>'
+        f'<input id="aq" name="q" type="search" class="input" placeholder="Filter by text, session or model" value="{e(q)}" aria-keyshortcuts="/">'
+        '<button class="btn" type="submit">Filter</button></form>'
+    )
     if not rows:
-        body = empty("No matching events",
-                     "The audit log is append-only. Blocked and allowed calls and human decisions appear here as they happen.")
+        body = empty(
+            "No matching events",
+            "The audit log is append-only. Blocked and allowed calls and human decisions appear here as they happen.",
+        )
     else:
-        body = ('<table class="dense" data-table><caption class="sr">Audit events, newest first</caption><thead><tr>'
-                '<th scope="col" class="num">When</th><th scope="col">Result</th><th scope="col">Event</th>'
-                f'<th scope="col">Detail</th></tr></thead><tbody>{audit_rows(rows, now)}</tbody></table>')
+        body = (
+            '<table class="dense" data-table><caption class="sr">Audit events, newest first</caption><thead><tr>'
+            '<th scope="col" class="num">When</th><th scope="col">Result</th><th scope="col">Event</th>'
+            f'<th scope="col">Detail</th></tr></thead><tbody>{audit_rows(rows, now)}</tbody></table>'
+        )
     cap = f'<p class="muted caption">Showing the latest {len(rows)} of {total} matching events.</p>' if rows else ""
-    return f'<div class="toolbar"><div class="chips" role="group" aria-label="Filter">{chips}</div>{form}</div>{body}{cap}'
+    return (
+        f'<div class="toolbar"><div class="chips" role="group" aria-label="Filter">{chips}</div>{form}</div>{body}{cap}'
+    )
 
 
 # ---------------------------------------------------------------- overview
 
 
-def page_overview(pend: list[dict], runs: list[dict], audit: list[dict],
-                  spend: float, cap: float, now: float) -> str:
+def page_overview(pend: list[dict], runs: list[dict], audit: list[dict], spend: float, cap: float, now: float) -> str:
     if pend:
         rows = "".join(
             f'<tr data-row data-href="/approvals#{e(i["id"])}"><td class="who">{glint(i.get("who", "agent"), i.get("session", ""), i["ts"])}'
@@ -1035,27 +1177,41 @@ def page_overview(pend: list[dict], runs: list[dict], audit: list[dict],
             f'<td>{status(risk_of(i)[0], risk_of(i)[0].title() + " risk")}</td><td class="num">{time_tag(i["ts"], now)}</td></tr>'
             for i in pend[:5]
         )
-        needs = (f'<section class="lit" aria-labelledby="nm"><h2 id="nm">Needs you ({len(pend)})</h2>'
-                 '<table class="dense" data-table><caption class="sr">Oldest pending approvals</caption><thead><tr><th scope="col">Who</th><th scope="col">What</th>'
-                 '<th scope="col">Goes to</th><th scope="col" class="num">Cost</th><th scope="col">Risk</th><th scope="col" class="num">Asked</th></tr></thead>'
-                 f'<tbody>{rows}</tbody></table><p><a class="btn primary" href="/approvals">Review {len(pend)} approval{"s" if len(pend) != 1 else ""}</a></p></section>')
+        needs = (
+            f'<section class="lit" aria-labelledby="nm"><h2 id="nm">Needs you ({len(pend)})</h2>'
+            '<table class="dense" data-table><caption class="sr">Oldest pending approvals</caption><thead><tr><th scope="col">Who</th><th scope="col">What</th>'
+            '<th scope="col">Goes to</th><th scope="col" class="num">Cost</th><th scope="col">Risk</th><th scope="col" class="num">Asked</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table><p><a class="btn primary" href="/approvals">Review {len(pend)} approval{"s" if len(pend) != 1 else ""}</a></p></section>'
+        )
     else:
-        needs = ('<section aria-labelledby="nm"><h2 id="nm">Needs you</h2>'
-                 + empty("Nothing waiting on you", "Requests from agents to send a payload off this box appear here.") + "</section>")
+        needs = (
+            '<section aria-labelledby="nm"><h2 id="nm">Needs you</h2>'
+            + empty("Nothing waiting on you", "Requests from agents to send a payload off this box appear here.")
+            + "</section>"
+        )
     last = runs[0] if runs else None
-    last_s = (f'{status(last["status"])} <a href="/runs/{last["id"]}">{last["id"]}</a> {time_tag(last["ts"], now)}'
-              if last else '<span class="muted">No runs yet</span>')
+    last_s = (
+        f'{status(last["status"])} <a href="/runs/{last["id"]}">{last["id"]}</a> {time_tag(last["ts"], now)}'
+        if last
+        else '<span class="muted">No runs yet</span>'
+    )
     summary = f"""<section aria-labelledby="st"><h2 id="st">Status</h2>
 <table class="kv dense"><tbody>
 <tr><th scope="row">Control plane and sandboxes</th><td data-frag="/_frag/status" aria-busy="true">{skeleton_rows(1, 1)}</td></tr>
 <tr><th scope="row">Last matrix run</th><td>{last_s}</td></tr>
 <tr><th scope="row">Router spend today</th><td>{money(spend)} of {money(cap)} daily cap</td></tr>
 </tbody></table></section>"""
-    recent = ('<section aria-labelledby="ra"><h2 id="ra">Recent audit</h2>'
-              + (f'<table class="dense" data-table><caption class="sr">Latest audit events</caption><thead><tr><th scope="col" class="num">When</th><th scope="col">Result</th>'
-                 f'<th scope="col">Event</th><th scope="col">Detail</th></tr></thead><tbody>{audit_rows(audit, now)}</tbody></table>'
-                 '<p><a href="/audit">All audit events</a></p>' if audit else empty("No audit events yet", "Every gate decision is written here, append-only."))
-              + "</section>")
+    recent = (
+        '<section aria-labelledby="ra"><h2 id="ra">Recent audit</h2>'
+        + (
+            f'<table class="dense" data-table><caption class="sr">Latest audit events</caption><thead><tr><th scope="col" class="num">When</th><th scope="col">Result</th>'
+            f'<th scope="col">Event</th><th scope="col">Detail</th></tr></thead><tbody>{audit_rows(audit, now)}</tbody></table>'
+            '<p><a href="/audit">All audit events</a></p>'
+            if audit
+            else empty("No audit events yet", "Every gate decision is written here, append-only.")
+        )
+        + "</section>"
+    )
     return needs + summary + recent
 
 
@@ -1063,11 +1219,20 @@ def status_cell(fleet: dict) -> str:
     if not fleet["configured"]:
         return status("not configured", "Not configured") + ' <span class="muted">Set CUBE_API_URL</span>'
     if not fleet["up"]:
-        return status("down", "DOWN") + f' <span class="muted">{e(fleet["api_host"])} did not answer. Inventory unknown.</span>'
+        return (
+            status("down", "DOWN")
+            + f' <span class="muted">{e(fleet["api_host"])} did not answer. Inventory unknown.</span>'
+        )
     n = len(fleet["sandboxes"])
-    return status("up", "UP") + f' <span class="muted">{e(fleet["api_host"])} · </span><a href="/sandboxes">{n} sandbox{"es" if n != 1 else ""}</a>'
+    return (
+        status("up", "UP")
+        + f' <span class="muted">{e(fleet["api_host"])} · </span><a href="/sandboxes">{n} sandbox{"es" if n != 1 else ""}</a>'
+    )
 
 
 def not_found() -> str:
-    return empty("Page not found", "That address is not part of the console.",
-                 '<a class="btn primary" href="/">Go to Overview</a>')
+    return empty(
+        "Page not found",
+        "That address is not part of the console.",
+        '<a class="btn primary" href="/">Go to Overview</a>',
+    )

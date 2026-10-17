@@ -144,15 +144,27 @@ Downloading an artifact whose `export.requires_approval` is true is refused (`40
 ```python
 from oc.events import Emitter, FileLog
 
-em = Emitter(FileLog("/var/lib/oc/events"), "g_research01", actor={"name": "researcher", "session": "sess-4f21"},
-             approvals=approval_queue)            # optional: registers requests with services/gate/queue.py
+em = Emitter(
+    FileLog("/var/lib/oc/events"),
+    "g_research01",
+    actor={"name": "researcher", "session": "sess-4f21"},
+    approvals=approval_queue,
+)  # optional: registers requests with services/gate/queue.py
 em.run("running", title="Compare ...", cap_usd=2.0, box={...})
 em.step("step_search", "Search for comparisons", "running")
 em.tool_call("tool_s1", "web.search", "running", step="step_search", destination="html.duckduckgo.com")
 em.source("src_a", 1, "https://...", "Title", domain="...", fetched=True)
-em.approval_request("ap_push01", kind="push", action="git push origin fix", destination="github.com/acme/app",
-                    payload={...}, risk="high", why="...", if_denied="...")
-em.cost(0.81, 1.0, tokens={...})                  # threshold=0.8 is set for you
+em.approval_request(
+    "ap_push01",
+    kind="push",
+    action="git push origin fix",
+    destination="github.com/acme/app",
+    payload={...},
+    risk="high",
+    why="...",
+    if_denied="...",
+)
+em.cost(0.81, 1.0, tokens={...})  # threshold=0.8 is set for you
 em.run("done", summary="...")
 ```
 

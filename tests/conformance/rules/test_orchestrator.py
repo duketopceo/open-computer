@@ -22,8 +22,12 @@ def orch(tmp_path):
     class _Stub:
         def run(self, u: str) -> RouteDecision:
             return RouteDecision(
-                route="answer", tier="mid", engine="stub", confidence=1.0,
-                cost=0.001, ms=1,
+                route="answer",
+                tier="mid",
+                engine="stub",
+                confidence=1.0,
+                cost=0.001,
+                ms=1,
             )
 
     budget = router_mod.Budget(tmp_path / "ledger.jsonl")

@@ -11,7 +11,7 @@ def test_skills_page_lists_real_capabilities(console):
         assert word.lower() in html.lower(), word
     # live probe results render as normative state words
     for st in ("ready", "down", "not configured", "active"):
-        assert f'>{st}<' in html or f'>{st.title()}<' in html, st
+        assert f">{st}<" in html or f">{st.title()}<" in html, st
 
 
 def test_capabilities_report_live_not_static():

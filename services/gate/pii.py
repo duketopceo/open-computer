@@ -17,6 +17,7 @@ _PATTERNS: dict[str, re.Pattern] = {
         re.IGNORECASE,
     ),
     "card": re.compile(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b"),
+    "phone": re.compile(r"(?<!\d)(?:\+1[-.\s]?)?(?:\(\d{3}\)[-.\s]?|\b\d{3}[-.\s])\d{3}[-.\s]\d{4}\b"),
     "address": re.compile(
         r"\b\d+\s+[A-Z][\w.]+\s+(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Terrace|Boulevard|Blvd)\b"
     ),

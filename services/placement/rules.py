@@ -124,9 +124,7 @@ def place(
                 "cloud-OpenRouter",
                 "latency=crit but local endpoints down — cloud fallback",
             )
-        return Placement(
-            "local-llamacpp", "latency=crit - GPU local, no network RTT"
-        )
+        return Placement("local-llamacpp", "latency=crit - GPU local, no network RTT")
 
     # 3. Spend headroom: if it cannot cover the estimate, local.
     if headroom is not None and est_cost > 0 and est_cost > headroom:
@@ -159,9 +157,7 @@ def place(
                 "cloud-OpenRouter",
                 "cheap tier but local endpoints down — cloud fallback",
             )
-        return Placement(
-            "local-llamacpp", "cheap tier - local model suffices"
-        )
+        return Placement("local-llamacpp", "cheap tier - local model suffices")
 
     return Placement(
         "cloud-OpenRouter",

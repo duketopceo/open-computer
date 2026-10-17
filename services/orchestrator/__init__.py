@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 from oc.fsproto import adapter as fs_adapter
+from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
 from services.placement import place
 from services.gate.audit import AuditLog
@@ -32,6 +33,7 @@ __all__ = [
     "collect_run",
     "decompose",
     "dispatch",
+    "drain_parked",
     "WorkResult",
     "run_once",
     "task_state",
@@ -51,33 +53,69 @@ class Orchestrator:
         self.place = place_fn or place
         self.ledger = ledger  # services.cost.CostLedger | None
         self.devices = devices  # services.device.DeviceRegistry | None (P1)
+        if self.devices is not None and hasattr(self.devices, "bind"):
+            self.devices.bind(fs=self.fs, audit=self.audit)
         self.dispatches: dict[str, list[dict]] = {}  # run_id -> records
         self._subtasks: dict[str, dict[str, dict]] = {}  # run_id -> id -> sub
         self._tid_by_sub: dict[str, dict[str, str]] = {}  # run_id -> sid -> tid
+        self._run_meta: dict[str, dict] = {}  # run_id -> {"origin": ..., "device_id": ...}
 
-    def submit(self, goal: str, engine, run_id: str | None = None) -> str:
+    def drain_parked(self, *, now: float | None = None) -> list[dict]:
+        """Drain tasks queued in `device/parked` into eligible `device/<device_id>` mailboxes."""
+        drained = drain_parked(self.fs, self.devices, self.audit, now=now)
+        if drained:
+            by_task = {d["task"]: d["mailbox"] for d in drained}
+            for recs in self.dispatches.values():
+                for rec in recs:
+                    if rec.get("task") in by_task:
+                        rec["mailbox"] = by_task[rec["task"]]
+        return drained
+
+    def run_meta(self, run_id: str) -> dict:
+        """Return `{origin, device_id}` metadata for `run_id`."""
+        return dict(self._run_meta.get(run_id, {"origin": "cloud", "device_id": None}))
+
+    def submit(
+        self,
+        goal: str,
+        engine,
+        run_id: str | None = None,
+        *,
+        origin: str = "cloud",
+        device_id: str | None = None,
+    ) -> str:
         """Decompose + validate + dispatch every ready subtask. Returns run id."""
         run_id = run_id or uuid.uuid4().hex[:12]
+        self._run_meta[run_id] = {"origin": origin, "device_id": device_id}
         try:
             subs = decompose(goal, engine)
         except Exception as e:
-            self.audit.append(
-                {
-                    "event": "run_failed",
-                    "run": run_id,
-                    "goal": goal,
-                    "kind": type(e).__name__,
-                    "error": str(e),
-                    "hint": getattr(e, "hint", ""),
-                }
-            )
+            fail_row: dict = {
+                "event": "run_failed",
+                "run": run_id,
+                "goal": goal,
+                "origin": origin,
+                "kind": type(e).__name__,
+                "error": str(e),
+                "hint": getattr(e, "hint", ""),
+            }
+            if device_id is not None:
+                fail_row["device_id"] = device_id
+            self.audit.append(fail_row)
             raise
         self.dispatches[run_id] = []
         self._subtasks[run_id] = {s["id"]: s for s in subs}
         self._tid_by_sub[run_id] = {}
-        self.audit.append(
-            {"event": "run_submit", "run": run_id, "goal": goal, "subtasks": len(subs)}
-        )
+        submit_row: dict = {
+            "event": "run_submit",
+            "run": run_id,
+            "goal": goal,
+            "subtasks": len(subs),
+            "origin": origin,
+        }
+        if device_id is not None:
+            submit_row["device_id"] = device_id
+        self.audit.append(submit_row)
         tmp = self.root / "plan.json.tmp"
         tmp.write_text(json.dumps(subs))
         os.replace(tmp, self.root / "plan.json")
@@ -98,8 +136,14 @@ class Orchestrator:
         self.dispatches[run_id] = []
         self._subtasks[run_id] = {s["id"]: s for s in subs}
         self._tid_by_sub[run_id] = {}
+        self._run_meta.setdefault(run_id, {"origin": "cloud", "device_id": None})
         for r in self.audit.rows():
-            if r.get("event") == "dispatch" and r.get("run") == run_id:
+            if r.get("event") == "run_submit" and r.get("run") == run_id:
+                self._run_meta[run_id] = {
+                    "origin": r.get("origin", "cloud"),
+                    "device_id": r.get("device_id"),
+                }
+            elif r.get("event") == "dispatch" and r.get("run") == run_id:
                 self.dispatches[run_id].append(r)
                 self._tid_by_sub[run_id][r["subtask"]] = r["task"]
         return True
@@ -172,14 +216,18 @@ class Orchestrator:
                 states = [self._dep_state(tids[d]) for d in sub["deps"]]
                 if all(st == "done" for st in states):
                     rec = dispatch(
-                        self.fs, self.router, self.gate, self.place,
-                        self.audit, run_id, sub,
-                        ledger=self.ledger, devices=self.devices,
+                        self.fs,
+                        self.router,
+                        self.gate,
+                        self.place,
+                        self.audit,
+                        run_id,
+                        sub,
+                        ledger=self.ledger,
+                        devices=self.devices,
                     )
                 elif any(st == "failed" for st in states):
-                    rec = self._dep_fail(
-                        run_id, sub, sub["deps"][states.index("failed")]
-                    )
+                    rec = self._dep_fail(run_id, sub, sub["deps"][states.index("failed")])
                 else:
                     continue  # dep still queued/leased — wait for it
                 tids[sid] = rec["task"]
@@ -196,13 +244,20 @@ class Orchestrator:
         return done
 
     def results(self, run_id: str) -> dict:
-        return collect_run(
-            self.fs, self.dispatches[run_id], list(self._subtasks[run_id])
-        )
+        return collect_run(self.fs, self.dispatches[run_id], list(self._subtasks[run_id]))
 
-    def run(self, goal: str, engine, work_fn, agent: str = "worker") -> dict:
+    def run(
+        self,
+        goal: str,
+        engine,
+        work_fn,
+        agent: str = "worker",
+        *,
+        origin: str = "cloud",
+        device_id: str | None = None,
+    ) -> dict:
         """E2E: submit, then work/dispatch until no task is left pending."""
-        run_id = self.submit(goal, engine)
+        run_id = self.submit(goal, engine, origin=origin, device_id=device_id)
         for _ in range(64):
             before = self.results(run_id)
             if all(r["state"] in ("DONE", "FAILED") for r in before.values()):

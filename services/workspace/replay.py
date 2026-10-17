@@ -145,6 +145,7 @@ class Workspace:
 
     def queue(self, goal: str, *, write: bool = False):
         from services.gate.queue import ApprovalQueue
+
         path = self.state_dir / f"{goal}.approvals.ndjson"
         if write:
             return ApprovalQueue(path, self._gate(goal))
@@ -155,9 +156,16 @@ class Workspace:
         d = ev["data"]
         q = ApprovalQueue(self.state_dir / f"{goal}.approvals.ndjson", self._gate(goal))
         if q.get(d["id"]) is None:
-            q.submit(who=(ev.get("actor") or {}).get("name", "agent"), session=(ev.get("actor") or {}).get("session", ""),
-                     what=d["action"], est_cost=float(d.get("cost_usd") or 0), item_id=d["id"], ts=ev["ts"], bound_hash=d["payload_hash"],
-                     payload=d["payload"])
+            q.submit(
+                who=(ev.get("actor") or {}).get("name", "agent"),
+                session=(ev.get("actor") or {}).get("session", ""),
+                what=d["action"],
+                est_cost=float(d.get("cost_usd") or 0),
+                item_id=d["id"],
+                ts=ev["ts"],
+                bound_hash=d["payload_hash"],
+                payload=d["payload"],
+            )
 
     # -- replay control -----------------------------------------------------------
     def start_replay(self, goal: str, *, speed: float = 4.0, hold: bool = True, restart: bool = False) -> ReplaySession:

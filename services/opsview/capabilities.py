@@ -33,8 +33,7 @@ def collect() -> list[dict]:
             "name": "OpenRouter cloud model",
             "kind": "engine · cloud",
             "status": cloud_state,
-            "detail": "cloud-OpenRouter · router budgeted"
-            + ("" if or_key else " — set OPENROUTER_API_KEY"),
+            "detail": "cloud-OpenRouter · router budgeted" + ("" if or_key else " — set OPENROUTER_API_KEY"),
         },
         {
             "name": "llama.cpp local model",
@@ -58,8 +57,7 @@ def collect() -> list[dict]:
             "name": "Sandbox worker",
             "kind": "worker · isolated",
             "status": "ready" if cube else "not configured",
-            "detail": "cloud-sandbox · CubeSandbox microVM"
-            + ("" if cube else " — set CUBE_API_URL"),
+            "detail": "cloud-sandbox · CubeSandbox microVM" + ("" if cube else " — set CUBE_API_URL"),
         },
         {
             "name": "Temporal drive loop",

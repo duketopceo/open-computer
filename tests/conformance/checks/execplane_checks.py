@@ -85,9 +85,7 @@ def policy_diff_lists_every_grant(policy) -> None:
         origin="agent",
     )
     diff = policy.dry_run(proposal)
-    missing = {"egress:api.github.com", "egress:huggingface.co", "cred:hf_token"} - set(
-        diff.items
-    )
+    missing = {"egress:api.github.com", "egress:huggingface.co", "cred:hf_token"} - set(diff.items)
     if missing:
         raise CheckFailed(f"dry-run diff omitted grants: {sorted(missing)}")
 

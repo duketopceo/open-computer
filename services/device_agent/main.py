@@ -1,10 +1,9 @@
-"""Device agent entry point (P1 skeleton): register, then heartbeat and drain the device mailbox.
+"""Device agent entry point (P1–P7): register, then heartbeat, drain parked tasks, and execute steps.
 
     uv run python -m services.device_agent.main --root ./runtime --device-id mac-mini --root-dir ~/Projects
 
-The agent talks to the orchestrator through the same fsproto root in P1
-(single host). The network transport is a P3 concern; keeping fsproto
-here means the mailbox semantics are already the real ones.
+The agent talks to the orchestrator through the shared fsproto root and drains
+both `device/parked` (via `drain_parked`) and `device/<device_id>`.
 """
 
 from __future__ import annotations
@@ -16,8 +15,9 @@ import time
 from pathlib import Path
 
 from oc.fsproto import AlreadyLeased, TaskFinal, adapter as fs_adapter
-from services.device import adapter as registry_adapter
+from services.device import GrantStore, adapter as registry_adapter
 from services.device.protocol import WINDOW, mint_secret
+from services.gate.audit import AuditLog
 
 from .exec import execute
 from .heartbeat import HEARTBEAT_EVERY, registration_payload
@@ -46,13 +46,16 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True, help="orchestrator root (fsproto + devices live under it)")
     ap.add_argument("--device-id", required=True)
-    ap.add_argument("--root-dir", action="append", default=[], help="granted root; repeatable (grants are P2)")
+    ap.add_argument("--root-dir", action="append", default=[], help="granted root; repeatable")
+    ap.add_argument("--capability", action="append", default=None, help="device capability; repeatable")
     ap.add_argument("--once", action="store_true", help="one heartbeat + one drain, then exit")
     a = ap.parse_args(argv)
 
     root = Path(a.root)
-    reg = registry_adapter(root)
     fs = fs_adapter(root / "run")
+    audit = AuditLog(root / "orchestrator.ndjson")
+    reg = registry_adapter(root, fs=fs, audit=audit)
+    grants = GrantStore(root, audit=audit)
     secret_file = root / "devices" / f"{a.device_id}.secret"
     if not secret_file.exists():
         secret_file.parent.mkdir(parents=True, exist_ok=True)
@@ -60,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         with os.fdopen(fd, "w") as f:
             f.write(mint_secret())
     secret = secret_file.read_text().strip()
-    reg.register(registration_payload(a.device_id, a.root_dir))
+    reg.register(registration_payload(a.device_id, a.root_dir, capabilities=a.capability))
     seen_file = root / "devices" / f"{a.device_id}.seen.json"
     seen_expiry = _load_seen(seen_file, time.time())
     seen: set[str] = set(seen_expiry)
@@ -74,7 +77,15 @@ def main(argv: list[str] | None = None) -> int:
             except (AlreadyLeased, TaskFinal):
                 continue
             msg = json.loads(fs.task_body(tid))
-            result = execute(msg.get("envelope", {}), secret, seen=seen)
+            result = execute(
+                msg.get("envelope", {}),
+                secret,
+                seen=seen,
+                grants=grants,
+                device_id=a.device_id,
+                registry=reg,
+                audit=audit,
+            )
             fresh = seen - seen_expiry.keys()
             if fresh:
                 t = time.time()

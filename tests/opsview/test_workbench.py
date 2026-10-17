@@ -29,8 +29,7 @@ def post_json(console, path, data, cookie=None, token=None):
         headers["X-CSRF-Token"] = token
     if cookie:
         headers["Cookie"] = cookie
-    return console.request("POST", path, body=json.dumps(data), headers=headers,
-                           cookie=cookie is None)
+    return console.request("POST", path, body=json.dumps(data), headers=headers, cookie=cookie is None)
 
 
 def test_work_page_renders_the_three_panes(console):
@@ -53,11 +52,14 @@ def test_frag_work_payload_shape(console):
 
 def test_frag_work_run_detail_and_subtask(console, monkeypatch, tmp_path):
     import time
+
     monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
     rid = goalruns.submit(
         "Do one thing",
         lambda prompt: '[{"id":"a","title":"first task","prompt":"p1"}]',
-        lambda task: "result-body", by="t")
+        lambda task: "result-body",
+        by="t",
+    )
     for _ in range(200):
         got = goalruns.get_run(rid)
         if got and got["subtasks"] and got["subtasks"][0]["state"] in ("DONE", "FAILED"):
@@ -74,21 +76,19 @@ def test_frag_work_run_detail_and_subtask(console, monkeypatch, tmp_path):
 
 
 def test_goal_json_flow_needs_confirm_then_runs(console, submitted):
-    status, _, body = post_json(console, "/goals", {"goal": "Summarise the audit log"},
-                              token=console.csrf())
+    status, _, body = post_json(console, "/goals", {"goal": "Summarise the audit log"}, token=console.csrf())
     assert status == 200
     d = json.loads(body)
     assert d["needs_confirm"] is True and "cap" in d and submitted == []
-    status, _, body = post_json(console, "/goals",
-                                {"goal": "Summarise the audit log", "confirm": "1"},
-                                token=console.csrf())
+    status, _, body = post_json(
+        console, "/goals", {"goal": "Summarise the audit log", "confirm": "1"}, token=console.csrf()
+    )
     assert status == 200 and json.loads(body)["run"] == "goal_ab12cd34"
     assert submitted == [("Summarise the audit log", "luke@test")]
 
 
 def test_goal_json_rejects_empty(console, submitted):
-    status, _, body = post_json(console, "/goals", {"goal": "   ", "confirm": "1"},
-                              token=console.csrf())
+    status, _, body = post_json(console, "/goals", {"goal": "   ", "confirm": "1"}, token=console.csrf())
     assert status == 400 and submitted == []
 
 
@@ -99,6 +99,5 @@ def test_first_loopback_page_csrf_posts_cleanly(console):
     assert status == 200
     cookie = headers["Set-Cookie"].split(";", 1)[0]
     token = re.search(r'name="csrf-token" content="([0-9a-f]+)"', html).group(1)
-    status, _, body = post_json(console, "/goals", {"goal": "probe"},
-                                cookie=cookie, token=token)
+    status, _, body = post_json(console, "/goals", {"goal": "probe"}, cookie=cookie, token=token)
     assert status == 200 and json.loads(body).get("needs_confirm"), body

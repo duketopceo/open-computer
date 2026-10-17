@@ -46,24 +46,36 @@ ACTIONS: tuple[Action, ...] = (
     Action("palette", "Command palette", "Global", "ctrl+k"),
     Action("help", "Keyboard shortcuts", "Global", "?"),
     Action("theme", "Toggle theme (dark, light, system)", "Global"),
-    Action("run.new", "New matrix run", "Global", "c", href="/runs/new",
-           note="Boots microVMs. No model spend."),
+    Action("run.new", "New matrix run", "Global", "c", href="/runs/new", note="Boots microVMs. No model spend."),
     Action("close", "Close layer / clear selection", "Global", "esc"),
     # Lists
     Action("row.down", "Move down", "Lists", "j / ↓"),
     Action("row.up", "Move up", "Lists", "k / ↑"),
     Action("row.open", "Open selected", "Lists", "enter"),
     # Goals
-    Action("goal.new", "New goal", "Goals", "n", "goals", href="/goals/new",
-           note="Decomposes into subtasks and runs them. Model spend."),
+    Action(
+        "goal.new",
+        "New goal",
+        "Goals",
+        "n",
+        "goals",
+        href="/goals/new",
+        note="Decomposes into subtasks and runs them. Model spend.",
+    ),
     # Work
-    Action("work.compose", "Focus goal composer", "Work", "/", "work",
-           note="Describe a goal; it decomposes before it runs"),
+    Action(
+        "work.compose", "Focus goal composer", "Work", "/", "work", note="Describe a goal; it decomposes before it runs"
+    ),
     # Approvals (foundation section 10)
-    Action("approval.approve", "Approve selected request", "Approvals", "a", "approvals",
-           note="Sends the payload to its destination"),
-    Action("approval.sendback", "Send back with a note", "Approvals", "r", "approvals",
-           note="Nothing leaves the box"),
+    Action(
+        "approval.approve",
+        "Approve selected request",
+        "Approvals",
+        "a",
+        "approvals",
+        note="Sends the payload to its destination",
+    ),
+    Action("approval.sendback", "Send back with a note", "Approvals", "r", "approvals", note="Nothing leaves the box"),
     # Router
     Action("router.focus", "Focus route tester", "Router", "/", "router"),
     # Audit
@@ -74,7 +86,14 @@ ACTIONS: tuple[Action, ...] = (
     Action("audit.decisions", "Show human decisions", "Audit", "", "audit", href="/audit?f=decisions"),
     # Agent workspace (docs/design/silver-lining.md section 16)
     Action("nav.workspace", "Agent workspace", "Workspace", "g g", href="/workspace"),
-    Action("ws.new_goal", "New goal in the workspace", "Workspace", "c", WORKSPACE, note="Plays a recorded goal in replay mode"),
+    Action(
+        "ws.new_goal",
+        "New goal in the workspace",
+        "Workspace",
+        "c",
+        WORKSPACE,
+        note="Plays a recorded goal in replay mode",
+    ),
     Action("ws.focus_composer", "Focus the composer", "Workspace", "/", WORKSPACE),
     Action("ws.send", "Send message", "Workspace", "ctrl+enter", WORKSPACE),
     Action("ws.toggle_goals", "Toggle goal list", "Workspace", "[", WORKSPACE),
@@ -85,9 +104,18 @@ ACTIONS: tuple[Action, ...] = (
     Action("ws.reveal_new", "Show new items", "Workspace", "n", WORKSPACE),
     Action("ws.select", "Select row", "Workspace", "x", WORKSPACE),
     Action("ws.focus_sidebar", "Focus the sidebar", "Workspace", "", WORKSPACE),
-    Action("ws.export_run", "Export run as JSON", "Workspace", "", WORKSPACE, note="Downloads the event stream. Nothing leaves the box."),
+    Action(
+        "ws.export_run",
+        "Export run as JSON",
+        "Workspace",
+        "",
+        WORKSPACE,
+        note="Downloads the event stream. Nothing leaves the box.",
+    ),
     Action("ws.restart_replay", "Restart replay", "Workspace", "", WORKSPACE, note="Replay mode only"),
-    Action("ws.raise_cap", "Raise cap and resume", "Workspace", "", WORKSPACE, note="Only when paused at the spend cap"),
+    Action(
+        "ws.raise_cap", "Raise cap and resume", "Workspace", "", WORKSPACE, note="Only when paused at the spend cap"
+    ),
     Action("ws.tab.progress", "Sidebar: Progress", "Sidebar", "1", WORKSPACE),
     Action("ws.tab.sources", "Sidebar: Sources", "Sidebar", "2", WORKSPACE),
     Action("ws.tab.artifacts", "Sidebar: Artifacts", "Sidebar", "3", WORKSPACE),
@@ -96,9 +124,25 @@ ACTIONS: tuple[Action, ...] = (
     Action("ws.tab.box", "Sidebar: Box", "Sidebar", "6", WORKSPACE),
     Action("ws.tab.cost", "Sidebar: Cost", "Sidebar", "7", WORKSPACE),
     Action("ws.approval_focus", "Go to the pending approval", "Approvals", "y", WORKSPACE),
-    Action("ws.allow_once", "Allow once", "Approvals", "a", WORKSPACE, note="With the approval card focused. High risk needs a second press."),
-    Action("ws.allow_goal", "Allow for this goal", "Approvals", "shift+a", WORKSPACE, note="With the approval card focused"),
-    Action("ws.deny", "Deny, with an optional note", "Approvals", "r", WORKSPACE, note="With the approval card focused. Nothing leaves the box."),
+    Action(
+        "ws.allow_once",
+        "Allow once",
+        "Approvals",
+        "a",
+        WORKSPACE,
+        note="With the approval card focused. High risk needs a second press.",
+    ),
+    Action(
+        "ws.allow_goal", "Allow for this goal", "Approvals", "shift+a", WORKSPACE, note="With the approval card focused"
+    ),
+    Action(
+        "ws.deny",
+        "Deny, with an optional note",
+        "Approvals",
+        "r",
+        WORKSPACE,
+        note="With the approval card focused. Nothing leaves the box.",
+    ),
     Action("ws.view_full", "View full payload or expand artifact", "Approvals", "f", WORKSPACE),
 )
 
@@ -108,8 +152,7 @@ assert len(BY_ID) == len(ACTIONS), "duplicate action id"
 
 def for_page(page: str) -> list[Action]:
     """Everything available on a page: global actions plus that page's own."""
-    return [a for a in ACTIONS if a.scope in ("global", page)
-            and not (page == WORKSPACE and a.id in NOT_ON_WORKSPACE)]
+    return [a for a in ACTIONS if a.scope in ("global", page) and not (page == WORKSPACE and a.id in NOT_ON_WORKSPACE)]
 
 
 def nav_actions() -> list[Action]:

@@ -27,8 +27,12 @@ def _wait(run_mod, rid, expect: int | None = None, timeout=8.0) -> None:
     while time.time() - t0 < timeout:
         d = run_mod.get_run(rid)
         want = expect if expect is not None else (d or {}).get("declared", 0)
-        if (d and len(d["subtasks"]) == want and want > 0
-                and all(s["state"] in ("DONE", "FAILED") for s in d["subtasks"])):
+        if (
+            d
+            and len(d["subtasks"]) == want
+            and want > 0
+            and all(s["state"] in ("DONE", "FAILED") for s in d["subtasks"])
+        ):
             return
         time.sleep(0.2)
     raise CheckFailed("run did not settle in time")
@@ -83,9 +87,7 @@ def blocked_dep_fails(runs, tmp_path) -> None:
     if "result" in b:
         raise CheckFailed("dep-blocked subtask fabricated a result")
     if b.get("error_kind") != "DependencyFailed":
-        raise CheckFailed(
-            f"b error_kind {b.get('error_kind')!r}, wanted DependencyFailed"
-        )
+        raise CheckFailed(f"b error_kind {b.get('error_kind')!r}, wanted DependencyFailed")
     states = [r["states"] for r in runs.list_runs() if r["run"] == rid]
     if not states or not any(s.get("FAILED") for s in states):
         raise CheckFailed("list_runs hid the failure")

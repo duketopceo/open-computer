@@ -15,8 +15,14 @@ from services.placement import Placement, headroom_from, place
 
 def cases():
     for pii, approved, latency, tier, mreq, sandbox, est, head in itertools.product(
-        (False, True), (False, True), ("low", "normal", "crit"), ("local", "cheap", "mid", "frontier"),
-        ("", "frontier"), (False, True), (0.0, 0.05), (None, 0.01, 1.0),
+        (False, True),
+        (False, True),
+        ("low", "normal", "crit"),
+        ("local", "cheap", "mid", "frontier"),
+        ("", "frontier"),
+        (False, True),
+        (0.0, 0.05),
+        (None, 0.01, 1.0),
     ):
         yield (
             {"tier": tier, "latency": latency, "model_requirement": mreq, "needs_sandbox": sandbox, "est_cost": est},
@@ -37,12 +43,20 @@ def violations(placer) -> list[str]:
             out.append(f"I1 {tag} -> {p.target}")
         if sub["latency"] == "crit" and not kw["pii_flagged"] and cloud(p):
             out.append(f"I2 {tag} -> {p.target}")
-        if kw["headroom"] is not None and sub["est_cost"] > kw["headroom"] and sub["latency"] != "crit" \
-                and cloud(p) and not (kw["pii_flagged"] and not kw["approved"]):
+        if (
+            kw["headroom"] is not None
+            and sub["est_cost"] > kw["headroom"]
+            and sub["latency"] != "crit"
+            and cloud(p)
+            and not (kw["pii_flagged"] and not kw["approved"])
+        ):
             out.append(f"I3 {tag} -> {p.target}")
-        if cloud(p) and p.target == "cloud-OpenRouter" and (kw["pii_flagged"] or sub["tier"] == "frontier"
-                                                              or sub["model_requirement"] == "frontier") \
-                and not p.gate_required:
+        if (
+            cloud(p)
+            and p.target == "cloud-OpenRouter"
+            and (kw["pii_flagged"] or sub["tier"] == "frontier" or sub["model_requirement"] == "frontier")
+            and not p.gate_required
+        ):
             out.append(f"I4 {tag} ungated")
         if p != placer(sub, **kw):
             out.append(f"I5 {tag} nondeterministic")
@@ -75,10 +89,16 @@ def ignores_latency(sub, **kw):
     return place({**sub, "latency": "normal"}, **kw)
 
 
-@pytest.mark.parametrize("mutant,invariant", [
-    (always_cloud, "I1"), (ignores_pii, "I1"), (ignores_headroom, "I3"),
-    (ungated_pii, "I4"), (ignores_latency, "I2"),
-])
+@pytest.mark.parametrize(
+    "mutant,invariant",
+    [
+        (always_cloud, "I1"),
+        (ignores_pii, "I1"),
+        (ignores_headroom, "I3"),
+        (ungated_pii, "I4"),
+        (ignores_latency, "I2"),
+    ],
+)
 def test_each_invariant_fails_on_a_broken_placer(mutant, invariant):
     assert any(v.startswith(invariant) for v in violations(mutant))
 
@@ -101,10 +121,12 @@ def test_headroom_comes_from_the_cost_ledger_of_the_run(tmp_path):
 
 
 def _engine(_goal):
-    return json.dumps([
-        {"id": "a", "title": "a", "prompt": "collect", "tier": "mid", "est_cost": 0.004},
-        {"id": "b", "title": "b", "prompt": "analyze", "tier": "mid", "deps": ["a"], "est_cost": 0.004},
-    ])
+    return json.dumps(
+        [
+            {"id": "a", "title": "a", "prompt": "collect", "tier": "mid", "est_cost": 0.004},
+            {"id": "b", "title": "b", "prompt": "analyze", "tier": "mid", "deps": ["a"], "est_cost": 0.004},
+        ]
+    )
 
 
 def test_dispatch_demotes_to_local_when_the_run_ledger_cannot_cover_the_estimate(tmp_path):

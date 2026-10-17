@@ -60,9 +60,7 @@ class _CubeSandbox:
 
     def exec(self, cmd: str) -> ExecResult:
         r = self._sb.commands.run(cmd)
-        return ExecResult(
-            returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr
-        )
+        return ExecResult(returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr)
 
     def close(self) -> None:
         """Terminate the microVM. Best-effort — never raises."""

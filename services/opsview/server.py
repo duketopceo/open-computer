@@ -43,12 +43,16 @@ from services.workspace import routes as workspace
 REPO = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
 STATIC_TYPES = {
-    "silver-lining.css": "text/css", "console.css": "text/css",
-    "console.js": "text/javascript", "theme-init.js": "text/javascript",
+    "silver-lining.css": "text/css",
+    "console.css": "text/css",
+    "console.js": "text/javascript",
+    "theme-init.js": "text/javascript",
     "work.js": "text/javascript",
 }
-CSP = ("default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
-       "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+CSP = (
+    "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
+    "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+)
 CSRF_SECRET = secrets.token_bytes(32)
 ACCESS_IDENTITY_URL = "https://duketopceo.cloudflareaccess.com/cdn-cgi/access/get-identity"
 
@@ -147,7 +151,8 @@ def read_ndjson(path: Path) -> list[dict]:
 def day_spend() -> float:
     today = time.strftime("%Y-%m-%d")
     return sum(
-        float(r.get("cost", 0) or 0) for r in read_ndjson(ledger_path())
+        float(r.get("cost", 0) or 0)
+        for r in read_ndjson(ledger_path())
         if time.strftime("%Y-%m-%d", time.localtime(r.get("ts", 0))) == today
     )
 
@@ -159,10 +164,24 @@ def _run_matrix() -> str:
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     try:
         p = subprocess.run(
-            ["uv", "run", "--with", "pytest", "--with", "fido2",
-             "--with-editable", str(Path.home() / "src/cubesandbox/sdk/python"),
-             "pytest", "tests/conformance", "-q"],
-            cwd=REPO, env=env, capture_output=True, text=True, timeout=180,
+            [
+                "uv",
+                "run",
+                "--with",
+                "pytest",
+                "--with",
+                "fido2",
+                "--with-editable",
+                str(Path.home() / "src/cubesandbox/sdk/python"),
+                "pytest",
+                "tests/conformance",
+                "-q",
+            ],
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
         )
         return p.stdout + p.stderr
     except Exception as e:
@@ -175,8 +194,14 @@ def _route(q: str) -> dict:
 
     r = default_router(str(ledger_path()), daily_cap=daily_cap())
     d = r.route(q)
-    return {"route": d.route, "tier": d.tier, "engine": d.engine, "confidence": d.confidence,
-            "cost": d.cost, "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms)}
+    return {
+        "route": d.route,
+        "tier": d.tier,
+        "engine": d.engine,
+        "confidence": d.confidence,
+        "cost": d.cost,
+        "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms),
+    }
 
 
 def _submit_goal(goal: str, who: str) -> str:
@@ -199,17 +224,30 @@ def _resume_goals() -> None:
 # side-effect free and that every POST is CSRF-protected.
 
 GET_ROUTES = [
-    (r"/", "g_overview"), (r"/work", "g_work"),
-    (r"/sandboxes", "g_sandboxes"), (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
-    (r"/goals", "g_goals"), (r"/goals/new", "g_goal_new"), (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
-    (r"/skills", "g_skills"), (r"/automations", "g_automations"),
-    (r"/runs", "g_runs"), (r"/runs/new", "g_run_new"), (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
-    (r"/approvals", "g_approvals"), (r"/router", "g_router"), (r"/audit", "g_audit"),
-    (r"/_frag/fleet", "g_frag_fleet"), (r"/_frag/status", "g_frag_status"), (r"/_frag/work", "g_frag_work"),
+    (r"/", "g_overview"),
+    (r"/work", "g_work"),
+    (r"/sandboxes", "g_sandboxes"),
+    (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
+    (r"/goals", "g_goals"),
+    (r"/goals/new", "g_goal_new"),
+    (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
+    (r"/skills", "g_skills"),
+    (r"/automations", "g_automations"),
+    (r"/runs", "g_runs"),
+    (r"/runs/new", "g_run_new"),
+    (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
+    (r"/approvals", "g_approvals"),
+    (r"/router", "g_router"),
+    (r"/audit", "g_audit"),
+    (r"/_frag/fleet", "g_frag_fleet"),
+    (r"/_frag/status", "g_frag_status"),
+    (r"/_frag/work", "g_frag_work"),
 ]
 REDIRECTS = {"/fleet": "/sandboxes", "/matrix": "/runs", "/gate": "/approvals", "/ops": "/"}
 POST_ROUTES = [
-    (r"/runs", "p_runs"), (r"/goals", "p_goals"), (r"/router/test", "p_router_test"),
+    (r"/runs", "p_runs"),
+    (r"/goals", "p_goals"),
+    (r"/router/test", "p_router_test"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_sendback"),
     (r"/automations", "p_automations"),
@@ -242,7 +280,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cf_cookie(self) -> str | None:
         raw = self.headers.get("Cookie", "")
-        return next((p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("CF_Authorization=")), None)
+        return next(
+            (p.strip().split("=", 1)[1] for p in raw.split(";") if p.strip().startswith("CF_Authorization=")), None
+        )
 
     _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
@@ -278,10 +318,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _set_session(self, cookie: str):
         secure = "" if self._rp() in self._LOOPBACK else "; Secure"
-        self.send_header("Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}")
+        self.send_header(
+            "Set-Cookie", f"oc_sess={cookie}; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}"
+        )
 
-    def _send(self, code, body: bytes, ctype="text/html; charset=utf-8", extra: dict | None = None, page=False,
-              csp: str = CSP):
+    def _send(
+        self, code, body: bytes, ctype="text/html; charset=utf-8", extra: dict | None = None, page=False, csp: str = CSP
+    ):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -318,8 +361,13 @@ class Handler(BaseHTTPRequestHandler):
     # --- page assembly -----------------------------------------------------
     def _page(self, page: str, body: str, code=200, conn="", sub=""):
         pending = len(ApprovalQueue(approvals_path()).pending())
-        self._send(code, views.shell(page, body, csrf=self._csrf(), pending=pending,
-                                     who=self._identity() or "", conn=conn, sub=sub).encode(), page=True)
+        self._send(
+            code,
+            views.shell(
+                page, body, csrf=self._csrf(), pending=pending, who=self._identity() or "", conn=conn, sub=sub
+            ).encode(),
+            page=True,
+        )
 
     # --- GET ---------------------------------------------------------------
     def do_GET(self):
@@ -333,11 +381,12 @@ class Handler(BaseHTTPRequestHandler):
         if workspace.serve_static(self, path):
             return
         if path.startswith("/static/"):
-            name = path[len("/static/"):]
+            name = path[len("/static/") :]
             if name not in STATIC_TYPES:
                 return self._send(404, b"not found", "text/plain")
-            return self._send(200, (STATIC / name).read_bytes(), STATIC_TYPES[name] + "; charset=utf-8",
-                              {"Cache-Control": "no-cache"})
+            return self._send(
+                200, (STATIC / name).read_bytes(), STATIC_TYPES[name] + "; charset=utf-8", {"Cache-Control": "no-cache"}
+            )
         if not self._identity():
             return self._redirect("/login")
         if path in REDIRECTS:
@@ -345,8 +394,9 @@ class Handler(BaseHTTPRequestHandler):
         if workspace.handle_get(self, path, qs):
             return
         if path in POST_ONLY_LEGACY:
-            return self._send(405, b"This action is POST-only and needs a confirm step.", "text/plain",
-                              {"Allow": "POST"})
+            return self._send(
+                405, b"This action is POST-only and needs a confirm step.", "text/plain", {"Allow": "POST"}
+            )
         name, args = match(GET_ROUTES, path)
         if name is None:
             if match(POST_ROUTES, path)[0]:
@@ -366,8 +416,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def g_sandboxes(self, qs):
         inline = (qs.get("inline") or [""])[0] == "1"
-        fleet = fleet_state() if inline else {"configured": bool(os.environ.get("CUBE_API_URL")), "up": False,
-                                              "sandboxes": [], "api_host": views.host_of(os.environ.get("CUBE_API_URL", ""))}
+        fleet = (
+            fleet_state()
+            if inline
+            else {
+                "configured": bool(os.environ.get("CUBE_API_URL")),
+                "up": False,
+                "sandboxes": [],
+                "api_host": views.host_of(os.environ.get("CUBE_API_URL", "")),
+            }
+        )
         self._page("sandboxes", views.page_sandboxes(fleet, inline), conn=views.conn_pill(fleet) if inline else "")
 
     def g_sandbox(self, qs, id):
@@ -376,8 +434,11 @@ class Handler(BaseHTTPRequestHandler):
         self._page("sandboxes", views.page_sandbox_detail(sid, row), 200 if row else 404, sub=views.e(sid))
 
     def g_goals(self, qs):
-        self._page("goals", views.page_goals(goalruns.list_runs(), time.time()),
-                   sub='<a class="btn primary" href="/goals/new" data-action="goal.new">New goal</a>')
+        self._page(
+            "goals",
+            views.page_goals(goalruns.list_runs(), time.time()),
+            sub='<a class="btn primary" href="/goals/new" data-action="goal.new">New goal</a>',
+        )
 
     def g_goal_new(self, qs):
         self._page("goals", views.page_goal_new(self._csrf()), sub="Decomposed into subtasks before it runs")
@@ -389,8 +450,11 @@ class Handler(BaseHTTPRequestHandler):
         self._page("goals", views.page_goal_detail(run, time.time()), sub=id)
 
     def g_runs(self, qs):
-        self._page("runs", views.page_runs(runstore.list_runs(), time.time()),
-                   sub='<a class="btn primary" href="/runs/new" data-action="run.new">New matrix run</a>')
+        self._page(
+            "runs",
+            views.page_runs(runstore.list_runs(), time.time()),
+            sub='<a class="btn primary" href="/runs/new" data-action="run.new">New matrix run</a>',
+        )
 
     def g_run_new(self, qs):
         self._page("runs", views.page_run_confirm(self._csrf(), fleet_state()), sub="Confirm before anything boots")
@@ -406,28 +470,42 @@ class Handler(BaseHTTPRequestHandler):
         self._page("approvals", views.page_approvals(items, time.time()), sub="Oldest first")
 
     def g_skills(self, qs):
-        self._page("skills", views.page_skills(capabilities.collect()),
-                   sub="Capability surface — live health, never aspiration")
+        self._page(
+            "skills",
+            views.page_skills(capabilities.collect()),
+            sub="Capability surface — live health, never aspiration",
+        )
 
     def g_automations(self, qs):
-        self._page("automations",
-                   views.page_automations(self._csrf(), automations.list_automations(), time.time()),
-                   sub="Goals on a cadence — durable Temporal schedules")
+        self._page(
+            "automations",
+            views.page_automations(self._csrf(), automations.list_automations(), time.time()),
+            sub="Goals on a cadence — durable Temporal schedules",
+        )
 
     def g_router(self, qs):
         self._page("router", self._router_body(), sub="Route tester and decision ledger")
 
     def _router_body(self, result: str = "") -> str:
-        return views.page_router(self._csrf(), read_ndjson(ledger_path())[-14:], day_spend(), daily_cap(),
-                                 paid_router(), router_base(), time.time(), result)
+        return views.page_router(
+            self._csrf(),
+            read_ndjson(ledger_path())[-14:],
+            day_spend(),
+            daily_cap(),
+            paid_router(),
+            router_base(),
+            time.time(),
+            result,
+        )
 
     def g_audit(self, qs):
         f = (qs.get("f") or ["all"])[0]
         f = f if f in dict(views.AUDIT_FILTERS) else "all"
         q = (qs.get("q") or [""])[0][:200]
         rows = [r for r in read_ndjson(audit_path()) if views.audit_match(r, f, q)]
-        self._page("audit", views.page_audit(list(reversed(rows))[:200], len(rows), f, q, time.time()),
-                   sub="Append-only")
+        self._page(
+            "audit", views.page_audit(list(reversed(rows))[:200], len(rows), f, q, time.time()), sub="Append-only"
+        )
 
     def g_frag_fleet(self, qs):
         self._send(200, views.fleet_rows(fleet_state()).encode(), page=True)
@@ -489,8 +567,9 @@ class Handler(BaseHTTPRequestHandler):
         if body.get("confirm") != "1":
             if self._wants_json():
                 return self._json(200, {"needs_confirm": True, "cap": daily_cap()})
-            return self._page("goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()),
-                              sub="Confirm before it runs")
+            return self._page(
+                "goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()), sub="Confirm before it runs"
+            )
         try:
             rid = _submit_goal(goal, who)
         except Exception as e:
@@ -506,7 +585,9 @@ class Handler(BaseHTTPRequestHandler):
         if not q:
             return self._page("router", self._router_body(), 400)
         if paid_router() and body.get("confirm") != "1":
-            return self._page("router", views.router_confirm(self._csrf(), q, router_base()), sub="Confirm before it leaves")
+            return self._page(
+                "router", views.router_confirm(self._csrf(), q, router_base()), sub="Confirm before it leaves"
+            )
         try:
             result = views.route_result(_route(q))
         except Exception as e:  # BudgetHalt, engine failure
@@ -517,8 +598,12 @@ class Handler(BaseHTTPRequestHandler):
         gate = Gate(audit_path())
         try:
             res = ApprovalQueue(approvals_path(), gate).decide(
-                id, approve=approve, by=who, note=str(body.get("note", "")),
-                expect_hash=str(body["hash"]) if body.get("hash") else None)
+                id,
+                approve=approve,
+                by=who,
+                note=str(body.get("note", "")),
+                expect_hash=str(body["hash"]) if body.get("hash") else None,
+            )
         except QueueError as e:
             if self._wants_json():
                 return self._json(e.status, {"error": str(e)})
@@ -534,8 +619,7 @@ class Handler(BaseHTTPRequestHandler):
         self._decide(who, body, id, False)
 
     def _auto_body(self, error: str = "") -> str:
-        return views.page_automations(self._csrf(), automations.list_automations(),
-                                      time.time(), error)
+        return views.page_automations(self._csrf(), automations.list_automations(), time.time(), error)
 
     def p_automations(self, who, body):
         goal = str(body.get("goal", "")).strip()
@@ -544,8 +628,9 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             every = 0
         if not goal or len(goal) > 4000 or not 5 <= every <= 10080:
-            return self._page("automations",
-                              self._auto_body("A goal and a cadence of 5–10080 minutes are required."), 400)
+            return self._page(
+                "automations", self._auto_body("A goal and a cadence of 5–10080 minutes are required."), 400
+            )
         try:
             automations.create(goal, every)
         except Exception as e:
@@ -564,8 +649,9 @@ class Handler(BaseHTTPRequestHandler):
         if body.get("confirm") == "1":
             return True
         desc = str(body.get("desc", ""))[:200]
-        self._page("automations", views.page_automation_confirm(self._csrf(), id, op, desc),
-                   sub="Confirm before it acts")
+        self._page(
+            "automations", views.page_automation_confirm(self._csrf(), id, op, desc), sub="Confirm before it acts"
+        )
         return False
 
     def p_auto_trigger(self, who, body, id):

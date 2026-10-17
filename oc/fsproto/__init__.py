@@ -288,11 +288,7 @@ class FSAdapter:
         status = self._task_dir(tid) / "status"
         if status.exists() and status.read_text().strip() == "failed":
             return False  # failed is terminal for the run — not a requeue
-        return (
-            self._task_dir(tid).exists()
-            and not self._lease_valid(tid)
-            and not self._tombstoned(tid)
-        )
+        return self._task_dir(tid).exists() and not self._lease_valid(tid) and not self._tombstoned(tid)
 
     def done(self, tid: str) -> bool:
         """Tombstone present → result is final and collectable. §5."""

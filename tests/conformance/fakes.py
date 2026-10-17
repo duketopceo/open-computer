@@ -405,8 +405,13 @@ class GoodGate:
         if sender is None:
             return self._block(payload, "no_egress_configured")
         self._spent.add(approval.id)
-        self.audit.append({"event": "cloud_call_allowed", "approval_id": approval.id,
-                           "pii_categories": self.scan(str(payload)).categories})
+        self.audit.append(
+            {
+                "event": "cloud_call_allowed",
+                "approval_id": approval.id,
+                "pii_categories": self.scan(str(payload)).categories,
+            }
+        )
         return CallResult(True, sender(payload))
 
 

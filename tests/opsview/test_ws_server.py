@@ -152,7 +152,9 @@ def test_sse_streams_every_event_in_order_then_ends(wsx):
     body = evs[:-1]
     assert [int(i) for i, _, _ in body] == list(range(1, len(body) + 1))
     assert all(name == "message" and i == str(d["seq"]) for i, name, d in body), "data events are unnamed"
-    assert any(d["type"] == "error" for _, _, d in sse_all(wsx, "g_coding01")), "an error-typed event must not be an SSE event named error"
+    assert any(d["type"] == "error" for _, _, d in sse_all(wsx, "g_coding01")), (
+        "an error-typed event must not be an SSE event named error"
+    )
     assert len(body) == len([ln for ln in (FIX / "g_research01.ndjson").read_text().splitlines()])
 
 
@@ -184,8 +186,7 @@ def test_heartbeat_while_a_run_waits_on_a_human(wsx):
 def test_unauthenticated_stream_is_refused(wsx):
     # loopback is a trusted surface (auto-mints a local session) — an
     # unauthenticated request must come from a non-loopback host
-    s, h, _ = wsx.get("/goals/g_research01/events", cookie=False,
-                      headers={"Host": "oc.shippedit.dev"})
+    s, h, _ = wsx.get("/goals/g_research01/events", cookie=False, headers={"Host": "oc.shippedit.dev"})
     assert s == 302 and h["Location"] == "/login"
 
 
@@ -199,17 +200,31 @@ def test_unknown_goal_and_bad_ids_are_404(wsx):
 
 
 def snapshot(base: Path):
-    return {str(p.relative_to(base)): (p.stat().st_size, p.stat().st_mtime_ns) for p in sorted(base.rglob("*")) if p.is_file()}
+    return {
+        str(p.relative_to(base)): (p.stat().st_size, p.stat().st_mtime_ns)
+        for p in sorted(base.rglob("*"))
+        if p.is_file()
+    }
 
 
 def test_every_workspace_get_is_side_effect_free(wsx):
     start(wsx, "g_coding01")
     wait_for(lambda: routes.ws().sessions["g_coding01"].waiting_for(), "hold")
     before, n_events = snapshot(wsx.dir), routes.ws().log.last_seq("g_coding01")
-    paths = ["/workspace", "/workspace/g_coding01", "/goals.json", "/goals/g_coding01/state", "/goals/g_coding01/approvals",
-             "/goals/g_coding01/artifacts/art_patch", "/goals/g_coding01/artifacts/art_zip/listing",
-             "/goals/g_coding01/artifacts/art_patch?download=1", "/workspace/g_cap01", "/static/ws/app.js",
-             "/workspace/g_coding01?approve=1&decide=once", "/goals/g_coding01/events?stop=1&resume=1"]
+    paths = [
+        "/workspace",
+        "/workspace/g_coding01",
+        "/goals.json",
+        "/goals/g_coding01/state",
+        "/goals/g_coding01/approvals",
+        "/goals/g_coding01/artifacts/art_patch",
+        "/goals/g_coding01/artifacts/art_zip/listing",
+        "/goals/g_coding01/artifacts/art_patch?download=1",
+        "/workspace/g_cap01",
+        "/static/ws/app.js",
+        "/workspace/g_coding01?approve=1&decide=once",
+        "/goals/g_coding01/events?stop=1&resume=1",
+    ]
     for p in paths:
         wsx.sse(p, timeout=0.5) if p.endswith("/events") or "/events?" in p else wsx.get(p)
     assert snapshot(wsx.dir) == before
@@ -221,17 +236,37 @@ def test_get_handlers_never_name_a_mutating_call():
     import ast
     import inspect
     import textwrap
-    forbidden = {"decide", "submit", "append", "emit", "start_replay", "release", "approval_resolve", "approval_request", "run"}
+
+    forbidden = {
+        "decide",
+        "submit",
+        "append",
+        "emit",
+        "start_replay",
+        "release",
+        "approval_resolve",
+        "approval_request",
+        "run",
+    }
     for _, name in routes.GET_ROUTES:
         src = textwrap.dedent(inspect.getsource(getattr(routes, name)))
-        names = {n.id for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Name)} | {n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)}
+        names = {n.id for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Name)} | {
+            n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)
+        }
         assert not names & forbidden, (name, names & forbidden)
 
 
 def test_every_workspace_post_needs_csrf_session_and_same_origin(wsx):
-    posts = ["/workspace/new", "/goals/g_coding01/messages", "/goals/g_coding01/stop", "/goals/g_cap01/resume",
-             "/goals/g_coding01/approvals/ap_clone01/decide", "/goals/g_research01/artifacts/art_pdf/export",
-             "/goals/g_coding01/steps/step_fix/stop", "/goals/g_coding01/replay"]
+    posts = [
+        "/workspace/new",
+        "/goals/g_coding01/messages",
+        "/goals/g_coding01/stop",
+        "/goals/g_cap01/resume",
+        "/goals/g_coding01/approvals/ap_clone01/decide",
+        "/goals/g_research01/artifacts/art_pdf/export",
+        "/goals/g_coding01/steps/step_fix/stop",
+        "/goals/g_coding01/replay",
+    ]
     for p in posts:
         assert wsx.post(p, {"choice": "once"}, csrf=False)[0] == 403, p
         assert wsx.post(p, {}, headers={"X-CSRF-Token": "0" * 64})[0] == 403, p
@@ -240,7 +275,9 @@ def test_every_workspace_post_needs_csrf_session_and_same_origin(wsx):
         s, _, _ = wsx.request("POST", p, body="{}", headers={"Content-Type": "application/json"}, cookie=False)
         assert s == 403, p
         # a truly unauthenticated request (non-loopback host) is refused outright
-        s, _, _ = wsx.request("POST", p, body="{}", headers={"Content-Type": "application/json", "Host": "oc.shippedit.dev"}, cookie=False)
+        s, _, _ = wsx.request(
+            "POST", p, body="{}", headers={"Content-Type": "application/json", "Host": "oc.shippedit.dev"}, cookie=False
+        )
         assert s == 401, p
     assert routes.ws().log.goals() == []
 
@@ -306,7 +343,9 @@ def test_a_stale_or_wrong_hash_is_refused_and_nothing_is_decided(wsx):
         s, b = wsx.post("/goals/g_coding01/approvals/ap_clone01/decide", {"choice": "once", "hash": bad})
         assert s == 409 and "changed" in b["error"]
     assert entities(routes.ws().log.read("g_coding01"), "approval")["ap_clone01"]["status"] == "pending"
-    assert not [e for e in routes.ws().log.read("g_coding01") if e["type"] == "approval" and e["data"]["status"] != "pending"]
+    assert not [
+        e for e in routes.ws().log.read("g_coding01") if e["type"] == "approval" and e["data"]["status"] != "pending"
+    ]
 
 
 def test_high_risk_needs_a_second_press_enforced_by_the_server(wsx):
@@ -331,7 +370,9 @@ def test_denying_a_high_risk_push_needs_no_second_press_and_nothing_leaves(wsx):
     assert s == 200 and b["status"] == "denied"
     wait_for(lambda: routes.ws().log.finished("g_coding01"), "deny path")
     evs = routes.ws().log.read("g_coding01")
-    assert not [e for e in evs if e["type"] == "tool_call" and e["data"]["name"] == "git.push"], "a denied push must never run"
+    assert not [e for e in evs if e["type"] == "tool_call" and e["data"]["name"] == "git.push"], (
+        "a denied push must never run"
+    )
     assert last_status(wsx, "g_coding01")["data"]["summary"].startswith("Fix verified in the sandbox. Push was denied")
     ap = entities(evs, "approval")["ap_push01"]
     assert (ap["status"], ap["decision"], ap["note"]) == ("denied", "deny", "Not yet")
@@ -358,10 +399,12 @@ def test_decisions_are_audited_through_the_gate(wsx):
     # worker's call then writes cloud_call_allowed (the send itself is the
     # caller's, so the replay fixture injects a spy sender)
     from services.gate.gate import Approval
+
     q = routes.ws().queue("g_coding01", write=True)
     item = q.get("ap_clone01")
-    res = q.gate.request_cloud_call(item["payload"], Approval(id="ap_clone01", payload_hash=h),
-                                    sender=lambda p: len(str(p)))
+    res = q.gate.request_cloud_call(
+        item["payload"], Approval(id="ap_clone01", payload_hash=h), sender=lambda p: len(str(p))
+    )
     assert res.allowed
     rows = [json.loads(ln) for ln in audit.read_text().splitlines()]
     assert rows[-1]["event"] == "cloud_call_allowed" and rows[-1]["approval_id"] == "ap_clone01"
@@ -470,7 +513,12 @@ def test_export_of_a_gated_artifact_needs_an_approved_export_request(wsx):
     ap = entities(routes.ws().log.read("g_research01"), "approval")["ap_exp_art_pdf"]
     assert ap["payload"]["name"] == "report.pdf" and re.fullmatch(r"[0-9a-f]{64}", ap["payload"]["sha256"])
     assert wsx.get(path + "?download=1")[0] == 403
-    assert wsx.post("/goals/g_research01/approvals/ap_exp_art_pdf/decide", {"choice": "once", "hash": ap["payload_hash"]})[0] == 200
+    assert (
+        wsx.post("/goals/g_research01/approvals/ap_exp_art_pdf/decide", {"choice": "once", "hash": ap["payload_hash"]})[
+            0
+        ]
+        == 200
+    )
     s, h, _ = wsx.get(path + "?download=1")
     assert s == 200 and h["Content-Disposition"].startswith("attachment")
     assert wsx.post("/goals/g_research01/artifacts/art_csv/export")[0] == 409, "no approval needed for this one"
@@ -480,7 +528,9 @@ def test_the_stream_stays_open_while_an_export_approval_is_pending_after_the_run
     played(wsx)
     assert wsx.post("/goals/g_research01/artifacts/art_pdf/export")[0] == 200
     evs, _ = wsx.sse("/goals/g_research01/events", headers={"Last-Event-ID": "59"}, timeout=1.2)
-    assert [e["type"] for _, _, e in evs] == ["approval"] and not any(n == "end" for _, n, _ in evs), "an unanswered approval keeps the stream open"
+    assert [e["type"] for _, _, e in evs] == ["approval"] and not any(n == "end" for _, n, _ in evs), (
+        "an unanswered approval keeps the stream open"
+    )
     ap = entities(routes.ws().log.read("g_research01"), "approval")["ap_exp_art_pdf"]
     wsx.post("/goals/g_research01/approvals/ap_exp_art_pdf/decide", {"choice": "deny", "hash": ap["payload_hash"]})
     evs, _ = wsx.sse("/goals/g_research01/events", headers={"Last-Event-ID": "59"})
@@ -492,7 +542,11 @@ def test_archive_listing_and_bad_refs(wsx):
     j = wsx.json("/goals/g_coding01/artifacts/art_zip/listing")
     assert j["total"] == 4 and j["entries"][0]["path"].startswith("api-gateway/")
     assert wsx.get("/goals/g_coding01/artifacts/art_patch/listing")[0] == 404
-    for bad in ("/goals/g_coding01/artifacts/..%2f..%2fserver", "/goals/g_coding01/artifacts/nope", "/goals/g_coding01/artifacts/art_zip%00"):
+    for bad in (
+        "/goals/g_coding01/artifacts/..%2f..%2fserver",
+        "/goals/g_coding01/artifacts/nope",
+        "/goals/g_coding01/artifacts/art_zip%00",
+    ):
         assert wsx.get(bad)[0] in (404, 302), bad
 
 

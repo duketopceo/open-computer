@@ -14,9 +14,27 @@ from functools import lru_cache
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema") / "event.schema.json"
-_KNOWN = {"$schema", "$id", "title", "description", "$ref", "$defs", "type", "enum", "const", "required",
-          "properties", "additionalProperties", "items", "minItems", "maxItems", "minimum", "minLength",
-          "pattern", "oneOf"}
+_KNOWN = {
+    "$schema",
+    "$id",
+    "title",
+    "description",
+    "$ref",
+    "$defs",
+    "type",
+    "enum",
+    "const",
+    "required",
+    "properties",
+    "additionalProperties",
+    "items",
+    "minItems",
+    "maxItems",
+    "minimum",
+    "minLength",
+    "pattern",
+    "oneOf",
+}
 _TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "null": type(None)}
 
 
@@ -93,8 +111,15 @@ def _check(value, sch: dict, path: str, errs: list[str]) -> None:
                 passing.append(i)
         if len(passing) != 1:
             # Report the variant selected by `type`, which is the useful message.
-            chosen = next((a for a in sch["oneOf"]
-                           if isinstance(value, dict) and a.get("properties", {}).get("type", {}).get("const") == value.get("type")), None)
+            chosen = next(
+                (
+                    a
+                    for a in sch["oneOf"]
+                    if isinstance(value, dict)
+                    and a.get("properties", {}).get("type", {}).get("const") == value.get("type")
+                ),
+                None,
+            )
             sub = []
             if chosen is not None:
                 _check(value, chosen, path, sub)

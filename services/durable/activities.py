@@ -47,9 +47,7 @@ def submit_goal(goal: str, by: str) -> dict:
     records as a failed action in the schedule's history, never silent.
     """
     rid = "goal_" + uuid.uuid4().hex[:8]
-    goals = Path(
-        os.environ.get("OC_GOALS_DIR", str(Path.home() / ".local/share/oc/goals"))
-    )
+    goals = Path(os.environ.get("OC_GOALS_DIR", str(Path.home() / ".local/share/oc/goals")))
     run_dir = goals / rid
     run_dir.mkdir(parents=True, exist_ok=True)
     orch = Orchestrator(run_dir, place_fn=place_live)

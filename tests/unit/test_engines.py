@@ -84,7 +84,9 @@ def test_work_fn_routes_sandbox_placement(scripted, monkeypatch):
     monkeypatch.setattr(engines, "_plane", lambda: plane)
     run = engines.work_fn(api_key="k")
     assert run({"prompt": "x", "placement": "cloud-sandbox"}) == "vm-result"
-    assert run({"prompt": "x", "placement": "cloud-OpenRouter"}) == "```bash\necho hello-from-vm\n```"  # model output verbatim
+    assert (
+        run({"prompt": "x", "placement": "cloud-OpenRouter"}) == "```bash\necho hello-from-vm\n```"
+    )  # model output verbatim
 
 
 def test_local_work_reports_every_attempt(monkeypatch):

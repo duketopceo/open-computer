@@ -22,8 +22,12 @@ GOLDEN = Path(__file__).parent / "golden_tools_list.json"
 
 @pytest.fixture
 def st(tmp_path, monkeypatch):
-    for k, f in (("OC_AUDIT", "audit.ndjson"), ("OC_APPROVALS", "approvals.ndjson"),
-                 ("OC_COST_LEDGER", "cost.ndjson"), ("OC_ORCH_AUDIT", "orch.ndjson")):
+    for k, f in (
+        ("OC_AUDIT", "audit.ndjson"),
+        ("OC_APPROVALS", "approvals.ndjson"),
+        ("OC_COST_LEDGER", "cost.ndjson"),
+        ("OC_ORCH_AUDIT", "orch.ndjson"),
+    ):
         monkeypatch.setenv(k, str(tmp_path / f))
     return State()
 
@@ -64,13 +68,20 @@ def test_server_source_never_touches_decision_or_send_paths():
     tree = ast.parse((ROOT / "services/mcp/server.py").read_text())
     banned = {"grant", "deny", "decide", "request_cloud_call", "send"}
     used = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)} | {
-        n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        n.id for n in ast.walk(tree) if isinstance(n, ast.Name)
+    }
     assert not (banned & used), banned & used
 
 
 def test_request_approval_queues_but_cannot_decide_or_send(st):
-    r = call(st, "request_approval", what="Summarise notes", payload={"model": "x-ai/grok-4.7", "egress": "openrouter.ai",
-             "prompt": "mail jane@example.com"}, who="agent-1", est_cost=0.002)
+    r = call(
+        st,
+        "request_approval",
+        what="Summarise notes",
+        payload={"model": "x-ai/grok-4.7", "egress": "openrouter.ai", "prompt": "mail jane@example.com"},
+        who="agent-1",
+        est_cost=0.002,
+    )
     out = payload(r)
     assert out["status"] == "pending" and out["pii"] == ["email"] and len(out["payload_hash"]) == 64
     assert payload(call(st, "approval_status", id=out["id"]))["status"] == "pending"
@@ -95,10 +106,17 @@ def test_queue_without_a_gate_cannot_decide(st):
 
 
 def test_runs_cost_audit_and_place_tools(st, tmp_path):
-    Path(st.orch).write_text("".join(json.dumps(r) + "\n" for r in [
-        {"event": "run_submit", "run": "r1", "goal": "g", "subtasks": 2},
-        {"event": "dispatch", "run": "r1", "task": "t1", "subtask": "a"}]))
+    Path(st.orch).write_text(
+        "".join(
+            json.dumps(r) + "\n"
+            for r in [
+                {"event": "run_submit", "run": "r1", "goal": "g", "subtasks": 2},
+                {"event": "dispatch", "run": "r1", "task": "t1", "subtask": "a"},
+            ]
+        )
+    )
     from services.cost import CostLedger, Usage
+
     led = CostLedger(st.cost)
     led.set_cap("r1", 0.01)
     led.record("r1", "a", Usage("m", 1, 1, 0.002))
@@ -120,13 +138,28 @@ def test_bad_calls_are_tool_errors_not_crashes(st):
 
 
 def test_stdio_roundtrip_as_a_real_subprocess(tmp_path):
-    env = {**os.environ, "PYTHONPATH": str(ROOT), "OC_AUDIT": str(tmp_path / "a"), "OC_APPROVALS": str(tmp_path / "p"),
-           "OC_COST_LEDGER": str(tmp_path / "c"), "OC_ORCH_AUDIT": str(tmp_path / "o")}
-    msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}]
-    out = subprocess.run([sys.executable, "-m", "services.mcp.server"], input="\n".join(map(json.dumps, msgs)) + "\n",
-                         capture_output=True, text=True, env=env, cwd=ROOT, timeout=20)
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(ROOT),
+        "OC_AUDIT": str(tmp_path / "a"),
+        "OC_APPROVALS": str(tmp_path / "p"),
+        "OC_COST_LEDGER": str(tmp_path / "c"),
+        "OC_ORCH_AUDIT": str(tmp_path / "o"),
+    }
+    msgs = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    out = subprocess.run(
+        [sys.executable, "-m", "services.mcp.server"],
+        input="\n".join(map(json.dumps, msgs)) + "\n",
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=ROOT,
+        timeout=20,
+    )
     lines = [json.loads(x) for x in out.stdout.splitlines()]
     assert out.returncode == 0 and [x["id"] for x in lines] == [1, 2]
     assert {t["name"] for t in lines[1]["result"]["tools"]} == set(TOOLS)

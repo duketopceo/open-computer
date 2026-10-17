@@ -1,4 +1,5 @@
 """Spend rule: no premium model is a default (ROADMAP.md, Spend rule)."""
+
 from __future__ import annotations
 
 import re

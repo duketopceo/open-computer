@@ -28,9 +28,7 @@ class AuditLog:
             f.write(json.dumps(rec) + "\n")
 
     def rows(self) -> list[dict]:
-        return [
-            json.loads(ln) for ln in self.path.read_text().splitlines() if ln.strip()
-        ]
+        return [json.loads(ln) for ln in self.path.read_text().splitlines() if ln.strip()]
 
     def delete(self, i: int) -> None:
         raise ReadOnly("audit log is append-only")
