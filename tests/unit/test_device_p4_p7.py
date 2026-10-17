@@ -34,6 +34,7 @@ from services.device import (
     kill_device,
     mint_secret,
     mint_totp_secret,
+    open_envelope,
     pair_device,
     refresh_device_token,
     seal,
@@ -284,12 +285,20 @@ def test_p5_parked_mailbox_drains_on_heartbeat_and_records_origin_and_opsview(tm
     notes_dir.mkdir()
     grants.add("arch-workstation", notes_dir, modes=("read",), ttl_s=600.0)
 
+    # The agent minted its envelope secret — the drain seals the parked step for it
+    secret = mint_secret()
+    (tmp_path / "devices" / "arch-workstation.secret").write_text(secret)
+
     # Device wakes up and heartbeats -> auto-drains device/parked to device/arch-workstation!
     clk.t += 5.0
     reg.heartbeat("arch-workstation", awake=True)
 
     assert orch.fs.inbox_ids("device/parked") == []
     assert orch.fs.inbox_ids("device/arch-workstation") == [tid]
+
+    body = json.loads(orch.fs.task_body(tid))
+    step = open_envelope(body["envelope"], secret, now=clk())
+    assert step["device_id"] == "arch-workstation"
 
     drained_rows = [r for r in orch.audit.rows() if r.get("event") == "parked_drained"]
     assert len(drained_rows) == 1
@@ -511,3 +520,66 @@ def test_p7_device_intake_direct_submit_and_offline_spool_flush(tmp_path: Path):
 
     assert restarted_intake.pending() == []
     assert json.loads(spool_file.read_text(encoding="utf-8")) == []
+
+
+def test_p5_drain_seals_the_step_for_the_device_that_picks_it_up(tmp_path: Path):
+    """A parked body is unsigned; the drain seals it for the device that takes the work."""
+    from services.device.protocol import open_envelope
+    from services.orchestrator.dispatch import dispatch, PARKED
+    from services.placement import place
+
+    clk = Clock()
+    fs = fs_adapter(tmp_path / "run")
+    reg = DeviceRegistry(tmp_path / "devices", clock=clk)
+    audit = AuditLog(tmp_path / "audit.ndjson")
+
+    class _D:
+        route = "local"
+        engine = "echo"
+        tier = "cheap"
+        cost = 0.0
+
+    class _R:
+        budget = None
+
+        def route(self, _p):
+            return _D()
+
+    class _S:
+        categories: tuple = ()
+
+    class _G:
+        def scan(self, _p):
+            return _S()
+
+    sub = {"id": "s1", "title": "t", "prompt": "summarize notes", "device_root": "/home/user/Notes"}
+    rec = dispatch(fs, _R(), _G(), place, audit, "run1", sub, devices=reg)
+    assert rec["mailbox"] == PARKED
+
+    # device comes online with a minted secret
+    secret = mint_secret()
+    (tmp_path / "devices" / "arch-ws.secret").write_text(secret)
+    reg.register(registration_payload("arch-ws", ["/home/user/Notes"], capabilities=["fs"]))
+
+    drained = drain_parked(fs, reg, audit)
+    assert [r["task"] for r in drained] == [rec["task"]]
+    assert fs.inbox_ids("device/arch-ws") == [rec["task"]]
+
+    body = json.loads(fs.task_body(rec["task"]))
+    step = open_envelope(body["envelope"], secret)
+    assert step["device_id"] == "arch-ws" and step["device_root"] == "/home/user/Notes"
+    assert execute(body["envelope"], secret)["ok"]
+
+
+def test_p5_drain_keeps_task_parked_when_device_root_is_uncovered(tmp_path: Path):
+    clk = Clock()
+    fs = fs_adapter(tmp_path / "run")
+    reg = DeviceRegistry(tmp_path / "devices", clock=clk)
+    tid = fs.send(
+        "device/parked",
+        {"run": "r", "subtask": "s", "prompt": "p", "device_root": "/home/user/Notes", "step": {"kind": "echo", "text": "p"}},
+    )
+    reg.register(registration_payload("other-machine", ["/srv/elsewhere"], capabilities=["fs"]))
+    (tmp_path / "devices" / "other-machine.secret").write_text(mint_secret())
+    assert drain_parked(fs, reg, None) == []
+    assert fs.inbox_ids("device/parked") == [tid]

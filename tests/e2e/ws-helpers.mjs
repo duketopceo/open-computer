@@ -16,7 +16,9 @@ export const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa",
 const servers = [];
 async function serve(port) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-ws-e2e-"));
-  const p = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", String(port), dir, "--replay"], { cwd: REPO });
+  const errlog = fs.openSync(path.join(dir, "fixture-stderr.log"), "w");
+  const p = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", String(port), dir, "--replay"], { cwd: REPO, stdio: ["ignore", "pipe", errlog] });
+  console.log(`fixture :${port} dir ${dir} (stderr: ${dir}/fixture-stderr.log)`);
   servers.push(p);
   await new Promise((res, rej) => {
     p.stdout.on("data", (d) => String(d).includes("ready") && res());

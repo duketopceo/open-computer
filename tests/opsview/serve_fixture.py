@@ -24,6 +24,12 @@ class FakeAuth:
     def check_cookie(self, rp, raw):
         return "luke@test" if raw == "test" else None
 
+    def local_session(self, rp):
+        return "test"
+
+    def access_session(self, rp, email):
+        return "test"
+
 
 def install_burst(server):
     from urllib.parse import parse_qs, urlparse
@@ -93,8 +99,9 @@ def main():
         install_burst(server)
     # The matrix would boot microVMs; fixtures never do.
     server._run_matrix = lambda: "R1: PASS (3 checks)\n1 passed in 0.01s\n"
+    srv = server.make_server(port)  # binds here — a busy port exits before "ready" so we never test a ghost
     print(f"ready http://127.0.0.1:{port}", flush=True)
-    server.make_server(port).serve_forever()
+    srv.serve_forever()
 
 
 if __name__ == "__main__":

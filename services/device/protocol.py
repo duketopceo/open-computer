@@ -55,6 +55,8 @@ def open_envelope(
         step, ts, nonce, sig = env["step"], float(env["ts"]), str(env["nonce"]), str(env["sig"])
     except (KeyError, TypeError, ValueError) as e:
         raise EnvelopeError(f"malformed envelope: {e}") from e
+    if not isinstance(step, dict):
+        raise EnvelopeError("malformed envelope: step is not an object")
     if not hmac.compare_digest(sig, _sig(secret, step, ts, nonce)):
         raise EnvelopeError("bad signature")
     t = time.time() if now is None else now

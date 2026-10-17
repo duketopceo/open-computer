@@ -82,6 +82,8 @@ def test_envelope_rejects_tamper_replay_and_skew():
         open_envelope(env, secret, now=T0 + 1_000)
     with pytest.raises(EnvelopeError, match="malformed"):
         open_envelope({"step": step}, secret, now=T0)
+    with pytest.raises(EnvelopeError, match="not an object"):
+        open_envelope({**env, "step": "just-a-string", "sig": "x"}, secret, now=T0)
 
 
 def test_agent_executes_echo_only_and_refuses_bad_envelopes():
@@ -162,15 +164,40 @@ def test_dispatch_routes_device_steps_to_the_device_mailbox_or_parks(tmp_path):
     assert fs.inbox_ids(PARKED) == [parked["task"]]
 
     reg.register(registration_payload("mac-mini", ["/Users/k/Notes"]))
+    # A registered device with no minted secret can't be sent signed work — it parks.
+    nosecret = dispatch(fs, _Router(), _Gate(), place, audit, "run1", {**sub, "id": "s1b"}, devices=reg)
+    assert nosecret["mailbox"] == PARKED
+    assert set(fs.inbox_ids(PARKED)) == {parked["task"], nosecret["task"]}
+
+    secret = mint_secret()
+    (tmp_path / "devices" / "mac-mini.secret").write_text(secret)
     sent = dispatch(fs, _Router(), _Gate(), place, audit, "run1", {**sub, "id": "s2"}, devices=reg)
     assert sent["mailbox"] == device_mailbox("mac-mini")
     assert fs.inbox_ids("device/mac-mini") == [sent["task"]]
     body = json.loads(fs.task_body(sent["task"]))
     assert body["device_root"] == "/Users/k/Notes" and body["placement"] == "device"
+    step = open_envelope(body["envelope"], secret)
+    assert step["kind"] == "echo" and step["text"] == "summarise my notes" and step["device_id"] == "mac-mini"
+    assert execute(body["envelope"], secret)["ok"]
+
+    # A step whose root no eligible device covers parks instead of going to the wrong machine.
+    other = dispatch(
+        fs, _Router(), _Gate(), place, audit, "run1",
+        {"id": "s2b", "title": "t", "prompt": "p", "device_root": "/Users/k/Other"}, devices=reg,
+    )
+    assert other["mailbox"] == PARKED
 
     plain = dispatch(
         fs, _Router(), _Gate(), place, audit, "run1", {"id": "s3", "title": "t", "prompt": "p"}, devices=reg
     )
     assert plain["mailbox"] == "worker" and plain["placement"] != "device"
     assert fs.inbox_ids("worker") == [plain["task"]]
-    assert len(audit) == 3
+    assert len(audit) == 5
+
+
+def test_registry_sees_registrations_from_other_instances(tmp_path):
+    clk = Clock()
+    orch_side = DeviceRegistry(tmp_path / "devices", clock=clk)
+    assert orch_side.pick() is None  # stale cache must not hide the agent's registration
+    DeviceRegistry(tmp_path / "devices", clock=clk).register(registration_payload("phone", []))
+    assert orch_side.pick().device_id == "phone"

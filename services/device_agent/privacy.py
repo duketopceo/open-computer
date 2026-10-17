@@ -172,19 +172,28 @@ class OnDevicePrivacyGate:
             return self.restore(value)
         if isinstance(value, list):
             return [self.restore_payload(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self.restore_payload(v) for v in value)
         if isinstance(value, dict):
-            return {k: self.restore_payload(v) for k, v in value.items()}
+            return {self.restore_payload(k): self.restore_payload(v) for k, v in value.items()}
         return value
 
     def _mask_structure(self, value: Any) -> Any:
         if isinstance(value, str):
             masked, _ = self.mask_text(value)
             return masked
-        if isinstance(value, list):
-            return [self._mask_structure(v) for v in value]
         if isinstance(value, dict):
-            return {k: self._mask_structure(v) for k, v in value.items()}
-        return value
+            # Keys are serialized into the scanned JSON too — a PII-bearing key leaks
+            # the same way a value would.
+            return {self._mask_structure(k): self._mask_structure(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [self._mask_structure(v) for v in value]
+        if value is None or isinstance(value, bool):
+            return value
+        # Non-str scalars: the scanner saw their serialized form — mask str(value)
+        # when it trips a pattern, otherwise keep the typed value.
+        masked, _ = self.mask_text(str(value))
+        return masked if masked != str(value) else value
 
     def _record_audit(self, row: dict[str, Any]) -> None:
         if self.audit is not None and hasattr(self.audit, "append"):
@@ -362,16 +371,17 @@ class OnDevicePrivacyGate:
         verified = False
         reason = "consent_required"
         if tok_id and tok_hash == p_hash:
-            if self.gate is not None:
+            if self.gate is None:
+                # Hash equality alone is forgeable — anyone holding the payload can compute it.
+                # Without a Gate there is no authoritative approval record, so this parks.
+                reason = "consent_no_gate"
+            else:
                 refusal = self.gate._refusal(payload_dict, Approval(id=tok_id, payload_hash=tok_hash))
                 if refusal is None:
                     verified = True
                     reason = "consent_verified"
                 else:
                     reason = f"consent_{refusal}"
-            else:
-                verified = True
-                reason = "consent_verified"
         elif tok_id and tok_hash != p_hash:
             reason = "consent_payload_mismatch"
 

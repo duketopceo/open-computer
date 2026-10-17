@@ -141,3 +141,36 @@ def test_consent_mode_parks_without_valid_approval_and_allows_with_bound_approva
     d_ok = pg.evaluate(payload, approval=appr_valid)
     assert d_ok.allowed and d_ok.action == "consented"
     assert d_ok.target == "cloud" and d_ok.outbound_payload == payload
+
+
+def test_consent_without_gate_never_verifies(tmp_path: Path):
+    """Hash equality alone is forgeable — with no Gate there is no authoritative record."""
+    pg = OnDevicePrivacyGate(mode="consent")  # gate=None
+    payload = {"model": "frontier", "prompt": SAMPLE_PII_TEXT}
+    forged = Approval(id="ap_anything", payload_hash=payload_hash(payload))
+    d = pg.evaluate(payload, approval=forged)
+    assert not d.allowed and d.action == "park_consent"
+    assert d.reason == "consent_no_gate" and not d.outbound_payload
+
+
+def test_mask_covers_non_string_leaves_and_pii_keys(tmp_path: Path):
+    """The scanner sees serialized JSON — masking must cover every shape it flags."""
+    pg = OnDevicePrivacyGate(mode="mask")
+    payload = {
+        "count": 4111111111111111,           # int card number — serialized into the scanned JSON
+        "items": ("4111-1111-1111-1111",),   # tuple leaf — json.dumps renders it as a list
+        "k@example.com": "safe value",       # PII-bearing dict key
+        "note": "call me at 415-555-2671",
+    }
+    d = pg.evaluate(payload)
+    assert d.allowed and d.action == "masked"
+    out = json.dumps(d.outbound_payload, sort_keys=True)
+    assert "4111" not in out
+    assert "k@example.com" not in out
+    assert "415-555-2671" not in out
+    assert d.outbound_payload["items"] == ["[PII:CARD_2]"]
+    assert "[PII:EMAIL_1]" in d.outbound_payload
+    # and the vault still round-trips every masked value
+    restored = pg.restore_payload(d.outbound_payload)
+    assert "k@example.com" in restored and restored["note"] == "call me at 415-555-2671"
+    assert restored["count"] == "4111111111111111" and restored["items"] == ["4111-1111-1111-1111"]

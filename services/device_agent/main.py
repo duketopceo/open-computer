@@ -10,16 +10,36 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
 from oc.fsproto import AlreadyLeased, TaskFinal, adapter as fs_adapter
 from services.device import GrantStore, adapter as registry_adapter
-from services.device.protocol import mint_secret
+from services.device.protocol import WINDOW, mint_secret
 from services.gate.audit import AuditLog
 
 from .exec import execute
 from .heartbeat import HEARTBEAT_EVERY, registration_payload
+
+
+def _load_seen(path: Path, now: float) -> dict[str, float]:
+    """Nonces accepted within the last WINDOW, persisted so a restart can't replay them."""
+    try:
+        raw = json.loads(path.read_text())
+        pairs = {str(n): float(e) for n, e in raw.items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        pairs = {}
+    return {n: e for n, e in pairs.items() if e > now}
+
+
+def _save_seen(path: Path, seen_expiry: dict[str, float], now: float) -> None:
+    live = {n: e for n, e in seen_expiry.items() if e > now}
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(live, indent=1, sort_keys=True))
+    os.replace(tmp, path)
+    seen_expiry.clear()
+    seen_expiry.update(live)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,11 +59,14 @@ def main(argv: list[str] | None = None) -> int:
     secret_file = root / "devices" / f"{a.device_id}.secret"
     if not secret_file.exists():
         secret_file.parent.mkdir(parents=True, exist_ok=True)
-        secret_file.write_text(mint_secret())
-        secret_file.chmod(0o600)
+        fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(mint_secret())
     secret = secret_file.read_text().strip()
     reg.register(registration_payload(a.device_id, a.root_dir, capabilities=a.capability))
-    seen: set[str] = set()
+    seen_file = root / "devices" / f"{a.device_id}.seen.json"
+    seen_expiry = _load_seen(seen_file, time.time())
+    seen: set[str] = set(seen_expiry)
     mailbox = f"device/{a.device_id}"
 
     while True:
@@ -63,6 +86,12 @@ def main(argv: list[str] | None = None) -> int:
                 registry=reg,
                 audit=audit,
             )
+            fresh = seen - seen_expiry.keys()
+            if fresh:
+                t = time.time()
+                for nonce in fresh:
+                    seen_expiry[nonce] = t + WINDOW
+                _save_seen(seen_file, seen_expiry, t)
             fs.outbox_write(mailbox, tid, json.dumps(result).encode())
         if a.once:
             return 0
