@@ -419,6 +419,8 @@ def p_decide(h, who, body, goal, ref):
         q.decide(ref, approve=approve, by=who, note=note or ("" if approve else "Denied by the operator."), expect_hash=seen)
     except QueueError as e:
         return h._json(e.status, {"error": str(e)})
+    except ValueError as e:  # the gate refuses to decide an id twice; answer, don't drop the connection
+        return h._json(409, {"error": str(e)})
     em = w.emitter(goal, {"name": who, "kind": "human"})
     em.approval_resolve(ref, "approved" if approve else "denied", decision=choice, decided_by=who, note=note or None)
     sess = w.sessions.get(goal)
