@@ -74,13 +74,11 @@ def test_resume_recovers_interrupted_run(console, monkeypatch, tmp_path):
     monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
     orig = goalruns._start_drive
     monkeypatch.setattr(goalruns, "_start_drive", lambda *a: None)
-
     def engine(prompt):
         return '[{"id":"a","title":"first","prompt":"p1"},{"id":"b","title":"second","prompt":"p2","deps":["a"]}]'
 
     def wfn(task):
         return f"out:{task['prompt']}"
-
     rid = goalruns.submit("Do two things", engine, wfn, by="test")
     orch = Orchestrator(tmp_path / rid)  # a fresh process only sees disk
     assert orch.recover(rid)

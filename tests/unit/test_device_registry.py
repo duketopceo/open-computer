@@ -82,6 +82,8 @@ def test_envelope_rejects_tamper_replay_and_skew():
         open_envelope(env, secret, now=T0 + 1_000)
     with pytest.raises(EnvelopeError, match="malformed"):
         open_envelope({"step": step}, secret, now=T0)
+    with pytest.raises(EnvelopeError, match="not an object"):
+        open_envelope({**env, "step": "just-a-string", "sig": "x"}, secret, now=T0)
 
 
 def test_agent_executes_echo_only_and_refuses_bad_envelopes():

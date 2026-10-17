@@ -133,31 +133,27 @@ class Workspace:
     def known(self, goal: str) -> bool:
         return goal in self.recordings or goal in self.log.goals()
 
-    def audit_file(self, goal: str) -> Path:
-        """Where this goal's gate decisions are written.
-
-        A replayed recording reuses the same approval ids every time it restarts, and the gate refuses to decide an
-        id twice, so a replay gets its own audit file that a restart clears (like the approvals queue). Recorded
-        decisions are also not the operator's real decisions and don't belong in the real audit log. Live goals use it.
-        """
+    def _gate(self, goal: str):
+        """Decisions land in an audit log. Replay runs restart their world, so they audit to a
+        per-goal file that `start_replay` wipes alongside the queue — a re-run must not trip the
+        gate's single-use check on the previous run's grants."""
+        from services.gate.gate import Gate
+        if self.replay:
+            return Gate(self.state_dir / f"{goal}.gate-audit.ndjson")
         from services.opsview import server
-        if self.replay and goal in self.recordings:
-            return self.state_dir / f"{goal}.audit.ndjson"
-        return server.audit_path()
+        return Gate(server.audit_path())
 
     def queue(self, goal: str, *, write: bool = False):
-        from services.gate.gate import Gate
         from services.gate.queue import ApprovalQueue
         path = self.state_dir / f"{goal}.approvals.ndjson"
         if write:
-            return ApprovalQueue(path, Gate(self.audit_file(goal)))
+            return ApprovalQueue(path, self._gate(goal))
         return ApprovalQueue(path)
 
     def register_approval(self, goal: str, ev: dict):
-        from services.gate.gate import Gate
         from services.gate.queue import ApprovalQueue
         d = ev["data"]
-        q = ApprovalQueue(self.state_dir / f"{goal}.approvals.ndjson", Gate(self.audit_file(goal)))
+        q = ApprovalQueue(self.state_dir / f"{goal}.approvals.ndjson", self._gate(goal))
         if q.get(d["id"]) is None:
             q.submit(who=(ev.get("actor") or {}).get("name", "agent"), session=(ev.get("actor") or {}).get("session", ""),
                      what=d["action"], est_cost=float(d.get("cost_usd") or 0), item_id=d["id"], ts=ev["ts"], bound_hash=d["payload_hash"],
@@ -175,10 +171,10 @@ class Workspace:
                 cur.stop()
                 cur.thread.join(2)
             self.log.reset(goal)
-            q = self.state_dir / f"{goal}.approvals.ndjson"
-            if q.exists():
-                q.unlink()
-            self.audit_file(goal).unlink(missing_ok=True)
+            for f in (f"{goal}.approvals.ndjson", f"{goal}.gate-audit.ndjson"):
+                q = self.state_dir / f
+                if q.exists():
+                    q.unlink()
             s = ReplaySession(self, goal, speed, hold)
             self.sessions[goal] = s
             s.start()
