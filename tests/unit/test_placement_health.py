@@ -2,7 +2,6 @@
 cloud, PII still stays local, and the pure table is unchanged by default.
 """
 
-import pytest
 
 from services import placement
 from services.placement import health

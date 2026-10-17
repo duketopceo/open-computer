@@ -156,11 +156,18 @@ Unit IDs are `P1`–`P7`. They never renumber. Roadmap IDs stay `OC-*`.
   `services/gate/gate.py` (decision table gains `local`), `services/
   gate/console.py` (consent prompt relay), `tests/unit/test_privacy_gate.py`,
   PII corpus additions.
+- **Scanner contract:** `services/gate/pii.py` `PIIDecision` today returns only
+  `flagged` and `categories`. Extend it with typed match spans (category,
+  start, end) and a per-match confidence, so `privacy.py` can replace the
+  exact matched text and route low-confidence matches to consent. Existing
+  `scan()` callers keep working (new fields are additive).
 - **Behavior:** classifier runs on the step payload; `mask` swaps spans
   for typed stand-ins and records the map locally; `local` reroutes the
   step to a local model or tool; `refuse` returns a typed error; `consent`
   parks the run in the approval queue.
-- **Test scenarios:** round-trip mask and restore; map never leaves the
+- **Test scenarios:** exact-span replacement (offsets match the scanner's
+  spans, adjacent and overlapping matches); consent routing for
+  low-confidence matches; round-trip mask and restore; map never leaves the
   device (assert absent from upload); decision table coverage; precision
   and recall gates from OC-022 hold on the device build.
 - **Verification:** R-series conformance: no raw PII span in any uploaded
