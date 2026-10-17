@@ -121,10 +121,13 @@ class ApprovalQueue:
         if not approve and not note:
             raise QueueError("Add a note so the agent knows what to change.", 422)
         payload = item["payload"]
-        if approve:
-            self.gate.grant(payload, by=by, approval_id=item_id, note=note)
-        else:
-            self.gate.deny(payload, by=by, approval_id=item_id, note=note)
+        try:
+            if approve:
+                self.gate.grant(payload, by=by, approval_id=item_id, note=note)
+            else:
+                self.gate.deny(payload, by=by, approval_id=item_id, note=note)
+        except ValueError as e:
+            raise QueueError(str(e), 409) from e
         self._append({
             "event": "decision", "id": item_id, "ts": time.time(),
             "decision": "approved" if approve else "sent_back", "by": by, "note": note,

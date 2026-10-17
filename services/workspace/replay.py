@@ -133,21 +133,27 @@ class Workspace:
     def known(self, goal: str) -> bool:
         return goal in self.recordings or goal in self.log.goals()
 
-    def queue(self, goal: str, *, write: bool = False):
+    def _gate(self, goal: str):
+        """Decisions land in an audit log. Replay runs restart their world, so they audit to a
+        per-goal file that `start_replay` wipes alongside the queue — a re-run must not trip the
+        gate's single-use check on the previous run's grants."""
         from services.gate.gate import Gate
+        if self.replay:
+            return Gate(self.state_dir / f"{goal}.gate-audit.ndjson")
+        from services.opsview import server
+        return Gate(server.audit_path())
+
+    def queue(self, goal: str, *, write: bool = False):
         from services.gate.queue import ApprovalQueue
         path = self.state_dir / f"{goal}.approvals.ndjson"
         if write:
-            from services.opsview import server
-            return ApprovalQueue(path, Gate(server.audit_path()))
+            return ApprovalQueue(path, self._gate(goal))
         return ApprovalQueue(path)
 
     def register_approval(self, goal: str, ev: dict):
-        from services.gate.gate import Gate
         from services.gate.queue import ApprovalQueue
-        from services.opsview import server
         d = ev["data"]
-        q = ApprovalQueue(self.state_dir / f"{goal}.approvals.ndjson", Gate(server.audit_path()))
+        q = ApprovalQueue(self.state_dir / f"{goal}.approvals.ndjson", self._gate(goal))
         if q.get(d["id"]) is None:
             q.submit(who=(ev.get("actor") or {}).get("name", "agent"), session=(ev.get("actor") or {}).get("session", ""),
                      what=d["action"], est_cost=float(d.get("cost_usd") or 0), item_id=d["id"], ts=ev["ts"], bound_hash=d["payload_hash"],
@@ -165,9 +171,10 @@ class Workspace:
                 cur.stop()
                 cur.thread.join(2)
             self.log.reset(goal)
-            q = self.state_dir / f"{goal}.approvals.ndjson"
-            if q.exists():
-                q.unlink()
+            for f in (f"{goal}.approvals.ndjson", f"{goal}.gate-audit.ndjson"):
+                q = self.state_dir / f
+                if q.exists():
+                    q.unlink()
             s = ReplaySession(self, goal, speed, hold)
             self.sessions[goal] = s
             s.start()
