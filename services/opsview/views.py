@@ -64,9 +64,9 @@ def rel_time(ts: float, now: float | None = None) -> str:
 def time_tag(ts, now: float | None = None) -> str:
     try:
         ts = float(ts)
-    except (TypeError, ValueError):
+        iso = datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
+    except (TypeError, ValueError, OverflowError):
         return '<span class="muted">unknown</span>'
-    iso = datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
     return f'<time datetime="{iso}" title="{abs_time(ts)}">{rel_time(ts, now)}</time>'
 
 

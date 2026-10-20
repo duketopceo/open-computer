@@ -27,7 +27,7 @@ PARKED = "device/parked"
 
 # Registry keys become mailbox path segments — only ids the agent could legitimately use.
 DEVICE_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
-RESERVED = {"parked"}
+RESERVED = {"parked", ".", ".."}
 
 
 def _load_json(path: Path) -> dict:
@@ -43,7 +43,10 @@ def _load_json(path: Path) -> dict:
 def _task_status(run_root: Path, tid: str) -> str:
     sf = run_root / "tasks" / tid / "status"
     try:
-        return sf.read_bytes()[:64].decode(errors="replace").strip() if sf.exists() else "queued"
+        if not sf.exists():
+            return "queued"
+        with sf.open("rb") as f:
+            return f.read(64).decode(errors="replace").strip()
     except OSError:
         return "unknown"
 
@@ -98,6 +101,8 @@ def collect_devices(root: Path | str, *, now: float | None = None, stale_after: 
         if not isinstance(d, dict) or not DEVICE_ID.fullmatch(did) or did in RESERVED:
             continue
         last = _num(d.get("last_heartbeat"))
+        if last < 0 or last > t + 60:  # beyond small clock skew = corrupt; page can't render 1e20 anyway
+            last = 0.0
         online = bool(d.get("online", False)) and (t - last) <= stale_after
         awake = bool(d.get("awake", False))
         rows.append(
