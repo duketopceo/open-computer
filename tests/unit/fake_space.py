@@ -38,8 +38,7 @@ class _Commands:
         if m:
             if self.broken_network:
                 return _Run(6)  # could not resolve host
-            policy = self.payload.get("network_policy") or {}
-            allow = [e.get("domain") for e in policy.get("allow") or []]
+            allow = (self.payload.get("network") or {}).get("allow_out") or []
             if self.open_egress or self.payload.get("allow_internet_access") or m.group(1) in allow:
                 return _Run(0)
             return _Run(56)  # refused by the egress gateway
@@ -65,7 +64,42 @@ class FakeSpaceSDK:
 
         class Sandbox:
             @staticmethod
-            def create(**payload):
+            def create(
+                api_key=None,
+                domain=None,
+                template=None,
+                timeout=None,
+                envs=None,
+                metadata=None,
+                secure=None,
+                allow_internet_access=None,
+                mcp=None,
+                network=None,
+                lifecycle=None,
+                **rest,
+            ):
+                # Strict like the pinned e2b signature: an unexpected kwarg
+                # the real SDK would reject (or silently drop) fails loudly
+                # here instead of passing through to the recorded payload.
+                if rest:
+                    raise TypeError(f"Sandbox.create() got unexpected keyword arguments: {sorted(rest)}")
+                payload = {
+                    k: v
+                    for k, v in dict(
+                        api_key=api_key,
+                        domain=domain,
+                        template=template,
+                        timeout=timeout,
+                        envs=envs,
+                        metadata=metadata,
+                        secure=secure,
+                        allow_internet_access=allow_internet_access,
+                        mcp=mcp,
+                        network=network,
+                        lifecycle=lifecycle,
+                    ).items()
+                    if v is not None
+                }
                 sdk.created.append(payload)
                 if sdk._fail:
                     raise RuntimeError("space api 503")

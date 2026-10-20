@@ -22,11 +22,18 @@ import os
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from .client import ExecResult, _FailedSandbox
+from .client import ExecResult, SandboxUnavailable, _FailedSandbox
 from .policy import PolicyEngine
 
 _WILDCARD_CHARS = "*?"
+
+
+def _host(api_url: str) -> str:
+    """`api.example.com[:port]` from a configured URL — the e2b `domain`
+    param wants a bare host, not a scheme."""
+    return urlparse(api_url if "://" in api_url else f"https://{api_url}").netloc
 
 
 class _SpaceSandbox:
@@ -104,13 +111,22 @@ class SpaceAdapter:
             template=template or self._template,
             timeout=timeout,
             allow_internet_access=False,  # deny-by-default always
-            network_policy={
-                "egress_default_action": "DENY",
-                "allow": [{"domain": h} for h in allowlist],
-            },
         )
+        if allowlist:
+            # e2b-compatible egress: exact-domain allow entries on the
+            # documented `network` param. SPACE-native NetworkPolicyV1
+            # objects (egress_default_action, credential rules) arrive with
+            # the credential boundary work — S4/S5, not this skeleton.
+            payload["network"] = {"allow_out": allowlist}
+        if not self._api_url:
+            return _FailedSandbox(SandboxUnavailable("SPACE_API_URL is not configured"))
         try:
-            sb = self._sdk.Sandbox.create(**payload)
+            # api_key + domain bind this call to the configured SPACE/ECW
+            # endpoint — without them the SDK would fall back to ambient
+            # E2B_* env vars (i.e. the public e2b API).
+            sb = self._sdk.Sandbox.create(
+                api_key=self._api_key, domain=_host(self._api_url), **payload
+            )
         except Exception as e:
             return _FailedSandbox(e)
         return _SpaceSandbox(sb)
