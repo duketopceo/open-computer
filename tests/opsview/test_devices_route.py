@@ -22,6 +22,7 @@ def test_api_devices_json_shape(console):
     status, headers, body = console.get("/api/devices")
     assert status == 200
     assert headers["Content-Type"].startswith("application/json")
+    assert headers["Cache-Control"] == "no-store"
     data = json.loads(body)
     assert data["total"] == 1 and data["online"] == 1 and data["parked_depth"] == 0
     d = data["devices"][0]
@@ -72,6 +73,46 @@ def test_devices_malformed_registry_rows_skipped(console):
     _, _, body = console.get("/api/devices")
     data = json.loads(body)
     assert [d["device_id"] for d in data["devices"]] == ["ok-box"]
+
+
+def test_devices_bad_field_types_degrade_not_crash(console):
+    """Field types in registry/grants files are untrusted — bad rows degrade, page and API stay up."""
+    p = console.base / "devices"
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "devices.json").write_text(
+        json.dumps(
+            {
+                "bad-os": {"os": None, "online": True, "awake": True, "last_heartbeat": time.time()},
+                "bad-caps": {"os": "y", "capabilities": None, "roots": [7, "ok"], "online": False},
+                "bad-beat": {"os": "z", "online": True, "last_heartbeat": "not-a-float"},
+                "nan-beat": {"os": "n", "online": True, "last_heartbeat": float("nan")},
+                "non-dict": "oops",
+                "parked": {"os": "reserved", "online": True},
+                "bad\x00id": {"os": "nul", "online": True},
+            }
+        )
+    )
+    (p / "grants.json").write_text(
+        json.dumps({"g1": {"device_id": "bad-os", "expires_at": None}, "non-dict": "oops"})
+    )
+    status, _, body = console.get("/api/devices")
+    assert status == 200
+    data = json.loads(body)
+    assert data["total"] == 4  # parked + NUL-id + non-dict rows skipped
+    by_id = {d["device_id"]: d for d in data["devices"]}
+    assert by_id["bad-os"]["os"] == "unknown" and by_id["bad-os"]["active_grants"] == 0
+    assert by_id["bad-caps"]["capabilities"] == [] and by_id["bad-caps"]["roots"] == ["ok"]
+    assert by_id["bad-beat"]["last_heartbeat"] == 0.0 and by_id["bad-beat"]["state"] == "offline"
+    # the HTML page is the more fragile consumer — it must render too
+    status, _, html = console.get("/devices")
+    assert status == 200 and "bad-os" in html
+
+
+def test_devices_post_rejected(console):
+    status, _, _ = console.post("/api/devices", {}, csrf=True)
+    assert status in (404, 405)
+    status, _, _ = console.post("/devices", {}, csrf=True)
+    assert status in (404, 405)
 
 
 def test_devices_unauthenticated_remote_redirects(console):

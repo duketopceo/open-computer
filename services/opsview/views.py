@@ -1036,7 +1036,7 @@ def page_devices(payload: dict) -> str:
     return (
         '<section aria-labelledby="dev"><h2 id="dev">Personal Computer devices</h2>'
         '<p class="muted note">Paired machines the router can place work on. A device is eligible '
-        f"when it is online and awake — <b>{payload.get('online', 0)}</b> of <b>{payload.get('total', 0)}</b> "
+        f"when it is online and awake — <b>{payload.get('eligible', 0)}</b> of <b>{payload.get('total', 0)}</b> "
         f"eligible now; <b>{payload.get('parked_depth', 0)}</b> task(s) parked waiting for a device to come back."
         " Grants are filesystem scopes the device may touch; inbox is queued work in its mailbox.</p>"
         '<table class="dense"><caption class="sr">Devices, state and queue depth</caption><thead><tr>'

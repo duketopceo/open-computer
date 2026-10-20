@@ -357,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _json(self, code: int, obj: dict):
-        self._send(code, json.dumps(obj).encode(), "application/json")
+        self._send(code, json.dumps(obj).encode(), "application/json", {"Cache-Control": "no-store"})
 
     def _wants_json(self) -> bool:
         return "application/json" in self.headers.get("Accept", "") or "json" in self.headers.get("Content-Type", "")
