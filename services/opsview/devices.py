@@ -72,7 +72,7 @@ def collect_devices(root: Path | str, *, now: float | None = None, stale_after: 
     rows: list[dict[str, Any]] = []
     for did in sorted(registry):
         d = registry[did]
-        if not isinstance(d, dict):
+        if not isinstance(d, dict) or "/" in did or ".." in did or not did:
             continue
         last = float(d.get("last_heartbeat", 0.0))
         online = bool(d.get("online", False)) and (t - last) <= stale_after

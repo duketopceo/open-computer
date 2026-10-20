@@ -62,6 +62,18 @@ def test_devices_stale_heartbeat_reads_offline(console):
     assert status == 200 and "offline" in html
 
 
+def test_devices_malformed_registry_rows_skipped(console):
+    """Registry keys become mailbox paths — ids with separators must not reach the fs."""
+    p = console.base / "devices"
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "devices.json").write_text(
+        json.dumps({"../escape": {"os": "x", "online": True}, "ok-box": {"os": "y", "online": True}})
+    )
+    _, _, body = console.get("/api/devices")
+    data = json.loads(body)
+    assert [d["device_id"] for d in data["devices"]] == ["ok-box"]
+
+
 def test_devices_unauthenticated_remote_redirects(console):
     remote = {"Host": "remote.test"}
     for path in ("/devices", "/api/devices"):
