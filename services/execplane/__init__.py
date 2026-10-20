@@ -31,5 +31,12 @@ __all__ = [
 ]
 
 
-def adapter(root: Path | str, **_: object) -> ExecplaneAdapter:
-    return ExecplaneAdapter(Path(root))
+def adapter(root: Path | str, backend: str = "cube", **_: object) -> ExecplaneAdapter:
+    """Execplane backend selection — explicit `backend`, never ambient."""
+    if backend == "cube":
+        return ExecplaneAdapter(Path(root))
+    if backend == "space":
+        from .space import SpaceAdapter
+
+        return SpaceAdapter(Path(root))  # type: ignore[return-value]
+    raise ValueError(f"unknown execplane backend {backend!r}")
