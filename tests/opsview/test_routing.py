@@ -21,6 +21,7 @@ def concrete(pattern: str) -> str:
         "/",
         "/sandboxes",
         "/sandboxes?inline=1",
+        "/devices",
         "/runs",
         "/runs/new",
         "/approvals",

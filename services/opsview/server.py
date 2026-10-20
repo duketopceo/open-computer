@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
-from services.opsview import automations, capabilities, goalruns
+from services.opsview import automations, capabilities, devices, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -87,6 +87,11 @@ def audit_path() -> Path:
 
 def approvals_path() -> Path:
     return Path(os.environ.get("OC_APPROVALS", "/tmp/oc-audit/approvals.ndjson"))
+
+
+def oc_root() -> Path:
+    """Orchestrator root — `devices/` and `run/` live under it (deploy/oc-device.service)."""
+    return Path(os.environ.get("OC_ROOT", str(Path.home() / ".local/share/oc")))
 
 
 def daily_cap() -> float:
@@ -228,6 +233,7 @@ GET_ROUTES = [
     (r"/work", "g_work"),
     (r"/sandboxes", "g_sandboxes"),
     (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
+    (r"/devices", "g_devices"),
     (r"/goals", "g_goals"),
     (r"/goals/new", "g_goal_new"),
     (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
@@ -239,6 +245,7 @@ GET_ROUTES = [
     (r"/approvals", "g_approvals"),
     (r"/router", "g_router"),
     (r"/audit", "g_audit"),
+    (r"/api/devices", "g_api_devices"),
     (r"/_frag/fleet", "g_frag_fleet"),
     (r"/_frag/status", "g_frag_status"),
     (r"/_frag/work", "g_frag_work"),
@@ -350,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _json(self, code: int, obj: dict):
-        self._send(code, json.dumps(obj).encode(), "application/json")
+        self._send(code, json.dumps(obj).encode(), "application/json", {"Cache-Control": "no-store"})
 
     def _wants_json(self) -> bool:
         return "application/json" in self.headers.get("Accept", "") or "json" in self.headers.get("Content-Type", "")
@@ -432,6 +439,16 @@ class Handler(BaseHTTPRequestHandler):
         sid = unquote(id)
         row = next((s for s in fleet_state()["sandboxes"] if str(s.get("sandboxID")) == sid), None)
         self._page("sandboxes", views.page_sandbox_detail(sid, row), 200 if row else 404, sub=views.e(sid))
+
+    def g_devices(self, qs):
+        self._page(
+            "devices",
+            views.page_devices(devices.collect_devices(oc_root())),
+            sub="Paired Personal Computer devices — reachability, grants and queue depth",
+        )
+
+    def g_api_devices(self, qs):
+        self._json(200, devices.collect_devices(oc_root()))
 
     def g_goals(self, qs):
         self._page(
