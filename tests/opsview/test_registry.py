@@ -37,6 +37,7 @@ def test_sidebar_sections_in_order():
         "Automations",
         "Skills",
         "Sandboxes",
+        "Devices",
         "Runs",
         "Approvals",
         "Router",

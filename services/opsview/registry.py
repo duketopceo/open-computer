@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
-PAGES = ("work", "overview", "goals", "automations", "skills", "sandboxes", "runs", "approvals", "router", "audit")
+PAGES = (
+    "work", "overview", "goals", "automations", "skills", "sandboxes", "devices", "runs", "approvals", "router", "audit"
+)
 
 WORKSPACE = "workspace"  # the agent workspace page (/workspace); its actions have scope "workspace"
 # Global console actions that mean something else on the workspace page (`c` creates a goal there).
@@ -38,6 +40,7 @@ ACTIONS: tuple[Action, ...] = (
     Action("nav.automations", "Automations", "Navigate", "g a", href="/automations"),
     Action("nav.skills", "Skills", "Navigate", "g k", href="/skills"),
     Action("nav.sandboxes", "Sandboxes", "Navigate", "g x", href="/sandboxes"),
+    Action("nav.devices", "Devices", "Navigate", "g d", href="/devices"),
     Action("nav.runs", "Runs", "Navigate", "g n", href="/runs"),
     Action("nav.approvals", "Approvals", "Navigate", "g r", href="/approvals"),
     Action("nav.router", "Router", "Navigate", "g u", href="/router"),

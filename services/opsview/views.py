@@ -24,6 +24,7 @@ PAGE_TITLES = {
     "automations": "Automations",
     "skills": "Skills",
     "sandboxes": "Sandboxes",
+    "devices": "Devices",
     "runs": "Runs",
     "approvals": "Approvals",
     "router": "Router",
@@ -1008,6 +1009,40 @@ def page_skills(caps: list[dict]) -> str:
         '<th scope="col">Capability</th><th scope="col">Kind</th><th scope="col">Status</th>'
         '<th scope="col">Detail</th></tr></thead>'
         f"<tbody>{rows}</tbody></table></section>"
+    )
+
+
+def page_devices(payload: dict) -> str:
+    """Personal Computer device fleet — reachability, grants and mailbox depth."""
+    devs = payload.get("devices", [])
+    if not devs:
+        rows = '<tr><td colspan="6" class="muted">No devices paired — start a device agent to register one.</td></tr>'
+    else:
+        state_pill = {"online": "up", "asleep": "pending", "offline": "down"}
+
+        def row(d: dict) -> str:
+            caps = ", ".join(d["capabilities"]) or "—"
+            roots = ", ".join(d["roots"]) or "—"
+            beat = time_tag(d["last_heartbeat"]) if d.get("last_heartbeat") else '<span class="muted">never</span>'
+            return (
+                f'<tr><td class="mono">{e(d["device_id"])}<div class="muted caption">{e(d["os"])}</div></td>'
+                f'<td class="muted">{e(caps)}</td><td class="muted caption">{e(roots)}</td>'
+                f'<td>{status(state_pill.get(d["state"], "neutral"), d["state"])}</td>'
+                f'<td class="num">{beat}</td>'
+                f'<td class="num">{d["active_grants"]}</td><td class="num">{d["inbox_depth"]}</td></tr>'
+            )
+
+        rows = "".join(row(d) for d in devs)
+    return (
+        '<section aria-labelledby="dev"><h2 id="dev">Personal Computer devices</h2>'
+        '<p class="muted note">Paired machines the router can place work on. A device is eligible '
+        f"when it is online and awake — <b>{payload.get('online', 0)}</b> of <b>{payload.get('total', 0)}</b> "
+        f"eligible now; <b>{payload.get('parked_depth', 0)}</b> task(s) parked waiting for a device to come back."
+        " Grants are filesystem scopes the device may touch; inbox is queued work in its mailbox.</p>"
+        '<table class="dense"><caption class="sr">Devices, state and queue depth</caption><thead><tr>'
+        '<th scope="col">Device</th><th scope="col">Capabilities</th><th scope="col">Granted roots</th>'
+        '<th scope="col">State</th><th scope="col">Heartbeat</th><th scope="col">Grants</th>'
+        f'<th scope="col">Inbox</th></tr></thead><tbody>{rows}</tbody></table></section>'
     )
 
 
