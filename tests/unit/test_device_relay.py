@@ -1,0 +1,172 @@
+"""Remote device relay + remote-mode agent (plan P8).
+
+The relay re-exposes fsproto mailbox ops over authenticated HTTP; the remote
+agent pulls via RemoteClient. The P6 device-token secret is the bearer credential
+and the envelope HMAC key — one material, both jobs; kill-switch revocation cuts
+relay access with no extra code.
+"""
+
+from __future__ import annotations
+
+import http.client
+import json
+import threading
+import time
+from types import SimpleNamespace
+
+import pytest
+
+from oc.fsproto import AlreadyLeased, adapter as fs_adapter
+from services.device import GrantStore
+from services.device.protocol import seal
+from services.device.security import generate_totp, kill_device, mint_totp_secret, pair_device
+from services.device_agent import main as agent_main
+from services.device_agent.remote import RemoteClient, RemoteError
+from services.device_relay import make_server
+
+DID = "rpi-lounge"
+
+
+@pytest.fixture
+def relay(tmp_path):
+    root = tmp_path / "oc"
+    ts = mint_totp_secret()
+    _, tok = pair_device(
+        root,
+        {"device_id": DID, "os": "linux-aarch64", "roots": ["/srv"], "capabilities": ["fs"]},
+        totp_secret=ts,
+        totp_code=generate_totp(ts),
+    )
+    srv = make_server(0, root)
+    threading.Thread(target=lambda: srv.serve_forever(poll_interval=0.01), daemon=True).start()
+    yield SimpleNamespace(
+        root=root, url=f"http://127.0.0.1:{srv.server_address[1]}", secret=tok.secret, fs=fs_adapter(root / "run")
+    )
+    srv.shutdown()
+
+
+def req(relay, method, path, secret=None, body=b"", ctype="application/json"):
+    h = {"Content-Type": ctype}
+    if secret is not None:
+        h["Authorization"] = f"Bearer {secret}"
+    c = http.client.HTTPConnection("127.0.0.1", int(relay.url.rsplit(":", 1)[1]), timeout=10)
+    c.request(method, f"/relay/devices/{DID}{path}", body=body, headers=h)
+    r = c.getresponse()
+    data = r.read()
+    c.close()
+    return r.status, data
+
+
+def client(relay, **kw) -> RemoteClient:
+    return RemoteClient(relay.url, DID, relay.secret, **kw)
+
+
+# --- authn / authz ------------------------------------------------------------
+
+
+def test_relay_requires_bearer(relay):
+    for path in ("/heartbeat", "/inbox", "/grants", "/audit", "/tasks/" + "ab" * 16):
+        status, _ = req(relay, "GET" if "heartbeat" not in path and "audit" not in path else "POST", path)
+        assert status == 401, path
+
+
+def test_relay_wrong_secret_401(relay):
+    assert req(relay, "POST", "/heartbeat", secret="not-the-secret")[0] == 401
+
+
+def test_relay_revoked_token_401(relay):
+    kill_device(relay.root, DID)
+    assert req(relay, "GET", "/inbox", secret=relay.secret)[0] == 401
+
+
+def test_relay_expired_token_401(relay):
+    p = relay.root / "devices" / f"{DID}.token.json"
+    tok = json.loads(p.read_text())
+    tok["expires_at"] = time.time() - 1
+    p.write_text(json.dumps(tok))
+    assert req(relay, "GET", "/inbox", secret=relay.secret)[0] == 401
+
+
+def test_relay_secret_scoped_to_its_device(relay):
+    """A valid bearer for device A authorizes nothing under device B's path."""
+    c = http.client.HTTPConnection("127.0.0.1", int(relay.url.rsplit(":", 1)[1]), timeout=10)
+    c.request("GET", "/relay/devices/other-device/inbox", headers={"Authorization": f"Bearer {relay.secret}"})
+    r = c.getresponse()
+    r.read()
+    assert r.status == 401
+    c.close()
+
+
+# --- mailbox flow --------------------------------------------------------------
+
+
+def test_relay_inbox_claim_body_result(relay):
+    tid = relay.fs.send(f"device/{DID}", {"envelope": seal({"kind": "echo", "text": "hi"}, relay.secret)})
+    c = client(relay)
+    c.heartbeat()
+    assert c.inbox_ids(f"device/{DID}") == [tid]
+    assert c.claim(f"device/{DID}", tid, ttl=60) == tid
+    with pytest.raises(AlreadyLeased):
+        c.claim(f"device/{DID}", tid, ttl=60)
+    body = json.loads(c.task_body(tid))
+    assert body["envelope"]["sig"] and body["envelope"]["step"]["text"] == "hi"
+    c.outbox_write(f"device/{DID}", tid, json.dumps({"ok": True}).encode())
+    assert json.loads(relay.fs.collect("orchestrator", tid)) == {"ok": True}  # durable in the fs spine
+
+
+def test_relay_task_ops_scoped_to_inbox(relay):
+    """A task in another device's mailbox is out of scope — even for its claimed owner path."""
+    tid = relay.fs.send("device/someone-else", {"envelope": {}})
+    assert req(relay, "GET", f"/tasks/{tid}", secret=relay.secret)[0] == 403
+    assert req(relay, "POST", f"/tasks/{tid}/claim", secret=relay.secret, body=b'{"ttl": 60}')[0] == 403
+    assert req(relay, "POST", f"/tasks/{tid}/result", secret=relay.secret, body=b"{}")[0] == 403
+
+
+def test_relay_bad_tids_rejected(relay):
+    assert req(relay, "GET", "/tasks/../../etc/passwd", secret=relay.secret)[0] == 404
+    assert req(relay, "GET", "/tasks/not-hex!!", secret=relay.secret)[0] == 404
+
+
+def test_relay_grants_scoped(relay):
+    store = GrantStore(relay.root)
+    store.add(DID, "/srv", ["read", "write"])
+    store.add("other-device", "/secret", ["read"])
+    mine = client(relay).grant_store(relay.root / "agent-state")
+    listed = {g.root for g in mine.list(DID)}
+    assert listed == {"/srv"}
+
+
+def test_relay_audit_appends(relay):
+    status, _ = req(relay, "POST", "/audit", secret=relay.secret, body=b'{"event": "test_event"}')
+    assert status == 200
+    rows = [json.loads(ln) for ln in (relay.root / "orchestrator.ndjson").read_text().splitlines() if ln.strip()]
+    assert any(r.get("event") == "test_event" and r.get("via") == "relay" and r.get("device_id") == DID for r in rows)
+
+
+# --- remote client behaviour ---------------------------------------------------
+
+
+def test_remote_client_offline_raises(relay, tmp_path):
+    """A dead relay surfaces RemoteError — the agent loop sleeps and retries next cycle."""
+    dead = RemoteClient("http://127.0.0.1:1", DID, relay.secret, timeout=0.2)
+    with pytest.raises(RemoteError):
+        dead.inbox_ids(f"device/{DID}")
+
+
+def test_remote_agent_end_to_end(relay, tmp_path):
+    """Full remote drain: sealed task in mailbox → remote agent claims, executes, writes result."""
+    state = tmp_path / "agent-state"
+    state.mkdir()
+    (state / f"{DID}.secret").write_text(relay.secret)
+    tid = relay.fs.send(
+        f"device/{DID}", {"envelope": seal({"kind": "echo", "text": "remote-ok"}, relay.secret)}
+    )
+    rc = agent_main.main(["--remote", relay.url, "--device-id", DID, "--state-dir", str(state), "--once"])
+    assert rc == 0
+    result = json.loads(relay.fs.collect("orchestrator", tid))
+    assert result["ok"] is True and result["echo"] == "remote-ok"
+
+
+def test_remote_agent_requires_provisioned_secret(relay, tmp_path):
+    with pytest.raises(SystemExit):
+        agent_main.main(["--remote", relay.url, "--device-id", DID, "--state-dir", str(tmp_path / "empty"), "--once"])
