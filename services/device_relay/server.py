@@ -6,7 +6,7 @@ Endpoints (all under /relay/devices/<did>, bearer-authed to that device only):
     GET  /inbox                  -> {"tasks": [tid, ...]}
     GET  /tasks/<tid>            -> {"body": {...task body...}}      (tid must be in did's inbox)
     POST /tasks/<tid>/claim      {"ttl": seconds} -> {"claimed": tid} | 409 leased | 410 final
-    POST /tasks/<tid>/result     raw body -> {"ok": true} | 409 immutable
+    POST /tasks/<tid>/result     raw body -> {"ok": true} | 409 immutable | 410 final
     GET  /grants                 -> {"grants": {grant_id: {...}}}    (only this device's)
     POST /audit                  {"event": ..., ...} -> {"ok": true} (appended to orchestrator.ndjson)
 """
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,7 +24,7 @@ from urllib.parse import urlparse
 
 from oc.fsproto import AlreadyLeased, FSAdapter, ResultImmutable, TaskFinal, adapter as fs_adapter
 from services.device import adapter as registry_adapter
-from services.device.security import DeviceToken
+from services.device.security import DeviceToken, valid_device_id
 from services.gate.audit import AuditLog
 
 DID = r"(?P<did>[A-Za-z0-9._-]{1,128})"
@@ -46,6 +47,17 @@ def _load_token(root: Path, did: str) -> DeviceToken | None:
         data = json.loads(p.read_text())
     except (OSError, ValueError):
         return None
+    if not isinstance(data, dict):
+        return None
+    # field types are file-derived — validate before DeviceToken sees them
+    if not (
+        isinstance(data.get("device_id"), str)
+        and isinstance(data.get("secret"), str)
+        and isinstance(data.get("issued_at"), (int, float))
+        and isinstance(data.get("expires_at"), (int, float))
+        and isinstance(data.get("revoked", False), bool)
+    ):
+        return None
     try:
         return DeviceToken(**data)
     except TypeError:
@@ -56,6 +68,10 @@ class Handler(BaseHTTPRequestHandler):
     root: Path
     fs: FSAdapter
     audit: AuditLog
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(30)  # bound idle/dribbling connections before auth runs
 
     def log_message(self, *a):
         pass
@@ -77,12 +93,18 @@ class Handler(BaseHTTPRequestHandler):
     def _device(self, did: str) -> str | None:
         """Return the device_id iff the bearer token is this device's active secret."""
         auth = self.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return None
+        presented = auth[7:].strip() if auth.startswith("Bearer ") else ""
         tok = _load_token(self.root, did)
-        if tok is None or tok.device_id != did or not tok.active(time.time()):
+        if (
+            not presented
+            or not presented.isascii()
+            or tok is None
+            or tok.device_id != did
+            or not tok.secret
+            or not tok.active(time.time())
+        ):
             return None
-        return did if hmac.compare_digest(tok.secret, auth[7:].strip()) else None
+        return did if hmac.compare_digest(tok.secret.encode(), presented.encode()) else None
 
     def _mailbox(self, did: str) -> str:
         return f"device/{did}"
@@ -90,14 +112,16 @@ class Handler(BaseHTTPRequestHandler):
     def _in_inbox(self, did: str, tid: str) -> bool:
         return tid in self.fs.inbox_ids(self._mailbox(did))
 
-    def _body(self) -> bytes:
+    def _body(self) -> bytes | None:
+        """Request body, or None when the declared length is absent, bad, or over MAX_BODY."""
         try:
             n = int(self.headers.get("Content-Length", 0))
         except ValueError:
-            n = 0
+            return None
         if n < 0 or n > MAX_BODY:
-            return b""
-        return self.rfile.read(n) if n else b""
+            return None
+        data = self.rfile.read(n) if n else b""
+        return data if len(data) == n else None  # short read = truncated upload
 
     # --- dispatch ------------------------------------------------------------
     def _route(self, method: str):
@@ -115,7 +139,11 @@ class Handler(BaseHTTPRequestHandler):
         if op is None:
             return self._send(404, b"not found", "text/plain")
         did = args["did"]
-        if self._device(did) is None:
+        if not valid_device_id(did) or self._device(did) is None:
+            try:
+                self.audit.append({"event": "relay_auth_rejected", "device_id": did, "via": "relay"})
+            except OSError:
+                pass
             return self._send(401, b"unauthorized", "text/plain", {"WWW-Authenticate": "Bearer"})
         handler = getattr(self, f"_{method.lower()}_{op}")
         handler(did, args)
@@ -128,7 +156,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- ops -----------------------------------------------------------------
     def _post_heartbeat(self, did: str, _args):
-        reg = registry_adapter(self.root)
+        # fs+audit bound so a remote heartbeat drains the parked mailbox, same as local.
+        reg = registry_adapter(self.root, fs=self.fs, audit=self.audit)
         try:
             dev = reg.heartbeat(did)
         except KeyError:
@@ -149,7 +178,11 @@ class Handler(BaseHTTPRequestHandler):
         tid = args["tid"]
         if not self._in_inbox(did, tid):
             return self._send(403, b"task not in your inbox", "text/plain")
-        self._json(200, {"body": json.loads(self.fs.task_body(tid))})
+        try:
+            body = json.loads(self.fs.task_body(tid))
+        except (OSError, ValueError):
+            return self._send(404, b"task record unreadable", "text/plain")
+        self._json(200, {"body": body})
 
     def _post_claim(self, did: str, args):
         tid = args["tid"]
@@ -158,9 +191,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = json.loads(self._body() or b"{}")
         except ValueError:
-            return self._send(400, b"bad json", "text/plain")
-        ttl = body.get("ttl")
-        if not isinstance(ttl, (int, float)) or ttl <= 0:
+            body = None
+        if body is not None and not isinstance(body, dict):
+            return self._send(400, b"claim body must be a json object", "text/plain")
+        ttl = (body or {}).get("ttl")
+        if not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl <= 0:
             ttl = None
         try:
             self.fs.claim(self._mailbox(did), tid, ttl=ttl)
@@ -170,16 +205,27 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(410, b"task final", "text/plain")
         except ValueError as e:
             return self._send(400, str(e).encode(), "text/plain")
+        except OSError as e:
+            return self._send(404, f"task gone: {e}".encode(), "text/plain")
         self._json(200, {"claimed": tid})
 
     def _post_result(self, did: str, args):
         tid = args["tid"]
         if not self._in_inbox(did, tid):
             return self._send(403, b"task not in your inbox", "text/plain")
+        body = self._body()
+        if body is None:
+            return self._send(413, b"body missing, truncated or over 1 MiB", "text/plain")
+        if not body:
+            return self._send(400, b"empty result refused - a tombstoned empty result is permanent", "text/plain")
         try:
-            self.fs.outbox_write(self._mailbox(did), tid, self._body())
+            self.fs.outbox_write(self._mailbox(did), tid, body)
         except ResultImmutable:
             return self._send(409, b"result immutable", "text/plain")
+        except TaskFinal:
+            return self._send(410, b"task final", "text/plain")
+        except OSError as e:
+            return self._send(404, f"task gone: {e}".encode(), "text/plain")
         self._json(200, {"ok": True})
 
     def _get_grants(self, did: str, _args):
@@ -196,8 +242,8 @@ class Handler(BaseHTTPRequestHandler):
             event = json.loads(self._body() or b"{}")
         except ValueError:
             return self._send(400, b"bad json", "text/plain")
-        if not isinstance(event, dict) or not event.get("event"):
-            return self._send(400, b"audit event must be an object with an event field", "text/plain")
+        if not isinstance(event, dict) or not isinstance(event.get("event"), str):
+            return self._send(400, b"audit event must be an object with a string event field", "text/plain")
         self.audit.append({**event, "device_id": did, "via": "relay"})
         self._json(200, {"ok": True})
 

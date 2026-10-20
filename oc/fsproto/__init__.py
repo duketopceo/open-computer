@@ -189,6 +189,9 @@ class FSAdapter:
         with self._task_lock(tid):
             if self._tombstoned(tid):
                 raise ResultImmutable(tid)
+            status = self._task_dir(tid) / "status"
+            if status.exists() and status.read_text().strip() == "failed":
+                raise TaskFinal(tid)  # killed/failed under the same lock — no late tombstone
             _write_record(
                 td / "result.md",
                 {

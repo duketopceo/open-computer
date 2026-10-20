@@ -62,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         secret_file = state / f"{a.device_id}.secret"
         if not secret_file.exists():
             ap.error(f"{secret_file} missing — provision it from the pairing output; never minted client-side")
+        if secret_file.stat().st_mode & 0o077:
+            ap.error(f"{secret_file} is group/world-readable — chmod 600 before running")
+        if a.root_dir or a.capability:
+            ap.error("--root-dir/--capability are asserted at pairing time and unused with --remote")
         secret = secret_file.read_text().strip()
         client = RemoteClient(a.remote, a.device_id, secret)
         fs = reg = audit = client  # duck-typed: client mirrors the fs/reg/audit call sites

@@ -23,6 +23,19 @@ from typing import Any
 from oc.fsproto import AlreadyLeased, ResultImmutable, TaskFinal
 from services.device.grants import GrantStore
 
+MAX_RESP = 4 << 20  # 4 MiB — no legitimate relay payload exceeds this
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow redirects — urllib forwards Authorization cross-host (CPython gh-77842),
+    and this secret is dual-use (bearer + envelope HMAC key). A 3xx is treated as an error."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
 
 class RemoteError(RuntimeError):
     """Transport failure or an unexpected relay response."""
@@ -49,10 +62,10 @@ class RemoteClient:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                return resp.status, resp.read()
+            with _OPENER.open(req, timeout=self._timeout) as resp:
+                return resp.status, resp.read(MAX_RESP + 1)
         except urllib.error.HTTPError as e:
-            return e.code, e.read()
+            return e.code, e.read(MAX_RESP + 1)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise RemoteError(f"relay {method} {path}: {e}") from e
 
@@ -73,7 +86,7 @@ class RemoteClient:
         did = device_id or self.device_id
         status, raw = self._req("POST", "/heartbeat")
         if status == 404:
-            raise KeyError(did)
+            raise RemoteError(f"device {did} not registered — pair it first, the loop keeps retrying")
         if status == 401:
             raise RemoteError("heartbeat refused: credential expired or revoked")
         if status != 200:
@@ -129,7 +142,10 @@ class RemoteClient:
     # --- grants --------------------------------------------------------------
     def grant_store(self, state_dir: Path) -> GrantStore:
         """Sync the device's grant file and return a GrantStore over it (full local fidelity)."""
-        data = self._json("GET", "/grants").get("grants", {})
+        # Grants sync once per drain cycle — a revoked grant can authorize in-window ops
+        # until the next heartbeat (~HEARTBEAT_EVERY); acceptable lag, noted in plan P8.
+        raw = self._json("GET", "/grants").get("grants", {})
+        data = {k: v for k, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else {}
         dev_dir = Path(state_dir) / "devices"
         dev_dir.mkdir(parents=True, exist_ok=True)
         tmp = dev_dir / "grants.json.tmp"

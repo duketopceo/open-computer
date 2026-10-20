@@ -122,6 +122,37 @@ def test_relay_task_ops_scoped_to_inbox(relay):
     assert req(relay, "POST", f"/tasks/{tid}/result", secret=relay.secret, body=b"{}")[0] == 403
 
 
+def test_relay_heartbeat_drains_parked(relay):
+    """P1 regression: a remote heartbeat must drain device/parked like the local path."""
+    tid = relay.fs.send("device/parked", {"step": {"kind": "echo", "text": "from-parked"}})
+    assert relay.fs.inbox_ids(f"device/{DID}") == []
+    status, _ = req(relay, "POST", "/heartbeat", secret=relay.secret)
+    assert status == 200
+    assert relay.fs.inbox_ids(f"device/{DID}") == [tid]
+    body = json.loads(relay.fs.task_body(tid))
+    assert body["envelope"]["sig"]  # re-sealed for this device during the drain
+
+
+def test_relay_result_rejects_missing_or_empty_body(relay):
+    tid = relay.fs.send(f"device/{DID}", {"envelope": {}})
+    relay.fs.claim(f"device/{DID}", tid, ttl=60)
+    assert req(relay, "POST", f"/tasks/{tid}/result", secret=relay.secret, body=b"")[0] == 400
+    assert relay.fs.inbox_ids(f"device/{DID}") == [tid]  # not tombstoned by an empty write
+
+
+def test_relay_claim_rejects_non_dict_and_bad_ttl(relay):
+    tid = relay.fs.send(f"device/{DID}", {"envelope": {}}, ttl=120)
+    assert req(relay, "POST", f"/tasks/{tid}/claim", secret=relay.secret, body=b"[1,2]")[0] == 400
+    assert req(relay, "POST", f"/tasks/{tid}/claim", secret=relay.secret, body=b'{"ttl": NaN}')[0] == 200
+    # NaN ttl fell back to the envelope's ttl — claim still lands, not a permanent self-lease
+
+
+def test_relay_auth_rejection_audited(relay):
+    req(relay, "GET", "/inbox", secret="wrong")
+    rows = [json.loads(ln) for ln in (relay.root / "orchestrator.ndjson").read_text().splitlines() if ln.strip()]
+    assert any(r.get("event") == "relay_auth_rejected" for r in rows)
+
+
 def test_relay_bad_tids_rejected(relay):
     assert req(relay, "GET", "/tasks/../../etc/passwd", secret=relay.secret)[0] == 404
     assert req(relay, "GET", "/tasks/not-hex!!", secret=relay.secret)[0] == 404
@@ -158,6 +189,7 @@ def test_remote_agent_end_to_end(relay, tmp_path):
     state = tmp_path / "agent-state"
     state.mkdir()
     (state / f"{DID}.secret").write_text(relay.secret)
+    (state / f"{DID}.secret").chmod(0o600)
     tid = relay.fs.send(
         f"device/{DID}", {"envelope": seal({"kind": "echo", "text": "remote-ok"}, relay.secret)}
     )
