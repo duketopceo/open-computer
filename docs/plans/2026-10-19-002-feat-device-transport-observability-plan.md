@@ -28,11 +28,10 @@ IDs stay `OC-*`.
 ## Problem Frame
 
 Everything the device plane needs for remote operation already exists:
-HMAC-signed envelopes with nonce replay protection (P1), scoped device
-tokens with TOTP refresh (P6), per-device secrets (P2), parked drain (P3),
-kill switch (P6). The only missing piece is a wire between the mailbox
-files and a device that isn't local — plus an operator who can't see any
-of it without shell access.
+HMAC-signed envelopes with nonce replay protection (P1), the grant store
+(P2), parked drain (P5), scoped device tokens + kill switch (P6). The only
+missing piece is a wire between the mailbox files and a device that isn't
+local — plus an operator who can't see any of it without shell access.
 
 ## Decisions
 
@@ -82,17 +81,24 @@ of it without shell access.
   protocol changes.
 - **Work:**
   - `services/device_relay/server.py` — small HTTPS-unaware stdlib HTTP
-    service rooted at the fsproto tree. Endpoints:
-    - `POST /device/<id>/heartbeat` → registry heartbeat write
-    - `GET /device/<id>/mailbox` → pending sealed envelope bodies
-    - `POST /device/<id>/results` → writes a signed result envelope into
-      the device outbox the orchestrator reads
-    - `POST /device/pair` → the P6 pairing handshake (TOTP) over the wire
-    - `POST /device/<id>/token/refresh` → token refresh per P6 semantics
-    - Device token verified on every request; wrong/absent → 401,
-      fail-closed. Per-device secret never leaves the host — envelopes
-      are sealed host-side (dispatch/drain unchanged); results are
-      verified against it on receipt.
+    service rooted at the fsproto tree. Endpoints (shipped under
+    `/devices/<did>/...`):
+    - `POST /devices/<did>/heartbeat` → registry heartbeat + parked drain
+    - `GET /devices/<did>/inbox` → pending task ids
+    - `GET /devices/<did>/tasks/<tid>` → task record body
+    - `POST /devices/<did>/tasks/<tid>/claim` → lease (409/410)
+    - `POST /devices/<did>/tasks/<tid>/result` → outbox write (409/410)
+    - `GET /devices/<did>/grants` → grant store snapshot
+    - `POST /devices/<did>/audit` → device-emittable event allowlist
+    - Pairing and token refresh stay host-side operator actions; there is
+      no remote pair/refresh endpoint in P8.
+    - Bearer = the pairing-time device token secret, verified per request;
+      wrong/absent → 401, fail-closed. That secret is dual-use: it is also
+      the envelope HMAC key, provisioned to the device at pairing time
+      (0600 file, operator-managed channel). Envelopes stay sealed
+      host-side; the device opens them with its own copy. Results are
+      opaque agent JSON — server-side result-envelope verification is
+      deferred (see risks).
   - `services/device_agent/remote.py` — transport client: poll
     heartbeat+mailbox on an interval, POST results; offline spool reuse
     of P7's JSON spool for results when the host is unreachable.
@@ -160,10 +166,12 @@ of it without shell access.
   request, tailscale-bind by default (LAN exposure opt-in), per-device
   scope (token A never sees mailbox B), kill switch revokes access
   server-side.
-- **Result forgery/replay.** Mitigation: results are sealed envelopes
-  verified against the host-side per-device secret with the same
-  120s window + persistent nonce set — replayed or mis-signed results
-  never reach the outbox.
+- **Result forgery/replay.** Mitigation (partial — honest boundary):
+  bearer auth scopes result writes to tasks in that device's own inbox
+  (403 cross-device), results are immutable once written, and writes to
+  failed/final tasks are refused. Results are NOT signed envelopes —
+  a stolen token can forge results for its own device until revoked.
+  Server-side result-envelope verification is deferred to a later unit.
 - **Sleep/disconnect gaps look like offline.** Mitigation: heartbeat
   staleness is already modeled (eligible/awake); parked drain absorbs
   gaps and flushes on return.

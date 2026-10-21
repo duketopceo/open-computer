@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import ipaddress
 import math
 import re
 import time
@@ -276,7 +277,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=8792)
     ap.add_argument("--bind", default="127.0.0.1", help="loopback or a tailscale IP — never public")
     a = ap.parse_args(argv)
-    if a.bind in ("0.0.0.0", "::"):
+    try:
+        wildcard = ipaddress.ip_address(a.bind).is_unspecified
+    except ValueError:
+        wildcard = not a.bind  # empty binds everything; a hostname is an explicit choice
+    if wildcard:
         ap.error("refusing to bind every interface — use a specific loopback or tailscale IP")
     srv = make_server(a.port, a.root, host=a.bind)
     print(f"device relay on {a.bind}:{a.port} root={a.root}", flush=True)

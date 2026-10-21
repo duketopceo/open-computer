@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -58,14 +59,24 @@ def _check_url(base_url: str) -> None:
         return
     if scheme != "http":
         raise RemoteError(f"relay url must be http(s): {base_url!r}")
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        ip = None
-    if ip is not None:
-        ok = ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")
-    else:
-        ok = host == "localhost" or "." not in host  # bare hostname = MagicDNS
+    tailnet = ipaddress.ip_network("100.64.0.0/10")
+
+    def tailnet_only(ip_s: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(ip_s)
+        except ValueError:
+            return False
+        return ip.is_loopback or ip in tailnet
+
+    ok = tailnet_only(host)  # literal IP
+    if not ok and host != "":
+        # hostname: resolve NOW and require every answer on loopback/tailnet —
+        # a bare name can resolve through LAN search domains to anything
+        try:
+            infos = socket.getaddrinfo(host, None)
+            ok = bool(infos) and all(tailnet_only(i[4][0]) for i in infos)
+        except OSError:
+            ok = False
     if not ok:
         raise RemoteError(f"cleartext http to {host} refused — use tailscale or https")
 
@@ -172,6 +183,8 @@ class RemoteClient:
             return
         if status == 409:
             raise ResultImmutable(tid)
+        if status == 410:
+            raise TaskFinal(tid)  # kill-switch race — drop the result, don't retry
         raise RemoteError(f"result {tid}: HTTP {status}")
 
     # --- audit duck ----------------------------------------------------------

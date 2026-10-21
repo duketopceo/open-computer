@@ -195,12 +195,39 @@ def test_outbox_write_refuses_failed_tasks(relay):
 def test_remote_client_url_policy():
     """Cleartext http only to loopback/tailnet — anything else needs https."""
     RemoteClient("http://127.0.0.1:8792", "d", "s")
-    RemoteClient("http://omarchy-max:8792", "d", "s")  # bare MagicDNS name
+    RemoteClient("http://localhost:8792", "d", "s")
     RemoteClient("http://100.101.102.103:8792", "d", "s")  # tailnet CGNAT
     RemoteClient("https://relay.example.com", "d", "s")
-    for bad in ("http://8.8.8.8:8792", "http://relay.example.com", "ftp://x"):
+    for bad in ("http://8.8.8.8:8792", "http://relay.example.com", "ftp://x", "http://no-such-host.invalid"):
         with pytest.raises(RemoteError, match="cleartext|must be http"):
             RemoteClient(bad, "d", "s")
+
+
+def test_remote_client_url_policy_resolves_hostnames(monkeypatch):
+    """A bare hostname is only ok if it resolves inside the tailnet."""
+    import socket as _socket
+    from services.device_agent import remote as remote_mod
+
+    def fake_gai(host, port, *a, **k):
+        ips = {"omarchy-max": "100.101.102.103", "relay": "192.168.1.50"}[host]
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ips, port or 0))]
+
+    monkeypatch.setattr(remote_mod.socket, "getaddrinfo", fake_gai)
+    RemoteClient("http://omarchy-max:8792", "d", "s")
+    with pytest.raises(RemoteError, match="cleartext"):
+        RemoteClient("http://relay:8792", "d", "s")  # resolves to LAN, not tailnet
+
+
+def test_remote_outbox_write_task_final(relay):
+    """Remote kill-switch path: 410 from the relay raises TaskFinal, not RemoteError."""
+    from oc.fsproto import TaskFinal
+
+    tid = relay.fs.send(f"device/{DID}", {"envelope": {}}, ttl=120)
+    relay.fs.claim(f"device/{DID}", tid, ttl=120)
+    (relay.root / "run" / "tasks" / tid / "status").write_text("failed")
+    c = RemoteClient(relay.url, DID, relay.secret)
+    with pytest.raises(TaskFinal):
+        c.outbox_write(f"device/{DID}", tid, b'{"ok": true}')
 
 
 # --- remote client behaviour ---------------------------------------------------
