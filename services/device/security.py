@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets as _secrets
 import struct
 import time
@@ -50,6 +51,16 @@ class DeviceToken:
 
     def active(self, now: float) -> bool:
         return not self.revoked and now <= self.expires_at
+
+
+DEVICE_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
+# Mailbox namespace is `device/<id>` — "." / ".." escape it; "parked" is the global
+# parked queue and must never be claimable as a device.
+RESERVED_DEVICE_IDS = frozenset({".", "..", "parked"})
+
+
+def valid_device_id(did: str) -> bool:
+    return bool(DEVICE_ID_RE.fullmatch(did)) and did not in RESERVED_DEVICE_IDS
 
 
 def mint_totp_secret(nbytes: int = 20) -> str:
@@ -143,6 +154,8 @@ def pair_device(
     """Pair a headless device after verifying `totp_code`."""
     t = time.time() if now is None else now
     did = str(payload.get("device_id") or "")
+    if not valid_device_id(did):
+        raise PairingError(f"invalid device_id: {did!r}")
     if not verify_totp(totp_secret, totp_code, now=t):
         if audit is not None and hasattr(audit, "append"):
             audit.append({"event": "device_pair_refused", "device_id": did, "reason": "invalid_totp"})

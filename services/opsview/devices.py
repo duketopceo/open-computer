@@ -16,18 +16,14 @@ from __future__ import annotations
 
 import json
 import math
-import re
 import time
 from pathlib import Path
 from typing import Any
 
 from services.device.registry import STALE_AFTER
+from services.device.security import valid_device_id
 
 PARKED = "device/parked"
-
-# Registry keys become mailbox path segments — only ids the agent could legitimately use.
-DEVICE_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
-RESERVED = {"parked", ".", ".."}
 
 
 def _load_json(path: Path) -> dict:
@@ -98,7 +94,7 @@ def collect_devices(root: Path | str, *, now: float | None = None, stale_after: 
     rows: list[dict[str, Any]] = []
     for did in sorted(registry):
         d = registry[did]
-        if not isinstance(d, dict) or not DEVICE_ID.fullmatch(did) or did in RESERVED:
+        if not isinstance(d, dict) or not valid_device_id(did):
             continue
         last = _num(d.get("last_heartbeat"))
         if last < 0 or last > t + 60:  # beyond small clock skew = corrupt; page can't render 1e20 anyway

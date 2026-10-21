@@ -24,8 +24,10 @@ class AuditLog:
     def append(self, row: dict) -> None:
         rec = {**row, "ts": time.time()}
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND)
-        with os.fdopen(fd, "a") as f:
-            f.write(json.dumps(rec) + "\n")
+        try:
+            os.write(fd, (json.dumps(rec) + "\n").encode())  # single O_APPEND write — no torn lines
+        finally:
+            os.close(fd)
 
     def rows(self) -> list[dict]:
         return [json.loads(ln) for ln in self.path.read_text().splitlines() if ln.strip()]
