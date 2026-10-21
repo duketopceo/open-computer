@@ -168,10 +168,39 @@ def test_relay_grants_scoped(relay):
 
 
 def test_relay_audit_appends(relay):
-    status, _ = req(relay, "POST", "/audit", secret=relay.secret, body=b'{"event": "test_event"}')
+    status, _ = req(relay, "POST", "/audit", secret=relay.secret, body=b'{"event": "grant_check"}')
     assert status == 200
     rows = [json.loads(ln) for ln in (relay.root / "orchestrator.ndjson").read_text().splitlines() if ln.strip()]
-    assert any(r.get("event") == "test_event" and r.get("via") == "relay" and r.get("device_id") == DID for r in rows)
+    assert any(r.get("event") == "grant_check" and r.get("via") == "relay" and r.get("device_id") == DID for r in rows)
+
+
+def test_relay_audit_rejects_control_plane_events(relay):
+    """A device can only emit its own event families — not fabricate control-plane history."""
+    for bad in ("device_paired", "grant_revoked", "device_killed", "test_event"):
+        status, _ = req(relay, "POST", "/audit", secret=relay.secret, body=json.dumps({"event": bad}).encode())
+        assert status == 403, bad
+
+
+def test_outbox_write_refuses_failed_tasks(relay):
+    """Kill-switch race: a task failed mid-lease can't take a late tombstoned result."""
+    tid = relay.fs.send(f"device/{DID}", {"envelope": {}})
+    relay.fs.claim(f"device/{DID}", tid, ttl=60)
+    (relay.root / "run" / "tasks" / tid / "status").write_text("failed")
+    from oc.fsproto import TaskFinal
+
+    with pytest.raises(TaskFinal):
+        relay.fs.outbox_write(f"device/{DID}", tid, b"{}")
+
+
+def test_remote_client_url_policy():
+    """Cleartext http only to loopback/tailnet — anything else needs https."""
+    RemoteClient("http://127.0.0.1:8792", "d", "s")
+    RemoteClient("http://omarchy-max:8792", "d", "s")  # bare MagicDNS name
+    RemoteClient("http://100.101.102.103:8792", "d", "s")  # tailnet CGNAT
+    RemoteClient("https://relay.example.com", "d", "s")
+    for bad in ("http://8.8.8.8:8792", "http://relay.example.com", "ftp://x"):
+        with pytest.raises(RemoteError, match="cleartext|must be http"):
+            RemoteClient(bad, "d", "s")
 
 
 # --- remote client behaviour ---------------------------------------------------
@@ -202,3 +231,17 @@ def test_remote_agent_end_to_end(relay, tmp_path):
 def test_remote_agent_requires_provisioned_secret(relay, tmp_path):
     with pytest.raises(SystemExit):
         agent_main.main(["--remote", relay.url, "--device-id", DID, "--state-dir", str(tmp_path / "empty"), "--once"])
+
+
+def test_remote_agent_flushes_pending_result(relay, tmp_path):
+    """A result persisted in pending.json is delivered even with an empty inbox."""
+    state = tmp_path / "agent-state"
+    state.mkdir()
+    (state / f"{DID}.secret").write_text(relay.secret)
+    (state / f"{DID}.secret").chmod(0o600)
+    tid = relay.fs.send(f"device/{DID}", {"envelope": {}}, ttl=120)
+    relay.fs.claim(f"device/{DID}", tid, ttl=120)  # simulate prior crashed cycle
+    (state / f"{DID}.pending.json").write_text(json.dumps({tid: {"ok": True, "echo": "recovered"}}))
+    rc = agent_main.main(["--remote", relay.url, "--device-id", DID, "--state-dir", str(state), "--once"])
+    assert rc == 0
+    assert json.loads(relay.fs.collect("orchestrator", tid))["echo"] == "recovered"

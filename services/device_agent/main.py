@@ -14,7 +14,7 @@ import os
 import time
 from pathlib import Path
 
-from oc.fsproto import AlreadyLeased, TaskFinal, adapter as fs_adapter
+from oc.fsproto import AlreadyLeased, ResultImmutable, TaskFinal, adapter as fs_adapter
 from services.device import GrantStore, adapter as registry_adapter
 from services.device.protocol import WINDOW, mint_secret
 from services.gate.audit import AuditLog
@@ -22,6 +22,21 @@ from services.gate.audit import AuditLog
 from .exec import execute
 from .heartbeat import HEARTBEAT_EVERY, registration_payload
 from .remote import RemoteClient, RemoteError
+
+
+def _load_pending(path: Path) -> dict[str, dict]:
+    """Executed results not yet confirmed written — retried every cycle, restart-safe."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_pending(path: Path, pending: dict[str, dict]) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(pending))
+    tmp.replace(path)
 
 
 def _load_seen(path: Path, now: float) -> dict[str, float]:
@@ -88,11 +103,26 @@ def main(argv: list[str] | None = None) -> int:
     seen_expiry = _load_seen(seen_file, time.time())
     seen: set[str] = set(seen_expiry)
     mailbox = f"device/{a.device_id}"
+    pending_file = seen_file.with_name(seen_file.name.replace(".seen.json", ".pending.json"))
+    pending = _load_pending(pending_file)
+
+    def flush(tid: str) -> None:
+        """One result-write attempt; success/final drops it, transport keeps it for next cycle."""
+        try:
+            fs.outbox_write(mailbox, tid, json.dumps(pending[tid]).encode())
+        except (TaskFinal, ResultImmutable):
+            pass  # finished by other means or failed (e.g. kill switch) — result no longer wanted
+        except (RemoteError, OSError):
+            return  # transport — stays in pending, retried next cycle
+        pending.pop(tid, None)
+        _save_pending(pending_file, pending)
 
     while True:
         try:
             reg.heartbeat(a.device_id)
             grants = client.grant_store(state) if a.remote else GrantStore(root, audit=audit)
+            for tid in list(pending):  # results from earlier cycles first
+                flush(tid)
             for tid in fs.inbox_ids(mailbox):
                 try:
                     fs.claim(mailbox, tid, ttl=HEARTBEAT_EVERY * 3)
@@ -114,14 +144,16 @@ def main(argv: list[str] | None = None) -> int:
                     for nonce in fresh:
                         seen_expiry[nonce] = t + WINDOW
                     _save_seen(seen_file, seen_expiry, t)
-                fs.outbox_write(mailbox, tid, json.dumps(result).encode())
+                pending[tid] = result  # durable on-device before the write is attempted
+                _save_pending(pending_file, pending)
+                flush(tid)
         except RemoteError as e:
             if a.once:
                 raise SystemExit(f"relay unreachable: {e}")
             time.sleep(HEARTBEAT_EVERY)
             continue
         if a.once:
-            return 0
+            return 0 if not pending else 1
         time.sleep(HEARTBEAT_EVERY)
 
 

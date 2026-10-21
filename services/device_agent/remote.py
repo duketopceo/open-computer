@@ -9,12 +9,20 @@ durable fsproto spine.
 Errors surface as `RemoteError` (transport) or the *same* fsproto exceptions the
 local path raises (`AlreadyLeased`, `TaskFinal`, `ResultImmutable`) — the drain
 loop doesn't need to know which transport it is on.
+
+Token lifecycle: tokens expire (`expires_at` in `devices/<did>.token.json`). An
+unattended remote agent has no refresh path yet — after expiry it stays alive
+but every call 401s until an operator re-pairs. Until refresh is designed,
+pair remote devices with a long `token_ttl` and treat expiry as an operator
+event (re-pair + redeploy the secret file).
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,12 +45,38 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+def _check_url(base_url: str) -> None:
+    """Refuse cleartext bearer traffic off the tailnet.
+
+    The secret is dual-use (bearer + envelope key), so plain http is only allowed
+    to loopback, tailscale CGNAT addresses, or bare hostnames (MagicDNS names
+    resolve inside the tailnet — wireguard-encrypted). Everything else: https.
+    """
+    host = (urllib.parse.urlparse(base_url).hostname or "").lower()
+    scheme = urllib.parse.urlparse(base_url).scheme
+    if scheme == "https":
+        return
+    if scheme != "http":
+        raise RemoteError(f"relay url must be http(s): {base_url!r}")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        ok = ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")
+    else:
+        ok = host == "localhost" or "." not in host  # bare hostname = MagicDNS
+    if not ok:
+        raise RemoteError(f"cleartext http to {host} refused — use tailscale or https")
+
+
 class RemoteError(RuntimeError):
     """Transport failure or an unexpected relay response."""
 
 
 class RemoteClient:
     def __init__(self, base_url: str, device_id: str, secret: str, *, timeout: float = 10.0):
+        _check_url(base_url)
         self.base = base_url.rstrip("/")
         self.device_id = device_id
         self._secret = secret
@@ -76,9 +110,12 @@ class RemoteClient:
         if status != 200:
             raise RemoteError(f"relay {method} {path}: HTTP {status} {raw[:120]!r}")
         try:
-            return json.loads(raw)
+            data = json.loads(raw)
         except ValueError as e:
             raise RemoteError(f"relay {method} {path}: bad json response") from e
+        if not isinstance(data, dict):
+            raise RemoteError(f"relay {method} {path}: expected a json object")
+        return data
 
     # --- registry duck -------------------------------------------------------
     def heartbeat(self, device_id: str | None = None, **_kw) -> Any:
@@ -91,8 +128,14 @@ class RemoteClient:
             raise RemoteError("heartbeat refused: credential expired or revoked")
         if status != 200:
             raise RemoteError(f"heartbeat: HTTP {status}")
-        data = json.loads(raw)
-        self._device = data.get("device")
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            raise RemoteError("heartbeat: bad json response") from e
+        if not isinstance(data, dict):
+            raise RemoteError("heartbeat: expected a json object")
+        dev = data.get("device")
+        self._device = dev if isinstance(dev, dict) else None
         return SimpleNamespace(**(self._device or {}))
 
     def get(self, device_id: str) -> Any | None:

@@ -40,6 +40,10 @@ ROUTES = {
 }
 MAX_BODY = 1 << 20  # 1 MiB — results/audits stay small; nothing larger may arrive
 
+# Event families a remote device may legitimately emit (exec/privacy/intake) —
+# control-plane events (device_paired, grant_revoked, ...) can't be fabricated here.
+DEVICE_EVENTS = ("capability_", "device_goal_", "device_privacy", "grant_check", "wisp_", "consent_", "envelope_", "parked_")
+
 
 def _load_token(root: Path, did: str) -> DeviceToken | None:
     p = root / "devices" / f"{did}.token.json"
@@ -244,6 +248,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, b"bad json", "text/plain")
         if not isinstance(event, dict) or not isinstance(event.get("event"), str):
             return self._send(400, b"audit event must be an object with a string event field", "text/plain")
+        if not event["event"].startswith(DEVICE_EVENTS):
+            return self._send(403, b"event family not device-emittable", "text/plain")
         self.audit.append({**event, "device_id": did, "via": "relay"})
         self._json(200, {"ok": True})
 
@@ -270,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=8792)
     ap.add_argument("--bind", default="127.0.0.1", help="loopback or a tailscale IP — never public")
     a = ap.parse_args(argv)
+    if a.bind in ("0.0.0.0", "::"):
+        ap.error("refusing to bind every interface — use a specific loopback or tailscale IP")
     srv = make_server(a.port, a.root, host=a.bind)
     print(f"device relay on {a.bind}:{a.port} root={a.root}", flush=True)
     try:
