@@ -15,8 +15,12 @@ Config: env `CUBE_API_URL`, `CUBE_API_KEY`, `CUBE_TEMPLATE_ID`.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .client import ExecplaneAdapter, ExecResult, SandboxUnavailable
+
+if TYPE_CHECKING:
+    from .space import SpaceAdapter
 from .policy import Diff, PolicyDenied, PolicyEngine, Proposal
 
 __all__ = [
@@ -31,5 +35,15 @@ __all__ = [
 ]
 
 
-def adapter(root: Path | str, **_: object) -> ExecplaneAdapter:
-    return ExecplaneAdapter(Path(root))
+def adapter(root: Path | str, backend: str = "cube") -> ExecplaneAdapter | "SpaceAdapter":
+    """Execplane backend selection — explicit `backend`, never ambient.
+
+    No catch-all kwargs: a misspelled `backend` must raise TypeError, not
+    silently resolve to cube."""
+    if backend == "cube":
+        return ExecplaneAdapter(Path(root))
+    if backend == "space":
+        from .space import SpaceAdapter
+
+        return SpaceAdapter(Path(root))
+    raise ValueError(f"unknown execplane backend {backend!r}")
