@@ -13,17 +13,30 @@
 | Docker | 29.8.2 | Kind prereq |
 | btrfs | module loaded + persisted via `/etc/modules-load.d/space-btrfs.conf` | SPACE filesystem requirement |
 
-cluster1 and cluster2 remain the fallback pair (same x86_64/KVM/Docker shape,
-~15G RAM) — cluster1 additionally hosts the P10 device agent.
+Fallback is conditional, not active: cluster1/cluster2 share the
+x86_64/KVM/Docker shape (~15G RAM), but neither has a non-interactive root
+path today (cluster1: passworded sudo, no credential in omaseal). They become
+a fallback only once root is provisioned. cluster1 also hosts the P10 device
+agent.
 
 **aarch64 verdict (permanent):** `omarchy-max` (Asahi/arm64) cannot run the
 SPACE eval path — upstream's Kind path is x86_64-only (`uname -m` check fails
 fast) and Firecracker images/tooling target x86_64. CubeVM stays the aarch64
 dev backend — the two-backend model is the architecture, not a workaround.
 
-Cold-boot measurement: pending — SPACE bring-up completed across two runs
-(first failed on host limits below); create→exec≈seconds once seed was
-published. Record a clean cold-boot timing if the cluster is ever recreated.
+Cold-boot baseline (2026-10-24, measured through `SpaceAdapter` over the
+tailnet SSH tunnel, `seed` template, Firecracker, 3 runs):
+
+| Run | create (API → running) | first exec | create→exec |
+|---|---|---|---|
+| 1 | 1.97s | 0.31s | 2.28s |
+| 2 | 1.63s | 0.12s | 1.75s |
+| 3 | 2.46s | 0.15s | 2.61s |
+
+That is sandbox cold boot on a warm cluster. Cluster bring-up time (`up.sh`
+from nothing) has no clean number: the first run failed on the host limits
+below and the second reused the cluster. Time it if the cluster is ever
+recreated.
 
 ## S1 deploy (2026-10-23) — SPACE live on cluster-4
 
