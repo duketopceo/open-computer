@@ -35,7 +35,7 @@ class Action:
 ACTIONS: tuple[Action, ...] = (
     # Navigate: the sidebar sections, in order
     Action("nav.work", "Work", "Navigate", "g w", href="/work"),
-    Action("nav.overview", "Overview", "Navigate", "g o", href="/"),
+    Action("nav.overview", "Overview", "Navigate", "g o", href="/overview"),
     Action("nav.goals", "Goals", "Navigate", "g t", href="/goals"),
     Action("nav.automations", "Automations", "Navigate", "g a", href="/automations"),
     Action("nav.skills", "Skills", "Navigate", "g k", href="/skills"),
