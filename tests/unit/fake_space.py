@@ -103,10 +103,18 @@ class FakeSpaceSDK:
     management surface, `.Sandbox(**opts)` for the routed data-plane client.
     Records every payload and every routed ConnectionConfig."""
 
-    def __init__(self, *, fail_create: bool = False, broken_network: bool = False, open_egress: bool = False):
+    def __init__(
+        self,
+        *,
+        fail_create: bool = False,
+        fail_route: bool = False,
+        broken_network: bool = False,
+        open_egress: bool = False,
+    ):
         self.created: list[dict] = []
         self.routed_configs: list[dict] = []
         self._fail = fail_create
+        self._fail_route = fail_route
         self._faults = {"broken_network": broken_network, "open_egress": open_egress}
         self._last_payload: dict = {}
         self._last_sandbox: _Sandbox | None = None
@@ -136,6 +144,8 @@ class FakeSpaceSDK:
                 # the management object are visible through this client).
                 if rest:
                     raise TypeError(f"Sandbox() got unexpected keyword arguments: {sorted(rest)}")
+                if sdk._fail_route:
+                    raise RuntimeError("routed client construction failed")
                 inner = sdk._last_sandbox or _Sandbox(sdk._last_payload, **sdk._faults)
                 inner.connection_config = connection_config
                 self._inner = inner

@@ -79,10 +79,22 @@ def test_data_plane_routing_uses_host_header(tmp_path):
     assert len(sdk.routed_configs) == 1
     cfg = sdk.routed_configs[0]
     assert cfg["sandbox_url"] == "http://127.0.0.1:8092"
-    assert cfg["headers"]["Host"] == "49983-fake-sbx.local.e2b.test"
-    assert "Host" not in cfg["extra_sandbox_headers"]
+    # Selector rides the sandbox-only header path, never management `headers`.
+    assert "headers" not in cfg
+    assert cfg["extra_sandbox_headers"]["Host"] == "49983-fake-sbx.local.e2b.test"
+    assert sum(k.lower() == "host" for k in cfg["extra_sandbox_headers"]) == 1
     r = sb.exec("echo hi")
     assert r.returncode == 0
+
+
+def test_routed_client_failure_kills_the_created_sandbox(tmp_path):
+    sdk = FakeSpaceSDK(fail_route=True)
+    a = adapter(tmp_path, sdk)
+    a._data_plane_url = "http://127.0.0.1:8092"
+    sb = a.make_sandbox()
+    assert sdk._last_sandbox._killed is True
+    with pytest.raises(Exception):
+        sb.exec("echo hi")
 
 
 def test_no_data_plane_url_uses_the_create_sandbox(tmp_path):

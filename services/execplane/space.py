@@ -63,16 +63,17 @@ class _SpaceSandbox:
             # the sandbox is selected by Host header — `{envd_port}-{id}.{domain}`.
             # Same routing SPACE's own space_smoke adapter uses; no wildcard DNS
             # needed on the client.
+            # The selector rides `extra_sandbox_headers` (data-plane requests
+            # only), not `headers` — those also go to management API calls.
             cfg = sb.connection_config
+            sandbox_headers = {k: v for k, v in cfg.sandbox_headers.items() if k.lower() != "host"}
+            sandbox_headers["Host"] = f"{cfg.envd_port}-{sb.sandbox_id}.{self._domain}"
             routed = self._sdk.connection_config.ConnectionConfig(
                 domain=self._domain,
                 api_key=self._api_key,
                 api_url=self._api_url,
                 sandbox_url=self._data_plane_url,
-                headers={"Host": f"{cfg.envd_port}-{sb.sandbox_id}.{self._domain}"},
-                extra_sandbox_headers={
-                    k: v for k, v in cfg.sandbox_headers.items() if k.lower() != "host"
-                },
+                extra_sandbox_headers=sandbox_headers,
             )
             self._dp = self._sdk.Sandbox(
                 sandbox_id=sb.sandbox_id,
@@ -194,11 +195,19 @@ class SpaceAdapter:
             )
         except Exception as e:
             return _FailedSandbox(e)
-        return _SpaceSandbox(
-            sb,
-            sdk=self._sdk,
-            api_key=self._api_key,
-            api_url=self._api_url,
-            domain=self._domain,
-            data_plane_url=self._data_plane_url,
-        )
+        try:
+            return _SpaceSandbox(
+                sb,
+                sdk=self._sdk,
+                api_key=self._api_key,
+                api_url=self._api_url,
+                domain=self._domain,
+                data_plane_url=self._data_plane_url,
+            )
+        except Exception as e:
+            # Created but unusable — don't leak a running microVM.
+            try:
+                sb.kill()
+            except Exception:
+                pass
+            return _FailedSandbox(e)
