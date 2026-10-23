@@ -6,12 +6,19 @@ Mirrors fake_cube.FakeCubeSDK but models the SPACE create-payload shape:
 entries instead of cube's `network.allow_out`. It cannot validate SPACE's
 real behaviour; live rows and recorded cassettes (OC-023) do that. Its job
 is to prove the adapter hands the SDK the right payload.
+
+Also models the split data-plane path: `connection_config.ConnectionConfig`
+records the kwargs the adapter builds for the routed exec client, and the
+`Sandbox(**opts)` constructor accepts the routed-client shape
+(`sandbox_id`/`connection_config`/tokens) so `commands.run` reaches the
+same simulated envd.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 
 @dataclass
@@ -45,27 +52,80 @@ class _Commands:
         return _Run(0)
 
 
+class _FakeConnectionConfig:
+    """Records the kwargs the adapter passes when it builds the routed
+    data-plane client. `envd_port`/`sandbox_headers` mirror e2b's attrs."""
+
+    def __init__(self, **kw):
+        self.kw = kw
+        self.envd_port = 49983
+        self.sandbox_headers = {
+            "Host": "49983-fake-sbx.local.e2b.test",
+            "e2b-sandbox-id": "fake-sbx",
+            "e2b-sandbox-port": "49983",
+        }
+
+
 class _Sandbox:
     def __init__(self, payload: dict, **faults):
         self.commands = _Commands(payload, **faults)
+        self.sandbox_id = "fake-sbx"
+        self.sandbox_domain = "local.e2b.test"
+        self.connection_config = _FakeConnectionConfig()
+        self._envd_version = "v1"
+        self._envd_access_token = "fake-envd-token"
+        self.traffic_access_token = "fake-traffic-token"
 
     def kill(self) -> None:
         pass
 
 
 class FakeSpaceSDK:
-    """Drop-in for the `e2b` module: `.Sandbox.create(**payload)`. Records every payload."""
+    """Drop-in for the `e2b` module: `.Sandbox.create(**payload)` for the
+    management surface, `.Sandbox(**opts)` for the routed data-plane client.
+    Records every payload and every routed ConnectionConfig."""
 
     def __init__(self, *, fail_create: bool = False, broken_network: bool = False, open_egress: bool = False):
         self.created: list[dict] = []
+        self.routed_configs: list[dict] = []
         self._fail = fail_create
         self._faults = {"broken_network": broken_network, "open_egress": open_egress}
+        self._last_payload: dict = {}
         sdk = self
 
+        class _RecordingConnectionConfig(_FakeConnectionConfig):
+            def __init__(self, **kw):
+                super().__init__(**kw)
+                sdk.routed_configs.append(kw)
+
+        self.connection_config = SimpleNamespace(ConnectionConfig=_RecordingConnectionConfig)
+
         class Sandbox:
+            def __init__(
+                self,
+                *,
+                sandbox_id=None,
+                sandbox_domain=None,
+                envd_version=None,
+                envd_access_token=None,
+                traffic_access_token=None,
+                connection_config=None,
+                **rest,
+            ):
+                # The routed data-plane client: shares the last-created
+                # payload's simulated envd, carries the routed config.
+                if rest:
+                    raise TypeError(f"Sandbox() got unexpected keyword arguments: {sorted(rest)}")
+                inner = _Sandbox(sdk._last_payload, **sdk._faults)
+                inner.connection_config = connection_config
+                self.commands = inner.commands
+                self.sandbox_id = sandbox_id
+                self.sandbox_domain = sandbox_domain
+
             @staticmethod
             def create(
                 api_key=None,
+                api_url=None,
                 domain=None,
                 template=None,
                 timeout=None,
@@ -87,6 +147,7 @@ class FakeSpaceSDK:
                     k: v
                     for k, v in dict(
                         api_key=api_key,
+                        api_url=api_url,
                         domain=domain,
                         template=template,
                         timeout=timeout,
@@ -103,6 +164,7 @@ class FakeSpaceSDK:
                 sdk.created.append(payload)
                 if sdk._fail:
                     raise RuntimeError("space api 503")
+                sdk._last_payload = payload
                 return _Sandbox(payload, **sdk._faults)
 
         self.Sandbox = Sandbox
