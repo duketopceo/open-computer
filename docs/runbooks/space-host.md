@@ -6,6 +6,7 @@
 |---|---|---|
 | x86_64 | yes | — |
 | `/dev/kvm` + `/dev/net/tun` | yes | Firecracker needs both |
+| `kvm-ok` | "KVM acceleration can be used" | S0 gate: verified before any install step |
 | Root access | `cluster-4` user, **passwordless sudo** | cluster1 failed this — passworded, no credential path |
 | RAM | **30G** (~23G free) | Kind + Rust builds + microVMs fit comfortably |
 | Disk | 468G, 325G free | images + templates + btrfs |
