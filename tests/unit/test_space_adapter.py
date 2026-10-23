@@ -92,6 +92,20 @@ def test_no_data_plane_url_uses_the_create_sandbox(tmp_path):
     assert sb.exec("echo hi").returncode == 0
 
 
+def test_pause_resume_rebuilds_the_routed_client(tmp_path):
+    # S3 lifecycle: pause (SPACE suspend) → resume (connect auto-restores) —
+    # restore rotates envd credentials, so resume must rebuild _dp, not
+    # reuse the stale routed client.
+    sdk = FakeSpaceSDK()
+    a = adapter(tmp_path, sdk)
+    a._data_plane_url = "http://127.0.0.1:8092"
+    sb = a.make_sandbox()
+    sb.pause()
+    sb.resume()
+    assert len(sdk.routed_configs) == 2
+    assert sb.exec("echo hi").returncode == 0
+
+
 def test_create_without_configured_url_is_fail_closed(tmp_path):
     sb = adapter(tmp_path, FakeSpaceSDK(), url="").make_sandbox()
     with pytest.raises(Exception):

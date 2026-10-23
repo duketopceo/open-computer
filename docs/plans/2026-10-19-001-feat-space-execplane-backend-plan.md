@@ -232,6 +232,24 @@ placement, cost cap, and audit above it.
   + ROADMAP updates; (5) S5 policy binding. Independent enough to
   reorder around infra reality.
 
+### Status note (2026-10-23, PR #61)
+
+S2 (skeleton) shipped in #56. S3 shipped in #61 against the live
+cluster-4 ECW deployment:
+
+- create/exec/kill verified live (Firecracker microVM; `seed` template).
+- pause/resume verified live — a `/tmp/marker` file survives
+  suspend→restore; `resume()` rebuilds the routed data-plane client
+  because restore rotates envd credentials.
+- Egress policy is payload-verified only: the eval cluster is hermetic
+  (sandboxes have no upstream route), so R2 packet-level rows wait for
+  the net-gateway path (S4/S5). `allow_public_traffic=false` is sent
+  explicitly — the SDK defaults it true and ECW 400s the true form.
+- `fork()` is deferred: e2b 2.21.1 (ECW's tested baseline) exposes no
+  fork call. `is_running()` is not surfaced — envd health does not
+  reflect kill/pause on this deployment, so no lifecycle-truth method
+  ships rather than one that lies.
+
 ## Scope Boundaries
 
 - No SPACE on aarch64/macOS — x86_64+KVM only, per the OC-031 verdict.

@@ -46,30 +46,40 @@ class _SpaceSandbox:
         domain: str,
         data_plane_url: str,
     ):
-        self._sb = sdk_sandbox
-        self._dp = sdk_sandbox
-        if data_plane_url:
+        self._sdk = sdk
+        self._api_key = api_key
+        self._api_url = api_url
+        self._domain = domain
+        self._data_plane_url = data_plane_url
+        self._install(sdk_sandbox)
+
+    def _install(self, sb: Any) -> None:
+        """(Re)bind the management sandbox + routed data-plane client. Called
+        at create and again after resume — restore rotates envd credentials."""
+        self._sb = sb
+        self._dp = sb
+        if self._data_plane_url:
             # Split deployment (Kind): the data plane lives at a local URL and
             # the sandbox is selected by Host header — `{envd_port}-{id}.{domain}`.
             # Same routing SPACE's own space_smoke adapter uses; no wildcard DNS
             # needed on the client.
-            cfg = sdk_sandbox.connection_config
-            routed = sdk.connection_config.ConnectionConfig(
-                domain=domain,
-                api_key=api_key,
-                api_url=api_url,
-                sandbox_url=data_plane_url,
-                headers={"Host": f"{cfg.envd_port}-{sdk_sandbox.sandbox_id}.{domain}"},
+            cfg = sb.connection_config
+            routed = self._sdk.connection_config.ConnectionConfig(
+                domain=self._domain,
+                api_key=self._api_key,
+                api_url=self._api_url,
+                sandbox_url=self._data_plane_url,
+                headers={"Host": f"{cfg.envd_port}-{sb.sandbox_id}.{self._domain}"},
                 extra_sandbox_headers={
                     k: v for k, v in cfg.sandbox_headers.items() if k.lower() != "host"
                 },
             )
-            self._dp = sdk.Sandbox(
-                sandbox_id=sdk_sandbox.sandbox_id,
-                sandbox_domain=sdk_sandbox.sandbox_domain,
-                envd_version=sdk_sandbox._envd_version,
-                envd_access_token=sdk_sandbox._envd_access_token,
-                traffic_access_token=sdk_sandbox.traffic_access_token,
+            self._dp = self._sdk.Sandbox(
+                sandbox_id=sb.sandbox_id,
+                sandbox_domain=sb.sandbox_domain,
+                envd_version=sb._envd_version,
+                envd_access_token=sb._envd_access_token,
+                traffic_access_token=sb.traffic_access_token,
                 connection_config=routed,
             )
 
@@ -80,6 +90,15 @@ class _SpaceSandbox:
     def exec(self, cmd: str) -> ExecResult:
         r = self._dp.commands.run(cmd)
         return ExecResult(returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr)
+
+    def pause(self) -> None:
+        """ECW pause → SPACE suspend: persist VM state, release the worker."""
+        self._sb.pause()
+
+    def resume(self, timeout: int | None = None) -> None:
+        """ECW connect auto-resumes a paused sandbox (SPACE restore), then
+        rebuilds the routed client — restore rotates envd credentials."""
+        self._install(self._sb.connect(timeout=timeout))
 
     def close(self) -> None:
         """Terminate the sandbox via the management surface. Never raises."""

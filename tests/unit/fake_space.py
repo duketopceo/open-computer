@@ -67,17 +67,35 @@ class _FakeConnectionConfig:
 
 
 class _Sandbox:
-    def __init__(self, payload: dict, **faults):
+    def __init__(self, payload: dict, restored: bool = False, _sdk=None, **faults):
         self.commands = _Commands(payload, **faults)
         self.sandbox_id = "fake-sbx"
         self.sandbox_domain = "local.e2b.test"
         self.connection_config = _FakeConnectionConfig()
         self._envd_version = "v1"
-        self._envd_access_token = "fake-envd-token"
+        self._envd_access_token = "fake-envd-token-restored" if restored else "fake-envd-token"
         self.traffic_access_token = "fake-traffic-token"
+        self._paused = False
+        self._killed = False
+        self._faults = faults
+        self._sdk = _sdk
+
+    def is_running(self) -> bool:
+        return not self._paused and not self._killed
+
+    def pause(self) -> None:
+        self._paused = True
+
+    def connect(self, timeout=None):
+        """ECW connect: auto-resume — returns a restored sandbox (rotated
+        envd token) so a stale routed client can't pass silently."""
+        sb = _Sandbox(self.commands.payload, restored=True, _sdk=self._sdk, **self._faults)
+        if self._sdk is not None:
+            self._sdk._last_sandbox = sb
+        return sb
 
     def kill(self) -> None:
-        pass
+        self._killed = True
 
 
 class FakeSpaceSDK:
@@ -91,6 +109,7 @@ class FakeSpaceSDK:
         self._fail = fail_create
         self._faults = {"broken_network": broken_network, "open_egress": open_egress}
         self._last_payload: dict = {}
+        self._last_sandbox: _Sandbox | None = None
         sdk = self
 
         class _RecordingConnectionConfig(_FakeConnectionConfig):
@@ -112,15 +131,20 @@ class FakeSpaceSDK:
                 connection_config=None,
                 **rest,
             ):
-                # The routed data-plane client: shares the last-created
-                # payload's simulated envd, carries the routed config.
+                # The routed data-plane client: shares the LAST-CREATED
+                # sandbox's simulated envd AND lifecycle state (pause/kill on
+                # the management object are visible through this client).
                 if rest:
                     raise TypeError(f"Sandbox() got unexpected keyword arguments: {sorted(rest)}")
-                inner = _Sandbox(sdk._last_payload, **sdk._faults)
+                inner = sdk._last_sandbox or _Sandbox(sdk._last_payload, **sdk._faults)
                 inner.connection_config = connection_config
+                self._inner = inner
                 self.commands = inner.commands
                 self.sandbox_id = sandbox_id
                 self.sandbox_domain = sandbox_domain
+
+            def is_running(self):
+                return self._inner.is_running()
 
             @staticmethod
             def create(
@@ -165,6 +189,7 @@ class FakeSpaceSDK:
                 if sdk._fail:
                     raise RuntimeError("space api 503")
                 sdk._last_payload = payload
-                return _Sandbox(payload, **sdk._faults)
+                sdk._last_sandbox = _Sandbox(payload, _sdk=sdk, **sdk._faults)
+                return sdk._last_sandbox
 
         self.Sandbox = Sandbox
