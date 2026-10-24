@@ -1,34 +1,69 @@
 import { useEffect, useRef, useState } from "react";
-import { transcribe } from "@/lib/api";
+import { errorMessage, transcribe } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "./primitives";
 
-type RecState = "idle" | "recording" | "transcribing";
+type RecState = "idle" | "starting" | "recording" | "transcribing";
+
+// Whisper's 25 MB upload cap is ~20+ min of opus; stop well before it.
+const MAX_RECORDING_MS = 120_000;
+
+function micError(e: unknown): string {
+  const name = e instanceof DOMException ? e.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") return "Microphone permission was denied.";
+  if (name === "NotFoundError" || name === "OverconstrainedError") return "No microphone found.";
+  if (name === "NotReadableError") return "The microphone is in use by another app.";
+  return `Couldn't start recording: ${errorMessage(e, "unknown error")}`;
+}
 
 export function Composer({
   onRun,
   disabled,
+  busy,
   starter,
 }: {
   onRun: (goal: string) => void;
   disabled?: boolean;
+  busy?: boolean;
   starter?: string;
 }) {
   const [value, setValue] = useState("");
   const [rec, setRec] = useState<RecState>("idle");
   const [err, setErr] = useState("");
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<number | undefined>();
+  // Set on unmount: late getUserMedia results and pending onstop handlers
+  // must release the mic and never upload audio for a view that's gone.
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
     if (starter) setValue(starter);
   }, [starter]);
 
-  useEffect(() => () => stop(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+      window.clearTimeout(timerRef.current);
+      const r = recorderRef.current;
+      recorderRef.current = null;
+      if (r && r.state !== "inactive") r.stop(); // onstop sees cancelled → no upload
+      releaseMic();
+    };
+  }, []);
+
+  function releaseMic() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }
 
   function stop() {
-    recorderRef.current?.stop();
+    window.clearTimeout(timerRef.current);
+    const r = recorderRef.current;
     recorderRef.current = null;
+    if (r && r.state !== "inactive") r.stop();
   }
 
   async function toggleVoice() {
@@ -36,23 +71,47 @@ export function Composer({
       stop();
       return;
     }
-    if (rec === "transcribing") return;
+    if (rec !== "idle") return;
     setErr("");
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setErr("No microphone available in this browser.");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setErr("Voice input isn't supported in this browser.");
       return;
     }
+    setRec("starting");
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      if (!cancelledRef.current) {
+        setErr(micError(e));
+        setRec("idle");
+      }
+      return;
+    }
+    if (cancelledRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    streamRef.current = stream;
+    try {
       const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
       const r = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       chunksRef.current = [];
       r.ondataavailable = (e) => {
         if (e.data.size) chunksRef.current.push(e.data);
       };
+      r.onerror = () => {
+        releaseMic();
+        if (!cancelledRef.current) {
+          setErr("Recording failed.");
+          setRec("idle");
+        }
+      };
       r.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
+        releaseMic();
+        if (cancelledRef.current) return;
         const blob = new Blob(chunksRef.current, { type: r.mimeType || "audio/webm" });
+        chunksRef.current = [];
         if (!blob.size) {
           setRec("idle");
           return;
@@ -60,22 +119,26 @@ export function Composer({
         setRec("transcribing");
         try {
           const text = await transcribe(blob);
-          setValue((v) => (v ? v + " " + text : text).trim());
-          setRec("idle");
+          if (!cancelledRef.current) setValue((v) => (v ? v + " " + text : text).trim());
         } catch (e) {
-          setErr(e instanceof Error ? e.message : "Transcription failed.");
-          setRec("idle");
+          if (!cancelledRef.current) setErr(errorMessage(e, "Transcription failed."));
+        } finally {
+          if (!cancelledRef.current) setRec("idle");
         }
       };
       recorderRef.current = r;
       r.start();
+      timerRef.current = window.setTimeout(stop, MAX_RECORDING_MS);
       setRec("recording");
-    } catch {
-      setErr("Microphone permission was denied.");
+    } catch (e) {
+      recorderRef.current = null;
+      releaseMic();
+      setErr(micError(e));
+      setRec("idle");
     }
   }
 
-  const canRun = value.trim().length > 0 && !disabled;
+  const canRun = value.trim().length > 0 && !disabled && !busy && rec === "idle";
 
   return (
     <div className="w-full max-w-2xl">
@@ -84,6 +147,8 @@ export function Composer({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
+            // IME confirmation (CJK etc.) also fires Enter — never submit on it.
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               if (canRun) onRun(value.trim());
@@ -93,7 +158,7 @@ export function Composer({
           maxLength={4000}
           placeholder="What should the computer do?"
           aria-label="Describe a goal"
-          className="w-full resize-none border-0 bg-transparent p-2 text-[15px] leading-relaxed text-ink outline-none placeholder:text-muted/70"
+          className="w-full resize-none border-0 bg-transparent p-2 text-[15px] leading-relaxed text-ink outline-none placeholder:text-muted"
         />
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-1.5">
@@ -103,6 +168,7 @@ export function Composer({
             <button
               type="button"
               onClick={toggleVoice}
+              disabled={disabled || busy || rec === "starting" || rec === "transcribing"}
               aria-label={rec === "recording" ? "Stop recording" : "Dictate"}
               title="Dictate (Groq LPU)"
               className={cn(
@@ -110,21 +176,25 @@ export function Composer({
                 rec === "recording" ? "bg-red-500 text-white" : "text-muted hover:bg-black/5",
               )}
             >
-              {rec === "transcribing" ? (
+              {rec === "transcribing" || rec === "starting" ? (
                 <span className="h-3 w-3 animate-pulse rounded-full border border-muted" />
               ) : (
                 <MicIcon />
               )}
             </button>
           </div>
-          <Button variant="primary" disabled={!canRun} onClick={() => onRun(value.trim())}>
-            {rec === "recording" ? "Listening…" : "Run"}
+          <Button variant="primary" disabled={!canRun} aria-busy={busy} onClick={() => onRun(value.trim())}>
+            {busy ? "Sending…" : rec === "recording" ? "Listening…" : "Run"}
           </Button>
         </div>
       </div>
       {rec !== "idle" && (
-        <p className="mt-2 text-center text-xs text-muted">
-          {rec === "recording" ? "Listening — click the mic to finish." : "Transcribing…"}
+        <p className="mt-2 text-center text-xs text-muted" role="status">
+          {rec === "starting"
+            ? "Waiting for the microphone…"
+            : rec === "recording"
+              ? "Listening — click the mic to finish (2 min max)."
+              : "Transcribing…"}
         </p>
       )}
       {err && (

@@ -44,6 +44,13 @@ jobs:
         with:
           node-version: "24"
       - run: uv sync --locked
+      # `/` serves the React front door from ui/dist; build it so e2e covers the real SPA.
+      - name: build ui (pnpm via corepack, frozen lockfile)
+        working-directory: ui
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm build
       - name: install playwright + axe (lockfile)
         working-directory: tests/e2e
         run: |

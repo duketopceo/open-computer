@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ApiError,
+  errorMessage,
   getRun,
   listRuns,
   session,
@@ -19,77 +21,142 @@ const STARTERS = [
   { title: "Write a haiku", body: "Write a haiku about receipts and render it as a text file." },
 ];
 
+// What the banner says about the backend link — independent of any one action.
+type Link = "ok" | "offline" | "auth";
+
 export default function App() {
   const [sess, setSess] = useState<Session | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [run, setRun] = useState<RunDetail | null>(null);
-  const [confirm, setConfirm] = useState<{ goal: string; cap: number } | null>(null);
+  const [runError, setRunError] = useState("");
+  const [confirm, setConfirm] = useState<{ goal: string; cap: number; error?: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [starter, setStarter] = useState<string | undefined>();
+  const [draft, setDraft] = useState<string | undefined>();
   const [error, setError] = useState("");
+  const [link, setLink] = useState<Link>("ok");
+
+  // Responses for a run the user has navigated away from must be dropped.
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
+
+  // A success only clears "offline"; an expired session needs a reload.
+  const noteSuccess = useCallback(() => setLink((l) => (l === "auth" ? l : "ok")), []);
+
+  const noteFailure = useCallback((e: unknown) => {
+    if (e instanceof ApiError && e.kind === "auth") setLink("auth");
+    else if (e instanceof ApiError && e.kind === "network") setLink((l) => (l === "auth" ? l : "offline"));
+  }, []);
+
+  const refreshRuns = useCallback(
+    () =>
+      listRuns().then((r) => {
+        setRuns(r);
+        noteSuccess();
+        return r;
+      }),
+    [noteSuccess],
+  );
 
   useEffect(() => {
     session()
       .then(setSess)
-      .catch(() => {});
-    listRuns()
+      .catch(noteFailure);
+    refreshRuns()
       .then((r) => {
-        setRuns(r);
-        if (r.length) setSelected(r[0].run);
+        if (r.length && selectedRef.current === null) setSelected(r[0].run);
       })
-      .catch(() => {});
-  }, []);
+      .catch((e) => {
+        noteFailure(e);
+        setError(errorMessage(e, "Could not load runs."));
+      });
+  }, [noteFailure, refreshRuns]);
 
-  const load = useCallback((id: string | null) => {
-    if (!id) {
-      setRun(null);
-      return;
-    }
-    getRun(id).then(setRun).catch(() => {});
-  }, []);
+  const fetchRun = useCallback(
+    (id: string) =>
+      getRun(id)
+        .then((r) => {
+          if (selectedRef.current !== id) return; // stale: selection moved on
+          setRun(r);
+          setRunError("");
+          noteSuccess();
+        })
+        .catch((e) => {
+          if (selectedRef.current !== id) return;
+          noteFailure(e);
+          if (e instanceof ApiError && e.status === 404) setRunError("This run no longer exists.");
+          else if (!(e instanceof ApiError && e.kind === "network")) setRunError(errorMessage(e, "Could not load run."));
+        }),
+    [noteFailure, noteSuccess],
+  );
 
   useEffect(() => {
-    load(selected);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
+    setRun(null); // never show the previous run under a new selection
+    setRunError("");
+    if (selected) fetchRun(selected);
+  }, [selected, fetchRun]);
 
-  // Poll: runs rail + selected run. Fast while a run is active, slow when idle.
+  // Poll: runs rail + selected run. Fast while a run is active, slow when idle;
+  // backs off while the link is down, stops once the session is gone.
+  const active = !!run?.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED" || s.state === "QUEUED");
   useEffect(() => {
-    const active = run?.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED");
+    if (link === "auth") return;
+    const ms = link === "offline" ? 10000 : active ? 2500 : 8000;
     const id = setInterval(() => {
-      listRuns().then(setRuns).catch(() => {});
-      if (selected) getRun(selected).then(setRun).catch(() => {});
-    }, active ? 2500 : 8000);
+      refreshRuns().catch(noteFailure);
+      if (selected) fetchRun(selected);
+    }, ms);
     return () => clearInterval(id);
-  }, [selected, run]);
+  }, [selected, active, link, refreshRuns, fetchRun, noteFailure]);
 
   function onRun(goal: string) {
+    if (submitting) return;
     setError("");
+    setSubmitting(true);
     submitGoal(goal, false)
       .then((r) => {
-        if (r.run) {
-          select(r.run);
-        } else if (r.needs_confirm) {
-          setConfirm({ goal, cap: r.cap ?? 0 });
-        }
+        if (r.run) select(r.run);
+        else if (r.needs_confirm) setConfirm({ goal, cap: r.cap ?? 0 });
+        else setError("The server didn't start a run or ask to confirm. Try again.");
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not submit."));
+      .catch((e) => {
+        noteFailure(e);
+        setDraft(goal); // keep what they typed
+        setError(errorMessage(e, "Could not submit."));
+      })
+      .finally(() => setSubmitting(false));
   }
 
   function confirmRun() {
-    if (!confirm) return;
+    if (!confirm || submitting) return;
     const goal = confirm.goal;
-    setConfirm(null);
+    setSubmitting(true);
+    setConfirm({ ...confirm, error: undefined });
     submitGoal(goal, true)
       .then((r) => {
-        if (r.run) select(r.run);
+        if (!r.run) throw new Error("The server accepted the goal but returned no run id.");
+        setConfirm(null); // only once it actually started
+        select(r.run);
+        refreshRuns().catch(noteFailure);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not submit."));
+      .catch((e) => {
+        noteFailure(e);
+        setConfirm((c) => (c ? { ...c, error: errorMessage(e, "Could not start the run.") } : c));
+      })
+      .finally(() => setSubmitting(false));
+  }
+
+  function cancelConfirm() {
+    if (submitting) return;
+    if (confirm) setDraft(confirm.goal);
+    setConfirm(null);
   }
 
   function select(id: string) {
     setSelected(id);
     setStarter(undefined);
+    setDraft(undefined);
   }
 
   return (
@@ -99,11 +166,15 @@ export default function App() {
         selected={selected}
         identity={sess?.identity ?? ""}
         onSelect={(id) => {
+          if (submitting) return;
+          setConfirm(null);
+          setError("");
           setSelected(id || null);
         }}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
+        {link !== "ok" && <LinkBanner link={link} />}
         <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-6 py-10">
           {error && (
             <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
@@ -112,11 +183,32 @@ export default function App() {
           )}
 
           {confirm ? (
-            <ConfirmCard goal={confirm.goal} cap={confirm.cap} onRun={confirmRun} onCancel={() => setConfirm(null)} />
+            <ConfirmCard
+              goal={confirm.goal}
+              cap={confirm.cap}
+              error={confirm.error}
+              busy={submitting}
+              onRun={confirmRun}
+              onCancel={cancelConfirm}
+            />
           ) : run ? (
             <RunView run={run} />
+          ) : selected && runError ? (
+            <div className="flex flex-col items-center gap-3 text-center">
+              <p className="text-sm text-red-700" role="alert">
+                {runError}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="subtle" onClick={() => fetchRun(selected)}>
+                  Retry
+                </Button>
+                <Button variant="ghost" onClick={() => setSelected(null)}>
+                  New goal
+                </Button>
+              </div>
+            </div>
           ) : selected ? (
-            <div className="flex flex-col items-center gap-3 text-muted">
+            <div className="flex flex-col items-center gap-3 text-muted" role="status">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/30 border-t-teal" />
               <p className="text-sm">Loading run…</p>
             </div>
@@ -127,7 +219,7 @@ export default function App() {
                 Describe an outcome. It decomposes, routes, places and runs each step — here you
                 watch the machinery, not just the answer.
               </p>
-              <Composer onRun={onRun} starter={starter} />
+              <Composer onRun={onRun} starter={starter ?? draft} busy={submitting} disabled={link === "auth"} />
               <div className="mt-6 grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
                 {STARTERS.map((s) => (
                   <button
@@ -148,14 +240,32 @@ export default function App() {
   );
 }
 
+function LinkBanner({ link }: { link: Exclude<Link, "ok"> }) {
+  return (
+    <div
+      role="status"
+      className="sticky top-0 z-10 flex items-center justify-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+    >
+      {link === "auth" ? "Your session expired." : "Connection lost — retrying…"}
+      <Button variant="subtle" className="h-7" onClick={() => window.location.reload()}>
+        {link === "auth" ? "Sign in again" : "Reload"}
+      </Button>
+    </div>
+  );
+}
+
 function ConfirmCard({
   goal,
   cap,
+  error,
+  busy,
   onRun,
   onCancel,
 }: {
   goal: string;
   cap: number;
+  error?: string;
+  busy: boolean;
   onRun: () => void;
   onCancel: () => void;
 }) {
@@ -168,11 +278,16 @@ function ConfirmCard({
         metered against the ${cap}/day cap. Anything flagged private stays local or waits for
         approval.
       </p>
+      {error && (
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+          {error}
+        </p>
+      )}
       <div className="mt-4 flex items-center gap-2">
-        <Button variant="primary" onClick={onRun}>
-          Run it
+        <Button variant="primary" onClick={onRun} disabled={busy} aria-busy={busy}>
+          {busy ? "Starting…" : error ? "Try again" : "Run it"}
         </Button>
-        <Button variant="subtle" onClick={onCancel}>
+        <Button variant="subtle" onClick={onCancel} disabled={busy}>
           Cancel
         </Button>
       </div>

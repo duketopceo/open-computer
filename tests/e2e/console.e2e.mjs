@@ -48,7 +48,7 @@ async function open(base, p, { theme = "dark", w = 1440, h = 900 } = {}) {
   return { ctx, page };
 }
 
-const ROUTES = ["/", "/sandboxes", "/runs", "/runs/new", "/approvals", "/router", "/audit"];
+const ROUTES = ["/overview", "/sandboxes", "/runs", "/runs/new", "/approvals", "/router", "/audit"];
 
 for (const theme of ["dark", "light"]) {
   for (const w of [1440, 390]) {
@@ -92,7 +92,7 @@ test("@palette lists 100% of the actions available on each screen", async () => 
 });
 
 test("@keyboard shortcuts: ? overlay, g-nav, palette, Esc returns focus", async () => {
-  const { ctx, page } = await open(RO, "/");
+  const { ctx, page } = await open(RO, "/overview");
   await page.keyboard.press("?");
   const dlg = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await dlg.waitFor();
@@ -112,7 +112,7 @@ test("@keyboard shortcuts: ? overlay, g-nav, palette, Esc returns focus", async 
   await page.keyboard.press("Control+k");
   await page.keyboard.press("Escape");
   assert.equal(await page.evaluate(() => document.activeElement.id), "main");
-  await page.keyboard.press("g"); await Promise.all([page.waitForURL(RO + "/"), page.keyboard.press("o")]);
+  await page.keyboard.press("g"); await Promise.all([page.waitForURL(RO + "/overview"), page.keyboard.press("o")]);
   await ctx.close();
 });
 
@@ -173,7 +173,7 @@ test("@log virtualized viewer: line numbers, 5,000-line DOM cap, reaches the las
 });
 
 test("@perf no layout shift when the sandbox skeleton resolves", async () => {
-  const { ctx, page } = await open(RO, "/", {});
+  const { ctx, page } = await open(RO, "/overview", {});
   await page.addInitScript(() => { window.__cls = 0; new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: "layout-shift", buffered: true }); });
   await page.goto(RO + "/sandboxes", { waitUntil: "networkidle" });
   await page.waitForSelector("table.dense");
@@ -188,7 +188,7 @@ test("no horizontal page scroll at 390px and theme toggle persists", async () =>
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), route);
     await ctx.close();
   }
-  const { ctx, page } = await open(RO, "/", {});
+  const { ctx, page } = await open(RO, "/overview", {});
   await page.keyboard.press("Control+k");
   await page.keyboard.type("theme");
   await page.keyboard.press("Enter");

@@ -1,5 +1,6 @@
 export function cost(c: number | null | undefined): string {
   if (c == null || !isFinite(c)) return "—";
+  if (c > 0 && c < 0.0001) return "<$0.0001"; // a charge must never render as $0
   return `$${c.toFixed(c < 0.01 ? 4 : 2)}`;
 }
 

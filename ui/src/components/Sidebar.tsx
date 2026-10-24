@@ -53,12 +53,12 @@ export function Sidebar({
       </nav>
 
       <div className="mt-4 flex min-h-0 flex-1 flex-col">
-        <p className="px-4 text-[11px] font-medium uppercase tracking-wider text-muted/70">
+        <p className="px-4 text-[11px] font-medium uppercase tracking-wider text-muted">
           Runs
         </p>
         <div className="mt-1 flex-1 overflow-y-auto px-2">
           {runs.length === 0 ? (
-            <p className="px-2.5 py-2 text-xs text-muted/70">No runs yet.</p>
+            <p className="px-2.5 py-2 text-xs text-muted">No runs yet.</p>
           ) : (
             runs.map((r) => (
               <button
@@ -78,7 +78,7 @@ export function Sidebar({
       </div>
 
       <div className="border-t border-line px-2 py-3">
-        <p className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted/70">
+        <p className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted">
           Operator
         </p>
         {OPERATOR.map((o) => (
@@ -91,7 +91,7 @@ export function Sidebar({
           </a>
         ))}
         {identity && (
-          <p className="mt-2 truncate px-2.5 text-[11px] text-muted/60" title={identity}>
+          <p className="mt-2 truncate px-2.5 text-[11px] text-muted" title={identity}>
             {identity}
           </p>
         )}
