@@ -19,7 +19,7 @@ alternative. This plan adds a second execplane backend — `space` beside
 `cube` — and moves the credential boundary to v2 (secrets resolved at
 the SPACE egress gateway, never materialized in the guest).
 
-Unit IDs are `S0`–`S6`. They never renumber. Roadmap IDs stay `OC-*`;
+Unit IDs are `S0`–`S7` (S7 added 2026-10-24). They never renumber. Roadmap IDs stay `OC-*`;
 this plan lands OC-009 (backend), OC-030 (lifecycle), OC-031 (host
 verdict), OC-033 (credential v2), OC-034 (policy binding), and the
 OC-023 cassette delta for the new backend.
@@ -150,6 +150,13 @@ placement, cost cap, and audit above it.
 
 ### S4. Credential boundary v2 (OC-033)
 
+> **Parked (2026-10-24, owner choice).** Not in the current phase. The
+> cluster-4 eval cluster has no upstream route, so the "allowed endpoint
+> receives injected credentials" scenario cannot be verified live without
+> changing cluster-4's net-gateway config. Until S4 lands, `SpaceAdapter`
+> keeps refusing `secrets=` (ValueError), so no SPACE task can carry a
+> secret and no v1 placeholder ever reaches a SPACE guest.
+
 - **Goal:** secrets resolve at the SPACE egress gateway; nothing secret
   enters the guest — replacing the v1 placeholder scheme where a real
   worker consumes it.
@@ -179,45 +186,127 @@ placement, cost cap, and audit above it.
 
 ### S5. Egress policy binding (OC-034)
 
-- **Goal:** the approved policy binds to SPACE sandbox creation and is
-  audited.
+- **Goal:** a SPACE sandbox can only be created with egress that a human
+  approved, and every create attempt leaves an audit row.
 - **Work:**
-  - Translate the gate/placement-approved egress decision into SPACE
-    policy objects: `egress_default_action = DENY`, exact-domain allow
-    list, no wildcards in profiles (teardown's parity rules).
-  - Every apply audited — same durable audit spine the device plane
-    uses.
-  - Fail closed: policy engine unavailable → sandbox created with full
-    deny or not created — decide and document which, then conform it.
-- **Files:** `services/execplane/policy.py` (SPACE emission path),
-  `services/execplane/space.py`, audit wiring.
+  - Binding: `SpaceAdapter.make_sandbox` checks each requested egress
+    host against the set granted by human-applied `PolicyEngine` changes
+    (`add_egress` entries in `<root>/policy.json`). Any host outside that
+    set raises `PolicyDenied` before the SDK is called. An empty
+    allowlist needs no approval (deny-all is always allowed).
+  - Emission stays the S3 payload: `allow_internet_access=False` always;
+    `network={"allow_out": [...], "allow_public_traffic": False}` only for
+    approved hosts; wildcard and empty-string hosts rejected first.
+  - Audit: append one row per create attempt to the gate `AuditLog`
+    (`services/gate/audit.py`, path from `OC_AUDIT`): event
+    `execplane.sandbox_create`, backend `space`, the allowlist, the
+    approving proposal ids, and the outcome (`created` + sandbox id, or
+    `refused`/`failed` + reason).
+  - Fail closed, decided: **not created.** If the intent row cannot be
+    written, no sandbox is created. A sandbox nobody can account for is
+    worse than a failed step, and the worker already surfaces a failed
+    step to the run. The outcome row is best-effort after create; a
+    failure there is logged but does not kill a running sandbox.
+- **Files:** `services/execplane/space.py`,
+  `services/execplane/policy.py` (read-only `approved_egress()`
+  accessor), `tests/unit/test_space_adapter.py`,
+  `tests/unit/test_policy_engine.py` (or the existing policy test file).
+- **Patterns to follow:** `PolicyEngine.apply` (human-only, atomic
+  write), `AuditLog.append` (single `O_APPEND` write), the device plane's
+  audit allowlist from P8 for event naming.
 - **Test scenarios:**
-  - Approved policy → exact SPACE policy object; deny-by-default
-    preserved.
-  - Wildcard/empty-domain input rejected before emission.
-  - Every apply writes an audit row; missing audit = test failure.
-- **Verification:** conformance R2 against SPACE policy objects.
+  - Host approved by a human-applied change → create proceeds, and the
+    payload carries exactly that host in `allow_out`.
+  - Host never approved → `PolicyDenied`, SDK `create` never called,
+    audit row `refused` with the host named.
+  - A proposal that was dry-run but never applied grants nothing.
+  - Empty allowlist → created with no `network` field, audit row
+    `created`.
+  - Wildcard or empty-string host → rejected before the policy check.
+  - Audit path unwritable → no SDK call, error surfaces to the caller.
+  - SDK create failure → audit row `failed` with the error class.
+- **Verification:** unit suite green. Live: on cluster-4, an unapproved
+  host is refused without a create call, and an approved host's create
+  is accepted by ECW (payload-level; packet-level R2 waits for S4's
+  routed gateway).
+
+### S7. SPACE in the production path
+
+- **Goal:** with `OC_EXECPLANE_BACKEND=space`, goals whose steps are
+  placed `cloud-sandbox` run in SPACE microVMs on cluster-4, and the
+  console shows the result like any other run.
+- **Work:**
+  1. Durable link: a systemd user unit (`oc-space-tunnel`) holding the
+     SSH forwards omarchy-max `127.0.0.1:18080 -> cluster-4:8080` (ECW
+     API) and `127.0.0.1:18092 -> cluster-4:8092` (data plane), with
+     keepalives, `ExitOnForwardFailure`, and `Restart=always`. Kind
+     binds hostPorts to loopback, so a tunnel is the access path, not a
+     workaround. The unit template lives in the repo; the installed copy
+     uses the `cluster4` SSH alias.
+  2. Backend selection at the composition root: `engines._plane()`
+     reads `OC_EXECPLANE_BACKEND` (`cube` default, or `space`) and
+     passes it explicitly to `execplane.adapter(root, backend=...)`. An
+     unknown value fails at worker start, not per task. The
+     "control plane unreachable" error names the configured backend.
+  3. Dependency: `e2b==2.21.1` as an optional `space` extra in
+     `pyproject.toml` (lockfile regenerated with `uv`, not hand-edited).
+     The worker wrapper installs it and exports `SPACE_API_URL`,
+     `SPACE_DATA_PLANE_URL`, `SPACE_DOMAIN`, and `SPACE_API_KEY` (key
+     from omaseal `space/ecw-cluster4`, never written to disk).
+  4. `oc-deploy` restarts and health-checks the tunnel unit with the
+     rest.
+- **Files:** `services/orchestrator/engines.py`,
+  `tests/unit/test_engines_sandbox.py` (or the existing
+  `sandbox_work` test file), `pyproject.toml`, `uv.lock`,
+  `deploy/systemd/oc-space-tunnel.service` (new),
+  `docs/runbooks/space-host.md` (production-link section). Out-of-repo
+  ops files, recorded in the runbook: `~/bin/oc-worker`, `~/bin/oc-deploy`.
+- **Test scenarios:**
+  - `OC_EXECPLANE_BACKEND` unset → cube adapter (existing behavior
+    unchanged).
+  - `OC_EXECPLANE_BACKEND=space` → `SpaceAdapter` constructed with the
+    configured root.
+  - Unknown value → `ValueError` at `_plane()` construction.
+  - `space` selected but API unreachable → `SandboxWorkerUnavailable`
+    whose message names `space`, never a silent fallback to cube.
+- **Verification:** live on omarchy-max: tunnel unit active across a
+  restart, the worker running with `backend=space`, a goal placed
+  `cloud-sandbox` reaching DONE in the console with output produced in a
+  cluster-4 microVM (confirmed in the SPACE sandbox list or logs), and
+  the cube path still working when the env is unset.
 
 ### S6. Conformance + cassettes for the second backend (OC-023 delta)
 
 - **Goal:** the honesty contract extends to SPACE — same PENDING-when-
-  absent discipline, strict replay, provenance labels.
+  absent discipline, never a fake pass.
 - **Work:**
-  - Parameterize R1–R3 (and lifecycle cases) over backend; SPACE rows
-    run when reachable, PENDING otherwise.
-  - `scripts/record_space.py` mirroring `record_cube.py` — synthetic
-    cassettes now, live recording later, provenance marked.
-  - CI: green with neither backend reachable; never lies.
-- **Files:** `tests/conformance/checks/` (backend-parameterized),
-  `scripts/record_space.py` (new), `tests/unit/fake_space.py` (new, if
-  needed).
+  - Parameterize the conformance `make_sandbox` fixture
+    (`tests/conformance/conftest.py`) over `cube` and `space`. Each
+    backend's live rows run only when its `sandboxes_available()` is
+    true and skip with a backend-named PENDING reason otherwise.
+  - R2 positive-control rows for `space` additionally need a routed
+    egress gateway. Without `SPACE_EGRESS_ROUTED=1` they skip with the
+    reason "hermetic SPACE cluster: egress not verifiable". They are
+    never marked passed.
+  - The determinism matrix summary shows rows per backend.
+- **Files:** `tests/conformance/conftest.py`,
+  `tests/conformance/rules/test_r1_fail_closed.py`,
+  `tests/conformance/rules/test_r2_egress_deny.py`,
+  `tests/conformance/rules/test_r3_no_creds_in_vm.py`,
+  `tests/conformance/test_meta.py` (if it counts rows).
 - **Test scenarios:**
-  - Backend matrix: same conformance cases pass for both adapters or
-    honestly PEND.
-  - Synthetic cassettes labeled; a drifted adapter request fails the
-    suite.
-- **Verification:** `pytest` green on this aarch64 host with only
-  Cube-or-nothing reachable.
+  - Neither backend reachable (CI) → every live row PENDING, suite
+    green.
+  - `space` reachable via the S7 tunnel → R1 runs live and passes on
+    SPACE; R2 PENDING with the hermetic reason.
+  - A backend with `sandboxes_available()` true but a broken adapter
+    fails its rows (no blanket skip).
+- **Verification:** CI green and honest; a local `-m live` run against
+  the tunnel shows R1 PASS for `space`.
+- **Changed from the original S6 (2026-10-24):** `scripts/record_space.py`
+  is not built. The strict-signature fake SDK (`tests/unit/fake_space.py`)
+  already fails CI on payload drift, which is the protection cassettes
+  would add. Revisit if ECW grows fields the fake can't model.
 
 ## Sequencing
 
@@ -231,6 +320,19 @@ placement, cost cap, and audit above it.
   (2) S3 lifecycle; (3) S4 v2 + v1 removal; (4) S0/S1 deploy + runbooks
   + ROADMAP updates; (5) S5 policy binding. Independent enough to
   reorder around infra reality.
+
+### Current phase (2026-10-24): S7 + S5 + S6, S4 parked
+
+Owner-chosen scope after S0–S3 merged (#60, #61). One PR, three commits,
+in dependency order:
+
+1. **S7** first: it gives a reachable SPACE for every live check after it.
+2. **S5** next: binding plus audit on the create path S7 just made live.
+3. **S6** last: conformance rows run live against the S7 tunnel.
+
+Done means: CI green with no backend reachable, the S5/S6/S7 live checks
+recorded in `docs/runbooks/space-host.md`, and a production goal run in
+a SPACE microVM shown in the console.
 
 ### Status note (2026-10-23, PR #61)
 
@@ -289,6 +391,9 @@ cluster-4 ECW deployment:
 - SPACE cold boot measured on the host and recorded (OC-031 closed).
 - CI green and honest: SPACE rows PENDING without a reachable API —
   no fake-pass, same contract as Cube today.
+- A goal submitted from the console with a `cloud-sandbox` step runs in
+  a cluster-4 SPACE microVM and reaches DONE, with its create recorded
+  in the audit log (S5, S7).
 
 ## Sources
 
