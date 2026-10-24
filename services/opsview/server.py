@@ -42,6 +42,16 @@ from services.workspace import routes as workspace
 
 REPO = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
+UI_DIST = REPO / "ui" / "dist"
+_ASSET_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+}
 STATIC_TYPES = {
     "silver-lining.css": "text/css",
     "console.css": "text/css",
@@ -53,7 +63,38 @@ CSP = (
     "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
     "font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 )
-CSRF_SECRET = secrets.token_bytes(32)
+
+
+def _csrf_secret() -> bytes:
+    """Stable across restarts: CSRF tokens are bound to the session cookie,
+    so a fresh per-process secret would invalidate every open form on restart."""
+    p = Path(os.environ.get("OC_CSRF_SECRET", str(Path.home() / ".local/share/oc/csrf-secret")))
+    try:
+        st = p.stat()
+        if st.st_mode & 0o077:
+            # Readable by others = treat as leaked: rotate, don't trust it.
+            print(f"csrf secret {p} has loose permissions; rotating", file=sys.stderr)
+            p.unlink()
+        else:
+            raw = p.read_bytes()
+            if raw:
+                return raw
+    except OSError:
+        pass
+    raw = secrets.token_bytes(32)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.{os.getpid()}")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # 0600 from birth
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, p)
+    except OSError as e:
+        print(f"csrf secret not persisted ({type(e).__name__}); tokens reset on restart", file=sys.stderr)
+    return raw
+
+
+CSRF_SECRET = _csrf_secret()
 ACCESS_IDENTITY_URL = "https://duketopceo.cloudflareaccess.com/cdn-cgi/access/get-identity"
 
 
@@ -229,8 +270,13 @@ def _resume_goals() -> None:
 # side-effect free and that every POST is CSRF-protected.
 
 GET_ROUTES = [
-    (r"/", "g_overview"),
+    (r"/", "g_spa"),
+    (r"/assets/(?P<file>[^/]+)", "g_asset"),
+    (r"/api/session", "g_api_session"),
+    (r"/api/runs", "g_api_runs"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
     (r"/work", "g_work"),
+    (r"/overview", "g_overview"),
     (r"/sandboxes", "g_sandboxes"),
     (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
     (r"/devices", "g_devices"),
@@ -252,6 +298,7 @@ GET_ROUTES = [
 ]
 REDIRECTS = {"/fleet": "/sandboxes", "/matrix": "/runs", "/gate": "/approvals", "/ops": "/"}
 POST_ROUTES = [
+    (r"/api/transcribe", "p_transcribe"),
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
     (r"/router/test", "p_router_test"),
@@ -312,9 +359,28 @@ class Handler(BaseHTTPRequestHandler):
         raw = self._cookie() or getattr(self, "_local_cookie", None) or ""
         return hmac.new(CSRF_SECRET, raw.encode(), hashlib.sha256).hexdigest()
 
+    BODY_MAX = 1_000_000
+    AUDIO_MAX = 25 * 1024 * 1024
+
+    def _content_length(self) -> int:
+        try:
+            return max(0, int(self.headers.get("Content-Length", 0) or 0))
+        except ValueError:
+            return -1
+
+    def _raw_body(self, limit: int) -> bytes | None:
+        """Read the body once, never more than `limit`. None = over the limit
+        or a bad length; the caller answers 413 without buffering it."""
+        if getattr(self, "_raw", None) is None:
+            n = self._content_length()
+            if n < 0 or n > limit:
+                self.close_connection = True  # unread body: don't reuse the socket
+                return None
+            self._raw = self.rfile.read(n) if n else b""
+        return self._raw
+
     def _body(self) -> dict:
-        n = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(min(n, 1_000_000)) if n else b""
+        raw = self._raw_body(self.BODY_MAX) or b""
         if "json" in self.headers.get("Content-Type", "") or raw.lstrip()[:1] == b"{":
             try:
                 d = json.loads(raw or b"{}")
@@ -410,6 +476,73 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(405, b"POST only", "text/plain", {"Allow": "POST"})
             return self._page("overview", views.not_found(), 404)
         getattr(self, name)(qs, **args)
+
+    # --- SPA + JSON API (the React front door) ---------------------------
+    def g_spa(self, qs):
+        index = UI_DIST / "index.html"
+        if not index.is_file():
+            # Clean checkout / failed build: degrade to the server-rendered
+            # console instead of a dead front door. `pnpm --dir ui build` fixes it.
+            return self.g_overview(qs)
+        return self._send(200, index.read_bytes(), "text/html; charset=utf-8", page=True)
+
+    def g_asset(self, qs, file):
+        name = Path(file).name  # no traversal
+        p = UI_DIST / "assets" / name
+        if not p.is_file():
+            return self._send(404, b"not found", "text/plain")
+        ctype = _ASSET_TYPES.get(p.suffix, "application/octet-stream")
+        return self._send(200, p.read_bytes(), ctype, {"Cache-Control": "public, max-age=31536000, immutable"})
+
+    def g_api_session(self, qs):
+        self._json(200, {"csrf": self._csrf(), "identity": self._identity() or "", "cap": daily_cap()})
+
+    def g_api_runs(self, qs):
+        self._json(200, {"runs": goalruns.list_runs()})
+
+    def g_api_run(self, qs, id):
+        r = goalruns.get_run(id)
+        if r is None:
+            return self._json(404, {"error": "no such run"})
+        self._json(200, r)
+
+    def p_transcribe(self, who, body):
+        """Voice → text on Groq LPU (whisper-large-v3-turbo). The browser posts
+        a multipart audio body; the Groq key lives in the process env (injected
+        by the oc-opsview wrapper from omaseal), never on disk."""
+        key = os.environ.get("GROQ_API_KEY", "")
+        if not key:
+            return self._json(503, {"error": "voice not configured (no GROQ_API_KEY)"})
+        # Session + Origin + header CSRF were checked in do_POST before this
+        # read — only then is the larger audio budget spent.
+        audio = self._raw_body(self.AUDIO_MAX)
+        if audio is None:
+            return self._json(413, {"error": "Recording too long (max 25 MB)."})
+        if not audio:
+            return self._json(400, {"error": "No audio received."})
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            return self._json(415, {"error": "Expected multipart/form-data audio."})
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            data=audio,
+            method="POST",
+            headers={
+                "Content-Type": ctype,
+                "Authorization": f"Bearer {key}",
+                # Groq's Cloudflare edge rejects the default Python urllib UA (1010).
+                "User-Agent": "open-computer/0.1",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                out = r.read()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:200]
+            return self._json(502, {"error": f"groq error {e.code}: {detail}"})
+        except OSError as e:
+            return self._json(502, {"error": f"groq unreachable: {type(e).__name__}"})
+        self._send(200, out, "application/json", {"Cache-Control": "no-store"})
 
     def g_work(self, qs):
         self._page("work", views.page_work(self._csrf()), sub="Goals, plans, results — the workplace")
@@ -547,6 +680,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- POST --------------------------------------------------------------
     def do_POST(self):
+        self._raw = None  # never reuse a previous request's body
         path = urlparse(self.path).path
         if path.startswith("/webauthn/"):
             return self._webauthn(path)
@@ -559,8 +693,15 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and urlparse(origin).netloc != self.headers.get("Host", ""):
             return self._json(403, {"error": "Cross-origin request refused."})
-        body = self._body()
-        token = self.headers.get("X-CSRF-Token") or str(body.get("csrf", ""))
+        if name == "p_transcribe":
+            # Binary upload: CSRF must come from the header, checked before
+            # the (larger) body is read at all.
+            body, token = {}, self.headers.get("X-CSRF-Token", "")
+        else:
+            if self._raw_body(self.BODY_MAX) is None:
+                return self._json(413, {"error": "Request body too large (max 1 MB)."})
+            body = self._body()
+            token = self.headers.get("X-CSRF-Token") or str(body.get("csrf", ""))
         if not hmac.compare_digest(token, self._csrf()):
             return self._json(403, {"error": "Missing or invalid CSRF token. Reload the page and try again."})
         if name is None:

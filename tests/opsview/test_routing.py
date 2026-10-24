@@ -12,6 +12,7 @@ def concrete(pattern: str) -> str:
         .replace("(?P<id>goal_[0-9a-f]{8})", "goal_00000000")
         .replace("(?P<id>ap_[0-9a-f]{8})", "ap_00000000")
         .replace("(?P<id>auto-[0-9a-f]{8})", "auto-00000000")
+        .replace("(?P<file>[^/]+)", "index-abc123.js")
     )
 
 
@@ -42,7 +43,7 @@ def test_pages_render_200(console, path):
 def test_every_sidebar_section_has_a_route(console):
     for a in registry.nav_actions():
         assert console.get(a.href)[0] == 200, a.href
-    _, _, html = console.get("/")
+    _, _, html = console.get("/overview")
     for label in ("Overview", "Goals", "Sandboxes", "Runs", "Approvals", "Router", "Audit"):
         assert f"<span>{label}</span>" in html
 
