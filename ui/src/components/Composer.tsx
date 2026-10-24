@@ -97,10 +97,17 @@ export function Composer({
       const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
       const r = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       chunksRef.current = [];
+      // The browser fires dataavailable + stop after error; a failed take must
+      // never be uploaded.
+      let failed = false;
       r.ondataavailable = (e) => {
         if (e.data.size) chunksRef.current.push(e.data);
       };
       r.onerror = () => {
+        failed = true;
+        window.clearTimeout(timerRef.current);
+        if (recorderRef.current === r) recorderRef.current = null;
+        chunksRef.current = [];
         releaseMic();
         if (!cancelledRef.current) {
           setErr("Recording failed.");
@@ -109,7 +116,7 @@ export function Composer({
       };
       r.onstop = async () => {
         releaseMic();
-        if (cancelledRef.current) return;
+        if (cancelledRef.current || failed) return;
         const blob = new Blob(chunksRef.current, { type: r.mimeType || "audio/webm" });
         chunksRef.current = [];
         if (!blob.size) {

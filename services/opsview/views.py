@@ -1269,5 +1269,5 @@ def not_found() -> str:
     return empty(
         "Page not found",
         "That address is not part of the console.",
-        '<a class="btn primary" href="/">Go to Overview</a>',
+        '<a class="btn primary" href="/overview">Go to Overview</a>',
     )

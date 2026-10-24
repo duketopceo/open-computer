@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ApiError,
   errorMessage,
@@ -38,8 +38,11 @@ export default function App() {
   const [link, setLink] = useState<Link>("ok");
 
   // Responses for a run the user has navigated away from must be dropped.
+  // Synced at commit (not render): concurrent React may abandon a render.
   const selectedRef = useRef<string | null>(null);
-  selectedRef.current = selected;
+  useLayoutEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   // A success only clears "offline"; an expired session needs a reload.
   const noteSuccess = useCallback(() => setLink((l) => (l === "auth" ? l : "ok")), []);

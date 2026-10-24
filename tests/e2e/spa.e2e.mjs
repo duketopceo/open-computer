@@ -23,14 +23,14 @@ let browser, base, server;
 before(async () => {
   browser = await chromium.launch();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-spa-"));
-  server = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", "8871", dir], { cwd: REPO });
+  server = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", "8891", dir], { cwd: REPO });
   server.stderr.on("data", (d) => process.stderr.write(d));
   await new Promise((res, rej) => {
     server.stdout.on("data", (d) => String(d).includes("ready") && res());
     server.on("exit", (c) => rej(new Error("fixture exited " + c)));
     setTimeout(() => rej(new Error("fixture timeout")), 30000);
   });
-  base = "http://127.0.0.1:8871";
+  base = "http://127.0.0.1:8891";
 });
 after(async () => { await browser?.close(); server?.kill(); });
 
