@@ -53,18 +53,69 @@ def test_payload_is_deny_by_default(tmp_path):
     a.make_sandbox(egress_allowlist=["example.com"])
     assert all(p["allow_internet_access"] is False for p in sdk.created)
     assert "network" not in sdk.created[0]
-    assert sdk.created[1]["network"] == {"allow_out": ["example.com"]}
+    assert sdk.created[1]["network"] == {"allow_out": ["example.com"], "allow_public_traffic": False}
 
 
 def test_create_binds_the_configured_endpoint_not_ambient_env(tmp_path, monkeypatch):
-    # Without api_key/domain the e2b SDK would read ambient E2B_* env vars —
+    # Without api_url/api_key the e2b SDK would read ambient E2B_* env vars —
     # potentially the public e2b API. The create call must carry ours.
     monkeypatch.setenv("E2B_API_KEY", "ambient-wrong-key")
     monkeypatch.setenv("E2B_DOMAIN", "api.e2b.dev")
     sdk = FakeSpaceSDK()
     adapter(tmp_path, sdk).make_sandbox(egress_allowlist=["example.com"])
     assert sdk.created[0]["api_key"] == "oc-test-key"
-    assert sdk.created[0]["domain"] == "space.example.test"
+    assert sdk.created[0]["api_url"] == "https://space.example.test"
+    assert sdk.created[0]["domain"] == "local.e2b.test"
+
+
+def test_data_plane_routing_uses_host_header(tmp_path):
+    # Kind-style split: exec calls go to SPACE_DATA_PLANE_URL with a Host
+    # header selecting the sandbox — `{envd_port}-{id}.{domain}` — the same
+    # routing SPACE's own space_smoke adapter uses.
+    sdk = FakeSpaceSDK()
+    a = adapter(tmp_path, sdk)
+    a._data_plane_url = "http://127.0.0.1:8092"
+    sb = a.make_sandbox()
+    assert len(sdk.routed_configs) == 1
+    cfg = sdk.routed_configs[0]
+    assert cfg["sandbox_url"] == "http://127.0.0.1:8092"
+    # Selector rides the sandbox-only header path, never management `headers`.
+    assert "headers" not in cfg
+    assert cfg["extra_sandbox_headers"]["Host"] == "49983-fake-sbx.local.e2b.test"
+    assert sum(k.lower() == "host" for k in cfg["extra_sandbox_headers"]) == 1
+    r = sb.exec("echo hi")
+    assert r.returncode == 0
+
+
+def test_routed_client_failure_kills_the_created_sandbox(tmp_path):
+    sdk = FakeSpaceSDK(fail_route=True)
+    a = adapter(tmp_path, sdk)
+    a._data_plane_url = "http://127.0.0.1:8092"
+    sb = a.make_sandbox()
+    assert sdk._last_sandbox._killed is True
+    with pytest.raises(Exception):
+        sb.exec("echo hi")
+
+
+def test_no_data_plane_url_uses_the_create_sandbox(tmp_path):
+    sdk = FakeSpaceSDK()
+    sb = adapter(tmp_path, sdk).make_sandbox()
+    assert sdk.routed_configs == []
+    assert sb.exec("echo hi").returncode == 0
+
+
+def test_pause_resume_rebuilds_the_routed_client(tmp_path):
+    # S3 lifecycle: pause (SPACE suspend) → resume (connect auto-restores) —
+    # restore rotates envd credentials, so resume must rebuild _dp, not
+    # reuse the stale routed client.
+    sdk = FakeSpaceSDK()
+    a = adapter(tmp_path, sdk)
+    a._data_plane_url = "http://127.0.0.1:8092"
+    sb = a.make_sandbox()
+    sb.pause()
+    sb.resume()
+    assert len(sdk.routed_configs) == 2
+    assert sb.exec("echo hi").returncode == 0
 
 
 def test_create_without_configured_url_is_fail_closed(tmp_path):
