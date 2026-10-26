@@ -14,6 +14,10 @@ Targets:
   device             the user's own registered machine (services/device) —
                      the only target that can touch a granted local root,
                      local app or local browser. Local, never cloud.
+  blocked            no legal placement exists — the step tombstones FAILED
+                     with the reason instead of being sent to a dead engine.
+                     Emitted when a rule can only demote to local but every
+                     local endpoint is down.
 
 Every Placement carries `reason` for the audit row — the matrix and the
 UI read the same words, never inferred.
@@ -30,6 +34,7 @@ TARGETS = (
     "cloud-OpenRouter",
     "cloud-sandbox",
     "device",
+    "blocked",
 )
 
 DEVICE_NEEDS = ("device_root", "needs_local_app", "needs_local_browser")
@@ -109,8 +114,15 @@ def place(
             )
         return Placement("device", "device-required - runs on the user's registered machine")
 
-    # 1. PII never reaches cloud without a recorded human approval.
+    # 1. PII never reaches cloud without a recorded human approval. With
+    #    local dead there is no legal home — block, don't crash-land the
+    #    step on an endpoint that isn't there.
     if pii_flagged and not approved:
+        if not local_up:
+            return Placement(
+                "blocked",
+                "pii-flagged, unapproved, and local endpoints down — approve the step or restore local",
+            )
         return Placement(
             _local_for(latency),
             "pii-flagged and unapproved - cloud targets closed",
@@ -126,8 +138,15 @@ def place(
             )
         return Placement("local-llamacpp", "latency=crit - GPU local, no network RTT")
 
-    # 3. Spend headroom: if it cannot cover the estimate, local.
+    # 3. Spend headroom: if it cannot cover the estimate, local. With local
+    #    dead the over-budget step has no legal home — block with the budget
+    #    reason so the run fails on words, not a connection error.
     if headroom is not None and est_cost > 0 and est_cost > headroom:
+        if not local_up:
+            return Placement(
+                "blocked",
+                f"over-budget (est {est_cost} > headroom {headroom:.4f}) and local endpoints down — raise the cap or restore local",
+            )
         return Placement(
             "local-ollama",
             f"over-budget - est {est_cost} > headroom {headroom:.4f}",

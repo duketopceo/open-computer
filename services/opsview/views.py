@@ -204,6 +204,7 @@ def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "", c
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{e(csrf)}">
 <title>{title} · open-computer</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/static/silver-lining.css?v={ASSET_V}">
 <link rel="stylesheet" href="/static/console.css?v={ASSET_V}">
 <script src="/static/theme-init.js?v={ASSET_V}"></script>

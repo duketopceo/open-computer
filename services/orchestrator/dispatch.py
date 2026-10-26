@@ -98,4 +98,20 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "pii": list(pii.categories),
     }
     audit.append(rec)
+    if placement.target == "blocked":
+        # No legal placement exists (a demote-only rule with local down).
+        # Tombstone like a dep-fail: on disk, failed, never leased — so the
+        # run surfaces the placement reason instead of a worker exception.
+        fs.fail(tid)
+        audit.append(
+            {
+                "event": "worker_fail",
+                "run": run_id,
+                "task": tid,
+                "subtask": sub["id"],
+                "kind": "NoPlacement",
+                "error": placement.reason,
+                "hint": "raise the cap, approve the step, or restore local endpoints — then rerun",
+            }
+        )
     return rec

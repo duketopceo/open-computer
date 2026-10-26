@@ -1,5 +1,6 @@
 """Placement health — a dead local surface demotes cheap/crit work to
-cloud, PII still stays local, and the pure table is unchanged by default.
+cloud, PII and over-budget steps block rather than crash-land, and the
+pure table is unchanged by default.
 """
 
 from services import placement
@@ -17,9 +18,17 @@ def test_crit_demotes_when_local_down():
     assert p.target == "cloud-OpenRouter"
 
 
-def test_pii_stays_local_even_when_down():
+def test_pii_blocks_rather_than_leak_or_crash_land():
+    # Fail-closed: unapproved PII can never go cloud, and with local dead it
+    # must not be sent to a corpse either — it blocks with the reason.
     p = placement.place({"tier": "frontier"}, pii_flagged=True, local_up=False)
-    assert p.target.startswith("local")  # fail-closed beats a leak
+    assert p.target == "blocked"
+    assert not p.target.startswith("cloud")
+
+
+def test_overbudget_blocks_when_local_down():
+    p = placement.place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=False)
+    assert p.target == "blocked" and "raise the cap" in p.reason
 
 
 def test_default_table_unchanged():
