@@ -98,16 +98,20 @@ def _send_tallyline(title: str, body: str | None, severity: str, fingerprint: st
     if not cfg:
         return
     url, ws, key = cfg
-    payload = json.dumps({
+    # zod .optional() means absent, not null — omit empty fields entirely
+    ev: dict = {
         "kind": "error",
         "title": title[:500],
-        "body": (body or "")[:100_000] or None,
         "provider": "open-computer",
-        "fingerprint": fingerprint,
         "severity": {"fatal": "fatal", "error": "error", "warning": "warning"}.get(severity, "error"),
         "occurredAt": datetime.now(timezone.utc).isoformat(),
         "payload": {"host": _HOST, **(extra or {})},
-    }).encode()
+    }
+    if body:
+        ev["body"] = body[:100_000]
+    if fingerprint:
+        ev["fingerprint"] = fingerprint
+    payload = json.dumps(ev).encode()
     _post(
         f"{url}/v1/workspaces/{ws}/intake",
         {"Authorization": f"Bearer {key}", "X-Actor-Type": "agent",
