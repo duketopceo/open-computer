@@ -1,7 +1,7 @@
 ---
 artifact_contract: ce-unified-plan/v1
 product_contract_source: ce-plan user-directed
-external_source: cloudflare/computer (github.com/cloudflare/computer) — 9.7k★, MIT, TypeScript, pushed 2026-10-19
+external_source: cloudflare/computer (github.com/cloudflare/computer) @ b6291175 (commit, 2026-10-19) — 9.7k★, MIT, TypeScript
 ---
 
 # cloudflare/computer design-diff — "give your agent a computer" vs open-computer
@@ -25,12 +25,15 @@ cloudflare/computer is the *agent-facing* side: bundle a browser, filesystem, an
 
 1. Enumerate their agent-facing primitives (exact tool calls an agent gets) vs open-computer's operator-facing primitives (what oc.shippedit.dev exposes).
 2. Diff tables: session model, sandboxing story, persistence/snapshots, per-action cost (Workers pricing model vs local host), what the *agent* sees vs what the *operator* sees.
-3. Pay attention to their constraint choice: ephemeral Workers isolates vs a persistent real machine — that's the core architectural fork.
-4. Output `docs/decisions/cloudflare-computer-diff.md`: borrow/adapt/reject per primitive.
+3. Policy boundary diff: egress control, credential handling (where secrets live, whether guests ever see them), human approval, and audit — vs our PolicyEngine/AuditLog/deny-by-default model. Their platform isolates; ours gates. Name the difference explicitly.
+4. Pay attention to their constraint choice: ephemeral Workers isolates vs a persistent real machine — that's the core architectural fork.
+5. Output `docs/decisions/cloudflare-computer-diff.md`: borrow/adapt/reject per primitive.
 
 ### Acceptance examples
 
 - The doc answers concretely: "open-computer should adopt X shape for Y" or "nothing to take — divergent problems" with evidence.
+- Each required comparison (tool calls, session model, sandboxing, persistence/snapshots, cost, agent-vs-operator visibility, policy boundary) has its own section with a per-primitive verdict — a single generic paragraph does not satisfy it.
+- Every claim about their API cites a file, doc page, or commit in cloudflare/computer @ b6291175 — no vibes.
 
 ## Repo Touchpoints
 
@@ -39,7 +42,12 @@ cloudflare/computer is the *agent-facing* side: bundle a browser, filesystem, an
 
 ## Test Scenarios
 
-None — analysis artifact.
+Review-only artifact — no automated tests. Completeness check instead:
+
+- Every scope-boundary item under "In" appears in the output doc; every "Out" item does not.
+- Every requirement (1–5) maps to a section of the output doc.
+- Each verdict in the diff table names the primitive, the verdict (borrow/adapt/reject), and the evidence line.
+- The reviewer can answer from the doc alone: which primitives transfer, which don't, and why (platform-bound vs borrowable).
 
 ## Risks / Honest Notes
 
