@@ -186,14 +186,28 @@ placement, cost cap, and audit above it.
 
 ### S5. Egress policy binding (OC-034)
 
-- **Goal:** a SPACE sandbox can only be created with egress that a human
+- **Goal:** a sandbox can only be created with egress that a human
   approved, and every create attempt leaves an audit row.
+- **Scope, widened 2026-10-26 by a real failure:** the original unit was
+  SPACE-only. Production run `goal_59797e19` proved the gap exists on
+  **both** backends — a `needs_sandbox` dataset-download step landed in a
+  CubeVM sandbox under deny-all egress and failed `rc=1`, honestly but
+  uselessly. The binding therefore covers cube and space via the shared
+  emit path, plus a **placement-level gate**: a step whose plan marks it
+  as needing network access (`needs_egress` subtask field — new planner
+  flag in `services/orchestrator/decompose.py`, defaulting false so
+  existing plans don't change) never lands in a deny-all sandbox — it
+  demotes to an approved-egress target or reports `blocked` (the target
+  added in #64) with "no approved egress for this step".
 - **Work:**
-  - Binding: `SpaceAdapter.make_sandbox` checks each requested egress
-    host against the set granted by human-applied `PolicyEngine` changes
-    (`add_egress` entries in `<root>/policy.json`). Any host outside that
-    set raises `PolicyDenied` before the SDK is called. An empty
-    allowlist needs no approval (deny-all is always allowed).
+  - Binding: `make_sandbox` on both adapters checks each requested
+    egress host against the set granted by human-applied `PolicyEngine`
+    changes (`add_egress` entries in `<root>/policy.json`). Any host
+    outside that set raises `PolicyDenied` before the SDK is called. An
+    empty allowlist needs no approval (deny-all is always allowed).
+  - Placement gate: `place()` gains a `needs_egress` input; when set and
+    no approved-egress sandbox path exists, the result is `blocked`,
+    not a dead sandbox the worker fails inside minutes later.
   - Emission stays the S3 payload: `allow_internet_access=False` always;
     `network={"allow_out": [...], "allow_public_traffic": False}` only for
     approved hosts; wildcard and empty-string hosts rejected first.
@@ -207,18 +221,27 @@ placement, cost cap, and audit above it.
     worse than a failed step, and the worker already surfaces a failed
     step to the run. The outcome row is best-effort after create; a
     failure there is logged but does not kill a running sandbox.
-- **Files:** `services/execplane/space.py`,
-  `services/execplane/policy.py` (read-only `approved_egress()`
-  accessor), `tests/unit/test_space_adapter.py`,
+- **Files:** `services/execplane/space.py`, `services/execplane/client.py`
+  (cube path — same binding), `services/execplane/policy.py` (read-only
+  `approved_egress()` accessor), `services/placement/rules.py`
+  (`needs_egress` input + `blocked` outcome),
+  `services/orchestrator/decompose.py` (planner emits the flag),
+  `tests/unit/test_space_adapter.py`,
+  `tests/unit/test_placement_table.py` (needs-egress cases),
   `tests/unit/test_policy_engine.py` (or the existing policy test file).
 - **Patterns to follow:** `PolicyEngine.apply` (human-only, atomic
   write), `AuditLog.append` (single `O_APPEND` write), the device plane's
   audit allowlist from P8 for event naming.
 - **Test scenarios:**
   - Host approved by a human-applied change → create proceeds, and the
-    payload carries exactly that host in `allow_out`.
+    payload carries exactly that host in `allow_out` — on cube and on
+    space.
   - Host never approved → `PolicyDenied`, SDK `create` never called,
-    audit row `refused` with the host named.
+    audit row `refused` with the host named — on both backends.
+  - `needs_egress` subtask + no approved-egress path → `place()` returns
+    `blocked` with the reason; `dispatch()` tombstones it like #64.
+  - `needs_egress` subtask + an approved host for its domain → sandbox
+    created with that host only.
   - A proposal that was dry-run but never applied grants nothing.
   - Empty allowlist → created with no `network` field, audit row
     `created`.
@@ -321,18 +344,32 @@ placement, cost cap, and audit above it.
   + ROADMAP updates; (5) S5 policy binding. Independent enough to
   reorder around infra reality.
 
-### Current phase (2026-10-24): S7 + S5 + S6, S4 parked
+### Current phase (2026-10-26): S7 + S5 + S6, S4 parked
 
 Owner-chosen scope after S0–S3 merged (#60, #61). One PR, three commits,
 in dependency order:
 
 1. **S7** first: it gives a reachable SPACE for every live check after it.
-2. **S5** next: binding plus audit on the create path S7 just made live.
+2. **S5** next: binding plus audit on the create path S7 just made live —
+   widened to cover cube + a placement-level `needs_egress` gate after
+   `goal_59797e19` died in a deny-all cube sandbox.
 3. **S6** last: conformance rows run live against the S7 tunnel.
 
 Done means: CI green with no backend reachable, the S5/S6/S7 live checks
 recorded in `docs/runbooks/space-host.md`, and a production goal run in
 a SPACE microVM shown in the console.
+
+### Status note (2026-10-26, PRs #64, #65)
+
+Two adjacent landings change what S5 must not re-solve:
+
+- `blocked` is a first-class placement target (#64): rules that cannot
+  legally place a step report it and `dispatch()` tombstones the task —
+  no worker lease, dependents cascade `DependencyFailed`. S5's
+  `needs_egress` gate reuses exactly this path.
+- `services/telemetry.py` (#64, fixed in #65): every `worker_fail` and
+  `NoPlacement` reports to Glitchtip + tallyline intake. S5's audit rows
+  ride the same spine; nothing new to wire.
 
 ### Status note (2026-10-23, PR #61)
 
