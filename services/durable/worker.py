@@ -14,6 +14,8 @@ import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from services.telemetry import install_excepthook, report_failure
+
 from .activities import run_status, submit_goal, work_sweep
 from .workflows import TASK_QUEUE, GoalCronWorkflow, GoalRunWorkflow
 
@@ -33,4 +35,9 @@ async def serve() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(serve())
+    install_excepthook()
+    try:
+        asyncio.run(serve())
+    except Exception as e:
+        report_failure(f"worker exited: {type(e).__name__}: {e}", exc=e, severity="fatal")
+        raise

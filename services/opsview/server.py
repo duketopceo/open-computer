@@ -58,6 +58,7 @@ STATIC_TYPES = {
     "console.js": "text/javascript",
     "theme-init.js": "text/javascript",
     "work.js": "text/javascript",
+    "favicon.svg": "image/svg+xml",
 }
 CSP = (
     "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
@@ -451,6 +452,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, login_page().encode())
         if path == "/enroll":
             return self._send(200, enroll_page((qs.get("token") or [""])[0]).encode())
+        # Browsers request /favicon.ico by default; the mark is SVG.
+        if path in ("/favicon.ico", "/favicon.svg"):
+            return self._send(200, (STATIC / "favicon.svg").read_bytes(), "image/svg+xml")
         if workspace.serve_static(self, path):
             return
         if path.startswith("/static/"):
@@ -879,4 +883,11 @@ def main(port: int = 8791):
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 8791)
+    from services.telemetry import install_excepthook, report_failure
+
+    install_excepthook()
+    try:
+        main(int(sys.argv[1]) if len(sys.argv) > 1 else 8791)
+    except Exception as e:
+        report_failure(f"opsview exited: {type(e).__name__}: {e}", exc=e, severity="fatal")
+        raise

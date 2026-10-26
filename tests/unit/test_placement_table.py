@@ -136,3 +136,41 @@ def test_dispatch_demotes_to_local_when_the_run_ledger_cannot_cover_the_estimate
     by = {d["subtask"]: d for d in orch.dispatches[next(iter(orch.dispatches))]}
     assert by["a"]["placement"] == "cloud-OpenRouter"  # headroom 0.006 covers 0.004
     assert by["b"]["placement"] == "local-ollama" and "over-budget" in by["b"]["reason"]
+
+
+def test_local_down_blocks_pii_and_overbudget_instead_of_crash_landing():
+    # Rules 1 and 3 can only demote to local; with every local endpoint dead
+    # the honest answer is `blocked`, not a placement on a corpse.
+    p = place({"tier": "mid"}, pii_flagged=True, approved=False, local_up=False)
+    assert p.target == "blocked" and "local endpoints down" in p.reason
+    p = place({"tier": "mid"}, headroom=0.01, local_up=False)
+    assert p.target == "cloud-OpenRouter"  # est 0.0 fits headroom — unaffected
+    p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=False)
+    assert p.target == "blocked" and "over-budget" in p.reason
+    # With local up the demotion paths are unchanged.
+    p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=True)
+    assert p.target == "local-ollama"
+
+
+def test_blocked_placement_tombstones_the_subtask(tmp_path):
+    # A blocked step must fail visibly (reason + hint on the audit row), never
+    # reach a worker, and never leave dependents hanging.
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.001)
+
+    def no_local(sub, **kw):
+        return place(sub, local_up=False, **kw)
+
+    orch = Orchestrator(tmp_path / "o", place_fn=no_local, ledger=led)
+    orch.run(
+        "g",
+        _engine,  # subtask a: est 0.004 > headroom 0.001 -> blocked
+        lambda t: WorkResult(f"did:{t['subtask']}", Usage("m", 1, 1, 0.001)),
+    )
+    run_id = next(iter(orch.dispatches))
+    results = orch.results(run_id)
+    assert results["a"]["state"] == "FAILED" and results["b"]["state"] == "FAILED"
+    fails = [r for r in orch.audit.rows() if r.get("event") == "worker_fail"]
+    kinds = {f["kind"] for f in fails}
+    assert "NoPlacement" in kinds and "DependencyFailed" in kinds
+    no_place = next(f for f in fails if f["kind"] == "NoPlacement")
+    assert "over-budget" in no_place["error"] and "raise the cap" in no_place["hint"]

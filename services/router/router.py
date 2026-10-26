@@ -91,8 +91,8 @@ def default_router(
     ledger_path,
     base_url: str | None = None,
     api_key: str | None = None,
-    daily_cap: float = 1.0,
-    task_cap: float = 0.10,
+    daily_cap: float | None = None,
+    task_cap: float | None = None,
 ) -> Router:
     """decider -> jev -> (implicit table). Config via env or args."""
     base = (base_url or os.environ.get("OPENROUTER_BASE") or _decide.DEFAULT_BASE).rstrip("/")
@@ -101,4 +101,6 @@ def default_router(
     if key:
         engines.append(_http_engine("decider", _decide.DECIDER_MODEL, base, key))
         engines.append(_http_engine("jev", _decide.JEV_MODEL, base, key))
-    return Router(Budget(ledger_path, daily_cap=daily_cap, task_cap=task_cap), engines)
+    daily = daily_cap if daily_cap is not None else float(os.environ.get("OC_DAILY_CAP", "1.0"))
+    task = task_cap if task_cap is not None else float(os.environ.get("OC_TASK_CAP", "0.10"))
+    return Router(Budget(ledger_path, daily_cap=daily, task_cap=task), engines)
