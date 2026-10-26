@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from oc.fsproto import AlreadyLeased
 from services.cost import CostLedger, Usage
+from services.telemetry import report_failure
 
 
 @dataclass
@@ -69,6 +70,13 @@ def run_once(
                     "error": str(e),
                     "hint": getattr(e, "hint", ""),
                 }
+            )
+            report_failure(
+                f"{type(e).__name__}: {e}",
+                body=getattr(e, "hint", "") or None,
+                fingerprint=f"{type(e).__name__}",
+                exc=e,
+                run=task["run"], task=tid, subtask=task.get("subtask", ""),
             )
             continue
         if isinstance(result, WorkResult) and result.usage is not None and ledger is not None:

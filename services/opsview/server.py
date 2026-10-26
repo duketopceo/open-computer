@@ -883,4 +883,11 @@ def main(port: int = 8791):
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 8791)
+    from services.telemetry import install_excepthook, report_failure
+
+    install_excepthook()
+    try:
+        main(int(sys.argv[1]) if len(sys.argv) > 1 else 8791)
+    except Exception as e:
+        report_failure(f"opsview exited: {type(e).__name__}: {e}", exc=e, severity="fatal")
+        raise

@@ -12,6 +12,7 @@ from typing import Callable
 from services.device.parked import pick_device_for_task, required_capability
 from services.device.protocol import seal
 from services.placement import DEVICE_NEEDS, headroom_from
+from services.telemetry import report_failure
 
 PARKED = "device/parked"  # mailbox for device steps with no eligible device; drained on heartbeat (P1)
 
@@ -113,5 +114,11 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
                 "error": placement.reason,
                 "hint": "raise the cap, approve the step, or restore local endpoints — then rerun",
             }
+        )
+        report_failure(
+            f"NoPlacement: {placement.reason}",
+            severity="warning",
+            fingerprint="NoPlacement",
+            run=run_id, task=tid, subtask=sub["id"],
         )
     return rec
