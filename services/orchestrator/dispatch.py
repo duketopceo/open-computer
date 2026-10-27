@@ -44,6 +44,8 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
             "latency": sub.get("latency", "normal"),
             "est_cost": sub.get("est_cost", 0.0),
             "needs_sandbox": sub.get("needs_sandbox", False),
+            "needs_egress": sub.get("needs_egress", False),
+            "egress_hosts": sub.get("egress_hosts") or [],
             **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
         },
         pii_flagged=bool(pii.categories),
@@ -59,6 +61,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "engine": decision.engine,
         "placement": placement.target,
         "est_cost": sub.get("est_cost", 0.0),
+        **({"egress_hosts": list(placement.egress_hosts)} if placement.egress_hosts else {}),
         **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
     }
     if placement.target == "device":

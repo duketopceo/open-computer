@@ -344,6 +344,35 @@ placement, cost cap, and audit above it.
   + ROADMAP updates; (5) S5 policy binding. Independent enough to
   reorder around infra reality.
 
+### Status note (2026-10-26, implementation)
+
+- **S7 done** (`fd93546`): `deploy/oc-space-tunnel.service` (systemd user,
+  `ExitOnForwardFailure`, `Restart=always`, keepalives, `cluster4` alias),
+  `OC_EXECPLANE_BACKEND` in `engines._plane()` (default `cube`, unknown →
+  `ValueError` at construction, no silent fallback), `e2b==2.21.1` optional
+  extra + regenerated `uv.lock`, `oc-worker` exports the SPACE env and
+  resolves `SPACE_API_KEY` via omaseal `space/ecw-cluster4`, `oc-deploy`
+  restarts/health-checks the tunnel. Live-verified: tunnel active,
+  `SpaceAdapter(...).sandboxes_available()` → True through 127.0.0.1:18080.
+- **S5 done**: `PolicyEngine.approved_egress()` (applied-only grants,
+  host → approving proposal ids), `bind_egress()` shared by both adapters
+  — wildcard/empty host → `ValueError`, unapproved → `PolicyDenied`
+  before the SDK call, intent row written first (unwritable audit → no
+  create), best-effort `created`/`failed` outcome rows into
+  `execplane-audit.ndjson` (`OC_AUDIT` override). `needs_egress` +
+  `egress_hosts` emitted by the planner; `place()` rule 1.5 → `blocked`
+  when no approved host covers the step, `cloud-sandbox` with
+  `egress_hosts` otherwise; dispatch puts them in the task body;
+  `sandbox_work` feeds them to `make_sandbox`. 25 unit rows +
+  `R2[cube]` PASS live through the binding.
+- **S6 done**: `make_sandbox` conformance fixture parameterized
+  `cube|space`; unreachable backend → honest PENDING skip naming the
+  backend; SPACE R2 gated on `SPACE_EGRESS_ROUTED=1` (hermetic → PENDING);
+  SPACE R3 PENDING (S4). Matrix rows per backend. Live run through the
+  tunnel: `R1[cube]` `R1[space]` `R2[cube]` `R3[cube]` PASS,
+  `R2[space]`/`R3[space]` PENDING.
+- **S4 parked** — awaiting a routed SPACE gateway.
+
 ### Current phase (2026-10-26): S7 + S5 + S6, S4 parked
 
 Owner-chosen scope after S0–S3 merged (#60, #61). One PR, three commits,

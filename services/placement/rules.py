@@ -50,6 +50,7 @@ class Placement:
     target: str
     reason: str
     gate_required: bool = False
+    egress_hosts: tuple[str, ...] = ()  # S5: approved hosts the sandbox may reach
 
 
 def _local_for(latency: str) -> str:
@@ -78,6 +79,7 @@ def place(
     budget=None,
     local_up: bool = True,
     device_available: bool = True,
+    egress_approved=(),
 ) -> Placement:
     """Where this subtask's model/execution lands. A pure function of its arguments.
 
@@ -126,6 +128,30 @@ def place(
         return Placement(
             _local_for(latency),
             "pii-flagged and unapproved - cloud targets closed",
+        )
+
+    # 1.5 Egress: a step that needs the network can only run where human-
+    #     approved egress exists (S5). A named host nobody approved — or no
+    #     approved host at all — blocks on words, not rc=1 in a deny-all VM.
+    if subtask.get("needs_egress"):
+        requested = [h for h in (subtask.get("egress_hosts") or []) if h]
+        unapproved = [h for h in requested if h not in egress_approved]
+        if unapproved:
+            return Placement(
+                "blocked",
+                f"needs egress to {unapproved} — hosts not approved by a human",
+            )
+        effective = tuple(requested or sorted(egress_approved))
+        if not effective:
+            return Placement(
+                "blocked",
+                "needs_egress — no approved egress for this step",
+            )
+        return Placement(
+            "cloud-sandbox",
+            f"needs_egress — approved hosts: {', '.join(effective)}",
+            gate_required=pii_flagged,
+            egress_hosts=effective,
         )
 
     # 2. Latency-critical work never waits on a network round trip — but a

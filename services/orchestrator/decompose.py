@@ -29,6 +29,8 @@ _FIELDS = {
     "latency": str,
     "est_cost": float,
     "needs_sandbox": bool,
+    "needs_egress": bool,
+    "egress_hosts": list,
 }
 
 _TIERS = {"cheap", "mid", "frontier"}
@@ -65,6 +67,10 @@ def _canon(raw: dict, i: int) -> dict:
         "latency": latency,
         "est_cost": float(raw.get("est_cost", 0.0) or 0.0),
         "needs_sandbox": bool(raw.get("needs_sandbox", False)),
+        "needs_egress": bool(raw.get("needs_egress", False)),
+        "egress_hosts": [
+            h for h in (raw.get("egress_hosts") or []) if isinstance(h, str) and h.strip()
+        ],
     }
     for k in (*DEVICE_NEEDS, "device_id", "capability", "kind", "app", "action"):
         if k in raw:
@@ -98,7 +104,10 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
     raw = engine(
         "Decompose this goal into subtasks. Return ONLY a JSON array; each "
         'item: {"id","title","prompt","deps":[ids],"tier":cheap|mid|frontier,'
-        '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool}.\n'
+        '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool,'
+        '"needs_egress":bool,"egress_hosts":[domain,...]}. '
+        "Set needs_egress when the step must reach the network (downloads, "
+        "APIs); name the exact domains it needs in egress_hosts.\n"
         f"Goal: {goal}"
     )
     text = re.sub(r"^```(json)?\s*|\s*```$", "", raw.strip(), flags=re.M)

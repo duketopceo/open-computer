@@ -90,7 +90,9 @@ def sandbox_work(
     script = re.sub(r"^```\w*\n?|\n?```$", "", script.strip()).strip()
     if not script:
         raise RuntimeError("script planner emitted empty output")
-    sb = plane.make_sandbox(egress_allowlist=[], timeout=300)
+    # S5: only hosts a human approved ever reach the payload — dispatch
+    # computes the effective set from the placement, empty = deny-all.
+    sb = plane.make_sandbox(egress_allowlist=list(task.get("egress_hosts") or []), timeout=300)
     try:
         b64 = base64.b64encode(script.encode()).decode()
         res = sb.exec(f"echo {b64} | base64 -d | bash")
