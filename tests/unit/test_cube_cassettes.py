@@ -26,6 +26,9 @@ def adapter(tmp_path, cassette) -> tuple[ExecplaneAdapter, ReplaySDK]:
     a = ExecplaneAdapter(tmp_path)
     sdk = ReplaySDK(cassette)
     a._sdk = sdk
+    # S5: sandbox create only reaches the SDK for human-approved hosts.
+    prop = a.policy.propose({"add_egress": ["example.com"]}, origin="human")
+    a.policy.apply(prop, approved_by="human")
     return a, sdk
 
 
@@ -135,6 +138,9 @@ def test_recording_wrapper_produces_a_replayable_scrubbed_cassette(tmp_path):
     rec = RecordingSDK(FakeCubeSDK(), out, scrub=["secret-value-123"])
     a = ExecplaneAdapter(tmp_path)
     a._sdk = rec
+    # S5: the grant persists in tmp_path/policy.json — `a2` reads it back.
+    prop = a.policy.propose({"add_egress": ["example.com"]}, origin="human")
+    a.policy.apply(prop, approved_by="human")
     ec.empty_allowlist_blocks_egress(a.make_sandbox)
     ec.no_credential_material_in_guest(a.make_sandbox)
     rec.save()

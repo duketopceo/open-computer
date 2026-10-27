@@ -9,6 +9,13 @@ dependencies = [
   "fido2>=2.0",
 ]
 
+[project.optional-dependencies]
+# SPACE backend: ECW control plane via the e2b SDK (S7). The adapter
+# degrades to sandboxes_available()=False without it — never required.
+space = [
+  "e2b==2.21.1",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8",

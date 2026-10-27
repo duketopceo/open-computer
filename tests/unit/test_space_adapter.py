@@ -25,6 +25,9 @@ def adapter(tmp_path, sdk: FakeSpaceSDK, url: str = "https://space.example.test"
     a._sdk = sdk
     a._api_url = url
     a._api_key = "oc-test-key"
+    # S5: sandbox create only reaches the SDK for human-approved hosts.
+    prop = a.policy.propose({"add_egress": ["example.com"]}, origin="human")
+    a.policy.apply(prop, approved_by="human")
     return a
 
 

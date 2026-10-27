@@ -7,6 +7,8 @@ A check that can't distinguish the two is dead weight and gets caught here.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import fakes
@@ -130,3 +132,22 @@ def test_every_gate_check_has_a_mutant():
     marks = test_gate_violations_detected.pytestmark[0].args[1]
     covered = {fn for fn, _ in marks}
     assert set(GATE_CHECKS) <= covered, [f.__name__ for f in set(GATE_CHECKS) - covered]
+
+
+def test_sandbox_rows_run_per_backend():
+    """S6: the conformance sandbox fixture is parameterized over both
+    execplane backends — de-parameterizing silently halves coverage."""
+    import importlib.util
+    import inspect
+
+    spec = importlib.util.spec_from_file_location(
+        "conf_conftest", Path(__file__).parent / "conftest.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    assert mod._BACKENDS == ("cube", "space")
+    assert tuple(mod.backend._fixture_function_marker.params) == mod._BACKENDS
+    assert "backend" in inspect.signature(
+        mod.make_sandbox._fixture_function
+    ).parameters

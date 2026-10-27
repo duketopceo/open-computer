@@ -20,6 +20,9 @@ from fake_cube import FakeCubeSDK
 def adapter(tmp_path, sdk: FakeCubeSDK, cls=ExecplaneAdapter):
     a = cls(tmp_path)
     a._sdk = sdk
+    # S5: sandbox create only reaches the SDK for human-approved hosts.
+    prop = a.policy.propose({"add_egress": ["example.com"]}, origin="human")
+    a.policy.apply(prop, approved_by="human")
     return a
 
 

@@ -37,8 +37,24 @@ def _probe(timeout: float = 1.0) -> bool:
 
 
 def place_live(subtask: dict, **kw):
-    """place() with a live local-endpoint probe injected."""
+    """place() with a live local-endpoint probe and the human-approved
+    egress set injected (S5)."""
     from .rules import place
 
     kw.setdefault("local_up", local_endpoints_up())
+    kw.setdefault("egress_approved", approved_egress())
     return place(subtask, **kw)
+
+
+def approved_egress(policy_path=None) -> tuple[str, ...]:
+    """Hosts a human granted via PolicyEngine.add_egress — read at dispatch
+    time so a grant takes effect on the next step, not the next restart."""
+    import os
+    from pathlib import Path
+
+    from services.execplane.policy import PolicyEngine
+
+    if policy_path is None:
+        root = Path(os.environ.get("OC_EXECPLANE_DIR", str(Path.home() / ".local/share/oc/execplane")))
+        policy_path = root / "policy.json"
+    return tuple(PolicyEngine(policy_path).approved_egress())

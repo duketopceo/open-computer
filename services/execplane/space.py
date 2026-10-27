@@ -30,9 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .client import ExecResult, SandboxUnavailable, _FailedSandbox
-from .policy import PolicyEngine
-
-_WILDCARD_CHARS = "*?"
+from .policy import PolicyEngine, bind_egress
 
 
 class _SpaceSandbox:
@@ -162,9 +160,10 @@ class SpaceAdapter:
         if boot_will_fail:
             return _FailedSandbox()
         allowlist = list(egress_allowlist or [])
-        for host in allowlist:
-            if any(c in host for c in _WILDCARD_CHARS):
-                raise ValueError(f"wildcard egress entry {host!r} rejected: SPACE allows exact domains only")
+        if not self._api_url:
+            return _FailedSandbox(SandboxUnavailable("SPACE_API_URL is not configured"))
+        # S5: unapproved/wildcard hosts refuse here; every attempt audited.
+        record = bind_egress(self.policy, allowlist, backend="space", audit_path=None)
         payload: dict[str, Any] = dict(
             template=template or self._template,
             timeout=timeout,
@@ -179,8 +178,6 @@ class SpaceAdapter:
             # credential rules) arrive with the credential boundary work —
             # S4/S5, not this skeleton.
             payload["network"] = {"allow_out": allowlist, "allow_public_traffic": False}
-        if not self._api_url:
-            return _FailedSandbox(SandboxUnavailable("SPACE_API_URL is not configured"))
         try:
             # api_url + api_key + domain bind this call to the configured
             # SPACE/ECW deployment — without them the SDK would fall back to
@@ -194,9 +191,13 @@ class SpaceAdapter:
                 **payload,
             )
         except Exception as e:
+            try:
+                record("failed", reason=type(e).__name__)
+            except Exception:
+                pass  # outcome row is best-effort; intent row already stands
             return _FailedSandbox(e)
         try:
-            return _SpaceSandbox(
+            wrapped = _SpaceSandbox(
                 sb,
                 sdk=self._sdk,
                 api_key=self._api_key,
@@ -210,4 +211,13 @@ class SpaceAdapter:
                 sb.kill()
             except Exception:
                 pass
+            try:
+                record("failed", reason=type(e).__name__)
+            except Exception:
+                pass
             return _FailedSandbox(e)
+        try:
+            record("created", sandbox_id=getattr(sb, "sandbox_id", None) or getattr(sb, "id", None))
+        except Exception:
+            pass
+        return wrapped

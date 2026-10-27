@@ -61,3 +61,26 @@ Host fixes required (now prerequisites):
 Bring-up notes: `SPACE_VENDOR_ROOT=$HOME/.space-devbox/space/vendor` (firecracker
 bundle installed there by `install-prereqs.sh`); Tilt UI `localhost:10350`;
 `up.sh` is idempotent — re-runnable, reuses the live cluster.
+
+## Production link (S7, 2026-10-26)
+
+The worker reaches ECW on cluster-4 through the `oc-space-tunnel` systemd
+user unit (`deploy/oc-space-tunnel.service` is the repo copy):
+
+- `127.0.0.1:18080` → `cluster4:8080` — ECW API (management)
+- `127.0.0.1:18092` → `cluster4:8092` — envd data plane
+- SSH via the `cluster4` config alias; `ExitOnForwardFailure` +
+  `Restart=always`. Kind binds hostPorts to loopback, so the tunnel is
+  the access path, not a workaround.
+
+Backend selection is explicit: `OC_EXECPLANE_BACKEND=space` in
+`~/bin/oc-worker` → `engines._plane()` → `execplane.adapter(root,
+backend="space")`. Unset falls back to cube. `SPACE_API_KEY` is injected
+by `omaseal run -e SPACE_API_KEY=space/ecw-cluster4` — never on disk.
+`e2b==2.21.1` is an optional `space` extra in `pyproject.toml` (uv.lock
+regenerated, not hand-edited).
+
+Verified 2026-10-26 on omarchy-max: `adapter(root, backend="space")
+.sandboxes_available()` → `True` through the tunnel.
+`oc-deploy` restarts the tunnel and fails the health check if an enabled
+link unit is down.

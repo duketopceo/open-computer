@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .policy import PolicyEngine
+from .policy import PolicyEngine, bind_egress
 
 
 class SandboxUnavailable(Exception):
@@ -110,6 +110,8 @@ class ExecplaneAdapter:
         if boot_will_fail:
             return _FailedSandbox()
         allowlist = list(egress_allowlist or [])
+        # S5: unapproved/wildcard hosts refuse here; every attempt audited.
+        record = bind_egress(self.policy, allowlist, backend="cube", audit_path=None)
         env_vars, resolve = self._guest_env(secrets or {})
         payload: dict[str, Any] = dict(
             template=template or self._template,
@@ -123,7 +125,15 @@ class ExecplaneAdapter:
         try:
             sb = self._sdk.Sandbox.create(**payload)
         except Exception as e:
+            try:
+                record("failed", reason=type(e).__name__)
+            except Exception:
+                pass  # outcome row is best-effort; intent row already stands
             return _FailedSandbox(e)
+        try:
+            record("created", sandbox_id=getattr(sb, "sandbox_id", None) or getattr(sb, "id", None))
+        except Exception:
+            pass
         return _CubeSandbox(sb, resolve)
 
     @staticmethod

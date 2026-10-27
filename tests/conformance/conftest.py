@@ -22,12 +22,24 @@ def fsproto(tmp_path):
     return mod.adapter(tmp_path)
 
 
+_BACKENDS = ("cube", "space")
+
+
+@pytest.fixture(params=_BACKENDS)
+def backend(request):
+    return request.param
+
+
 @pytest.fixture
-def make_sandbox(tmp_path):
+def make_sandbox(tmp_path, backend):
     mod = pytest.importorskip("services.execplane", reason="awaiting U2")
-    a = mod.adapter(tmp_path)
+    a = mod.adapter(tmp_path, backend=backend)
+    # Honest skip only: an adapter that cannot build or probe fails loudly.
     if not a.sandboxes_available():
-        pytest.skip("CubeSandbox unreachable — sandbox rows stay PENDING")
+        pytest.skip(f"{backend} backend unreachable — sandbox rows stay PENDING")
+    # S5: positive-control hosts must be human-approved before create.
+    prop = a.policy.propose({"add_egress": ["example.com", "example.org"]}, origin="human")
+    a.policy.apply(prop, approved_by="human")
     return a.make_sandbox
 
 
@@ -80,17 +92,26 @@ def pytest_terminal_summary(terminalreporter):
     rows: dict[str, list[str]] = {}
     for status in ("passed", "failed", "skipped", "error", "deselected"):
         for rep in stats.get(status, []):
-            m = re.search(r"test_(r\d+|router|auth|place|orch|work)_", getattr(rep, "nodeid", ""))
+            nodeid = getattr(rep, "nodeid", "")
+            m = re.search(r"test_(r\d+|router|auth|place|orch|work)_", nodeid)
             if m:
-                rows.setdefault(m.group(1).upper(), []).append(status)
+                param = re.search(r"\[(cube|space)\]", nodeid)
+                key = f"{m.group(1).upper()}[{param.group(1)}]" if param else m.group(1).upper()
+                rows.setdefault(key, []).append(status)
     if not rows:
         return
     terminalreporter.write_sep("=", "determinism matrix")
-    for rule in sorted(rows, key=lambda r: (0, int(r[1:])) if r[1:].isdigit() else (1, r)):
-        s = rows[rule]
+
+    def _sort(key):
+        rule, _, param = key.partition("[")
+        n = rule[1:]
+        return (0, int(n), param) if n.isdigit() else (1, rule, param)
+
+    for key in sorted(rows, key=_sort):
+        s = rows[key]
         state = (
             "FAIL"
             if "failed" in s or "error" in s
             else ("PASS" if "passed" in s else "LIVE-ONLY" if set(s) == {"deselected"} else "PENDING")
         )
-        terminalreporter.write_line(f"{rule}: {state} ({len(s)} checks)")
+        terminalreporter.write_line(f"{key}: {state} ({len(s)} checks)")

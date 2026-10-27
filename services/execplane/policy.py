@@ -80,3 +80,55 @@ class PolicyEngine:
         os.close(fd)
         os.rename(tmp, self.path)
         return True
+
+    def approved_egress(self) -> dict[str, list[str]]:
+        """Egress hosts granted by human-applied changes (S5 binding).
+
+        Read-only: {host: [approving proposal ids]}. Only applied entries
+        count — a dry-run proposal grants nothing."""
+        grants: dict[str, list[str]] = {}
+        for entry in self._applied:
+            for host in entry.get("change", {}).get("add_egress", []):
+                grants.setdefault(host, []).append(entry["id"])
+        return grants
+
+
+_WILDCARD = set("*?[]")
+
+
+def bind_egress(
+    engine: PolicyEngine,
+    allowlist: list[str],
+    *,
+    backend: str,
+    audit_path: Path | str | None,
+):
+    """S5: refuse any sandbox whose egress a human never approved, and
+    leave an audit row for every create attempt.
+
+    Order is deliberate — reject bad input (ValueError), then refuse
+    unapproved hosts (PolicyDenied), then write the intent row; only then
+    may the caller create. An intent-row write failure propagates: no
+    accountable row, no sandbox. Returns `record(outcome, **kw)` for the
+    best-effort outcome row after create (`created` + id, or `failed` +
+    reason). Audit path from OC_AUDIT; `audit_path` exists for tests."""
+    from services.gate.audit import AuditLog  # local: keeps policy import-light
+
+    log = AuditLog(
+        audit_path or os.environ.get("OC_AUDIT") or engine.path.parent / "execplane-audit.ndjson"
+    )
+    approved = engine.approved_egress()
+    base = {"event": "execplane.sandbox_create", "backend": backend, "allowlist": list(allowlist)}
+
+    def record(outcome: str, **kw) -> None:
+        log.append({**base, "outcome": outcome, **kw})
+
+    for host in allowlist:
+        if not host or _WILDCARD & set(host):
+            record("refused", reason=f"invalid egress host {host!r}")
+            raise ValueError(f"invalid egress host {host!r}: exact domains only, no wildcards")
+        if host not in approved:
+            record("refused", reason=f"host {host!r} not approved")
+            raise PolicyDenied(f"egress host {host!r} was never approved by a human")
+    record("attempt", approved_by=sorted({pid for ids in approved.values() for pid in ids}))
+    return record
