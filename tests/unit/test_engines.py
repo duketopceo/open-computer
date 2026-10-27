@@ -102,3 +102,37 @@ def test_openrouter_call_without_key_fails_clean(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(engines.WorkerUnavailable, match="OPENROUTER_API_KEY"):
         engines._chat(engines.OR_CHAT, "m", "p")
+
+
+def test_plane_backend_env_selects_adapter(monkeypatch):
+    """OC_EXECPLANE_BACKEND is read once at construction; unknown fails fast."""
+    monkeypatch.setattr(engines, "_plane_instance", None)
+    calls = []
+
+    def fake_adapter(root, backend="cube"):
+        calls.append(backend)
+        if backend not in ("cube", "space"):
+            raise ValueError(f"unknown execplane backend {backend!r}")
+        return object()
+
+    monkeypatch.setattr("services.execplane.adapter", fake_adapter)
+
+    monkeypatch.delenv("OC_EXECPLANE_BACKEND", raising=False)
+    engines._plane()
+    assert calls == ["cube"]
+
+    monkeypatch.setattr(engines, "_plane_instance", None)
+    monkeypatch.setenv("OC_EXECPLANE_BACKEND", "space")
+    engines._plane()
+    assert calls == ["cube", "space"]
+
+    monkeypatch.setattr(engines, "_plane_instance", None)
+    monkeypatch.setenv("OC_EXECPLANE_BACKEND", "k3s")
+    with pytest.raises(ValueError, match="unknown execplane backend"):
+        engines._plane()
+
+
+def test_unavailable_error_names_the_backend(scripted, monkeypatch):
+    monkeypatch.setenv("OC_EXECPLANE_BACKEND", "space")
+    with pytest.raises(engines.SandboxWorkerUnavailable, match="space"):
+        engines.sandbox_work({"prompt": "x"}, api_key="k", plane=_FakePlane(available=False))

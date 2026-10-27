@@ -49,13 +49,17 @@ _plane_instance = None
 
 
 def _plane():
-    """Lazy execplane singleton — constructed per-process, probed per task."""
+    """Lazy execplane singleton — constructed per-process, probed per task.
+
+    Backend is explicit: OC_EXECPLANE_BACKEND selects `cube` (default) or
+    `space`; an unknown value fails at construction, not per task."""
     global _plane_instance
     if _plane_instance is None:
         from services.execplane import adapter as plane_adapter
 
         _plane_instance = plane_adapter(
-            Path(os.environ.get("OC_EXECPLANE_DIR", str(Path.home() / ".local/share/oc/execplane")))
+            Path(os.environ.get("OC_EXECPLANE_DIR", str(Path.home() / ".local/share/oc/execplane"))),
+            backend=os.environ.get("OC_EXECPLANE_BACKEND", "cube"),
         )
     return _plane_instance
 
@@ -79,7 +83,8 @@ def sandbox_work(
     Unavailable control plane and nonzero exits fail CLOSED — never faked."""
     plane = plane or _plane()
     if not plane.sandboxes_available():
-        raise SandboxWorkerUnavailable("CubeSandbox control plane unreachable")
+        backend = os.environ.get("OC_EXECPLANE_BACKEND", "cube")
+        raise SandboxWorkerUnavailable(f"{backend} sandbox control plane unreachable")
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
     script, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
     script = re.sub(r"^```\w*\n?|\n?```$", "", script.strip()).strip()
