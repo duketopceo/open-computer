@@ -133,6 +133,20 @@ def test_sdk_create_failure_writes_failed_row(tmp_path, backend):
     assert outcomes == ["attempt", "failed"]
 
 
+def test_approved_egress_reads_grants_landed_after_construction(tmp_path):
+    """Production regression: the worker's adapter constructs PolicyEngine
+    once at startup; a grant applied later must still take effect —
+    place_live and make_sandbox must not disagree."""
+    from services.execplane.policy import PolicyEngine
+
+    engine = PolicyEngine(tmp_path / "policy.json")
+    assert engine.approved_egress() == {}
+    granter = PolicyEngine(tmp_path / "policy.json")
+    prop = granter.propose({"add_egress": ["kaggle.com"]}, origin="human")
+    granter.apply(prop, approved_by="human")
+    assert engine.approved_egress() == {"kaggle.com": [prop.id]}
+
+
 def test_needs_egress_no_approved_path_blocks():
     p = place({"needs_egress": True}, egress_approved=())
     assert p.target == "blocked"
