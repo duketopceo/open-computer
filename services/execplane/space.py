@@ -87,7 +87,19 @@ class _SpaceSandbox:
         return text
 
     def exec(self, cmd: str) -> ExecResult:
-        r = self._dp.commands.run(cmd)
+        try:
+            r = self._dp.commands.run(cmd)
+        except Exception as e:
+            # e2b raises CommandExitException on nonzero exits — a nonzero
+            # exit is a RESULT, not an error: callers branch on returncode.
+            exit_code = getattr(e, "exit_code", None)
+            if exit_code is None:
+                raise
+            return ExecResult(
+                returncode=int(exit_code),
+                stdout=getattr(e, "stdout", "") or "",
+                stderr=getattr(e, "stderr", "") or getattr(e, "error", "") or "",
+            )
         return ExecResult(returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr)
 
     def pause(self) -> None:

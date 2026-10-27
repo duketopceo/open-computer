@@ -41,7 +41,12 @@ def violations(placer) -> list[str]:
         tag = f"{sub} {kw}"
         if kw["pii_flagged"] and not kw["approved"] and cloud(p):
             out.append(f"I1 {tag} -> {p.target}")
-        if sub["latency"] == "crit" and not kw["pii_flagged"] and cloud(p):
+        if (
+            sub["latency"] == "crit"
+            and not kw["pii_flagged"]
+            and not sub["needs_sandbox"]  # sandbox is a capability target, not a model endpoint
+            and cloud(p)
+        ):
             out.append(f"I2 {tag} -> {p.target}")
         if (
             kw["headroom"] is not None
@@ -150,6 +155,18 @@ def test_local_down_blocks_pii_and_overbudget_instead_of_crash_landing():
     # With local up the demotion paths are unchanged.
     p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=True)
     assert p.target == "local-ollama"
+
+
+def test_needs_sandbox_is_a_capability_constraint_not_a_quality_pref():
+    # A step that must execute can only live in the sandbox — latency demotes
+    # to local or cloud-fallback are chat endpoints that cannot run code.
+    p = place({"needs_sandbox": True, "latency": "crit"})
+    assert p.target == "cloud-sandbox"
+    p = place({"needs_sandbox": True, "latency": "crit"}, local_up=False)
+    assert p.target == "cloud-sandbox"  # never cloud-OpenRouter for executable work
+    # The spend cap still binds: over-budget blocks, never demotes to chat.
+    p = place({"needs_sandbox": True, "est_cost": 0.5}, headroom=0.01)
+    assert p.target == "blocked" and "raise the cap" in p.reason
 
 
 def test_blocked_placement_tombstones_the_subtask(tmp_path):
