@@ -85,9 +85,12 @@ class PolicyEngine:
         """Egress hosts granted by human-applied changes (S5 binding).
 
         Read-only: {host: [approving proposal ids]}. Only applied entries
-        count — a dry-run proposal grants nothing."""
+        count — a dry-run proposal grants nothing. Re-reads the policy file
+        every call: adapters are long-lived, so a grant must take effect on
+        the next create/dispatch — not the next process restart."""
+        applied = json.loads(self.path.read_text()) if self.path.exists() else []
         grants: dict[str, list[str]] = {}
-        for entry in self._applied:
+        for entry in applied:
             for host in entry.get("change", {}).get("add_egress", []):
                 grants.setdefault(host, []).append(entry["id"])
         return grants
