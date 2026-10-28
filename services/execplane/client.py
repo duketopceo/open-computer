@@ -10,13 +10,18 @@ rows stay PENDING instead of lying.
 from __future__ import annotations
 
 import os
+import time
 import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from oc.obs import get_logger
+
 from .policy import PolicyEngine, bind_egress
+
+log = get_logger("execplane")
 
 
 class SandboxUnavailable(Exception):
@@ -38,6 +43,7 @@ class _FailedSandbox:
 
     def exec(self, cmd: str) -> ExecResult:
         msg = "sandbox boot failed"
+        log.warning("exec refused: sandbox never booted", error=type(self._err).__name__ if self._err else None)
         if self._err is not None:
             msg += f": {type(self._err).__name__}: {self._err}"
         raise SandboxUnavailable(msg)
@@ -59,15 +65,24 @@ class _CubeSandbox:
         return text
 
     def exec(self, cmd: str) -> ExecResult:
-        r = self._sb.commands.run(cmd)
+        t0 = time.monotonic()
+        try:
+            r = self._sb.commands.run(cmd)
+        except Exception as e:
+            log.error("sandbox exec error", backend="cube", cmd_chars=len(cmd), error=type(e).__name__,
+                      ms=round((time.monotonic() - t0) * 1000, 1))
+            raise
+        log.info("sandbox exec", backend="cube", cmd_chars=len(cmd), returncode=int(r.exit_code or 0),
+                 ms=round((time.monotonic() - t0) * 1000, 1))
         return ExecResult(returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr)
 
     def close(self) -> None:
         """Terminate the microVM. Best-effort — never raises."""
         try:
             self._sb.kill()
-        except Exception:
-            pass
+            log.info("sandbox closed", backend="cube")
+        except Exception as e:
+            log.warning("sandbox close failed", backend="cube", error=type(e).__name__)
 
 
 class ExecplaneAdapter:
@@ -93,8 +108,11 @@ class ExecplaneAdapter:
             if self._api_key:
                 req.add_header("X-API-Key", self._api_key)
             with urllib.request.urlopen(req, timeout=3) as r:
-                return r.status == 200
-        except OSError:
+                ok = r.status == 200
+            log.debug("sandbox backend probe", backend="cube", available=ok)
+            return ok
+        except OSError as e:
+            log.warning("sandbox backend probe failed", backend="cube", error=type(e).__name__)
             return False
 
     def make_sandbox(
@@ -125,6 +143,7 @@ class ExecplaneAdapter:
         try:
             sb = self._sdk.Sandbox.create(**payload)
         except Exception as e:
+            log.error("sandbox boot failed", backend="cube", error=type(e).__name__)
             try:
                 record("failed", reason=type(e).__name__)
             except Exception:

@@ -15,6 +15,10 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from oc.obs import get_logger
+
+log = get_logger("execplane")
+
 
 class PolicyDenied(Exception):
     pass
@@ -70,6 +74,7 @@ class PolicyEngine:
         """Apply iff a human approved. Agent-origin proposals can never be
         self-approved (R6)."""
         if approved_by != _HUMAN:
+            log.warning("policy change refused: not human-approved", proposal=proposal.id, origin=proposal.origin)
             raise PolicyDenied(f"policy change must be human-approved, got {approved_by!r}")
         self._applied.append({"id": proposal.id, "change": proposal.change, "ts": time.time()})
         data = json.dumps(self._applied, indent=2).encode()
@@ -79,6 +84,10 @@ class PolicyEngine:
         os.fsync(fd)
         os.close(fd)
         os.rename(tmp, self.path)
+        kinds = [i.split(":", 1)[0] for i in proposal.items]
+        log.info("policy change applied", proposal=proposal.id, origin=proposal.origin,
+                 egress_hosts=sorted(i[len("egress:"):] for i in proposal.items if i.startswith("egress:")),
+                 credentials=kinds.count("cred"), fs_write_paths=kinds.count("fs"))  # counts: never paths or names
         return True
 
     def approved_egress(self) -> dict[str, list[str]]:
@@ -117,14 +126,18 @@ def bind_egress(
     reason). Audit path from OC_AUDIT; `audit_path` exists for tests."""
     from services.gate.audit import AuditLog  # local: keeps policy import-light
 
-    log = AuditLog(
+    audit = AuditLog(
         audit_path or os.environ.get("OC_AUDIT") or engine.path.parent / "execplane-audit.ndjson"
     )
     approved = engine.approved_egress()
     base = {"event": "execplane.sandbox_create", "backend": backend, "allowlist": list(allowlist)}
 
     def record(outcome: str, **kw) -> None:
-        log.append({**base, "outcome": outcome, **kw})
+        audit.append({**base, "outcome": outcome, **kw})
+        # Same row, mirrored to the structured log (hosts are exact domains a human approved, not secrets).
+        (log.warning if outcome in ("refused", "failed") else log.info)(
+            "sandbox create " + outcome, backend=backend, egress_hosts=list(allowlist),
+            reason=kw.get("reason"), sandbox=kw.get("sandbox_id"))
 
     for host in allowlist:
         if not host or _WILDCARD & set(host):

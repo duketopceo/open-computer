@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from typing import Callable
 
+from oc.obs import get_logger
 from services.device.parked import pick_device_for_task, required_capability
 from services.device.protocol import seal
 from services.placement import DEVICE_NEEDS, headroom_from
 from services.telemetry import report_failure
+
+log = get_logger("orchestrator")
+plog = get_logger("placement")
 
 PARKED = "device/parked"  # mailbox for device steps with no eligible device; drained on heartbeat (P1)
 
@@ -39,6 +43,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
     decision = router.route(sub["prompt"])
     pii = gate.scan(sub["prompt"])
     device = _pick_device(devices, sub) if devices is not None else None
+    headroom = headroom_from(getattr(router, "budget", None), ledger, run_id)
     placement = place(
         {
             "tier": sub.get("tier", decision.tier),
@@ -50,7 +55,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
             **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
         },
         pii_flagged=bool(pii.categories),
-        headroom=headroom_from(getattr(router, "budget", None), ledger, run_id),
+        headroom=headroom,
         device_available=device is not None,
     )
     body = {
@@ -104,7 +109,19 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "pii": list(pii.categories),
     }
     audit.append(rec)
+    plog.info("placement decided", subtask=sub["id"], target=placement.target, reason=placement.reason,
+              gate_required=placement.gate_required, headroom=headroom)
+    if plog.enabled_debug():
+        plog.debug("placement inputs", subtask=sub["id"], tier=sub.get("tier", decision.tier),
+                   latency=sub.get("latency", "normal"), est_cost=sub.get("est_cost", 0.0),
+                   needs_sandbox=sub.get("needs_sandbox", False), needs_egress=sub.get("needs_egress", False),
+                   pii=list(pii.categories), device_available=device is not None)
+    log.info("subtask dispatched", subtask=sub["id"], task=tid, route=decision.route, engine=decision.engine,
+             placement=placement.target, mailbox=dst)
+    if dst == PARKED:
+        log.warning("subtask parked: no eligible device", subtask=sub["id"], task=tid)
     if placement.target == "blocked":
+        plog.warning("placement blocked", subtask=sub["id"], task=tid, reason=placement.reason)
         # No legal placement exists (a demote-only rule with local down).
         # Tombstone like a dep-fail: on disk, failed, never leased — so the
         # run surfaces the placement reason instead of a worker exception.

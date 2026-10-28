@@ -26,11 +26,14 @@ from pathlib import Path
 from typing import Any
 
 from oc.fsproto import adapter as fs_adapter
+from oc.obs import get_logger
 from services.gate.audit import AuditLog
 
 from .grants import GrantStore
 from .protocol import mint_secret
 from .registry import Device, DeviceRegistry
+
+log = get_logger("device")
 
 TOTP_STEP = 30
 TOTP_DIGITS = 6
@@ -159,6 +162,7 @@ def pair_device(
     if not verify_totp(totp_secret, totp_code, now=t):
         if audit is not None and hasattr(audit, "append"):
             audit.append({"event": "device_pair_refused", "device_id": did, "reason": "invalid_totp"})
+        log.warning("device pairing refused", device_id=did, reason="invalid_totp")
         raise PairingError("valid TOTP code required for headless pairing")
 
     dev_dir = _devices_dir(root)
@@ -173,6 +177,7 @@ def pair_device(
     _write_device_token(dev_dir, tok)
     if audit is not None and hasattr(audit, "append"):
         audit.append({"event": "device_paired", "device_id": did, "expires_at": tok.expires_at})
+    log.info("device paired", device_id=did, expires_at=tok.expires_at)
     return dev, tok
 
 
@@ -197,6 +202,7 @@ def refresh_device_token(
                     "reason": "invalid_totp",
                 }
             )
+        log.warning("device token refresh refused", device_id=device_id, reason="invalid_totp")
         raise PairingError("valid TOTP code required for token refresh")
 
     dev_dir = _devices_dir(root)
@@ -209,6 +215,7 @@ def refresh_device_token(
     _write_device_token(dev_dir, tok)
     if audit is not None and hasattr(audit, "append"):
         audit.append({"event": "device_token_refreshed", "device_id": device_id, "expires_at": tok.expires_at})
+    log.info("device token refreshed", device_id=device_id, expires_at=tok.expires_at)
     return tok
 
 
@@ -283,4 +290,6 @@ def kill_device(
     }
     if audit_inst is not None and hasattr(audit_inst, "append"):
         audit_inst.append(rec)
+    log.warning("device killed", device_id=device_id, revoked_grants=len(revoked_grants),
+                credential_removed=secret_deleted, failed_tasks=len(failed_tasks))
     return rec

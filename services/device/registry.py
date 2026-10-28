@@ -21,7 +21,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from oc.obs import get_logger
+
 from .parked import drain_parked
+
+log = get_logger("device")
 
 STALE_AFTER = 60.0  # seconds without a heartbeat before a device drops out of placement
 CAPABILITIES = ("fs", "app", "browser", "shell")
@@ -114,6 +118,7 @@ class DeviceRegistry:
         with self._flock():
             self._load()
             dev = self._devices.get(did)
+            is_new = dev is None
             if dev is None:
                 dev = Device(device_id=did, os=payload.get("os", "unknown"), registered_at=now)
                 self._devices[did] = dev
@@ -124,6 +129,8 @@ class DeviceRegistry:
             dev.online = bool(payload.get("online", True))
             dev.last_heartbeat = now
             self._save()
+        log.info("device registered" if is_new else "device re-registered", device_id=did, os=dev.os,
+                 capabilities=dev.capabilities, roots=len(dev.roots))
         if (fs is not None or self._fs is not None) and dev.fresh(now):
             self.drain_parked(fs=fs, audit=audit, now=now)
         return dev
@@ -141,10 +148,15 @@ class DeviceRegistry:
             self._load()
             dev = self._devices[device_id]  # KeyError: unregistered devices must register first
             t = self._clock() if now is None else now
+            gap = t - dev.last_heartbeat if dev.last_heartbeat else 0.0
             dev.last_heartbeat = t
             dev.awake = awake
             dev.online = True
             self._save()
+        if gap > STALE_AFTER:
+            log.warning("heartbeat gap", device_id=device_id, gap_s=round(gap, 1), stale_after_s=STALE_AFTER)
+        else:
+            log.debug("heartbeat", device_id=device_id, awake=awake, gap_s=round(gap, 1))
         if (fs is not None or self._fs is not None) and dev.fresh(t):
             self.drain_parked(fs=fs, audit=audit, now=t)
         return dev
@@ -174,6 +186,8 @@ class DeviceRegistry:
                     if dev.online:
                         dev.online = False
                         changed = True
+                        log.warning("device went stale: marked offline", device_id=dev.device_id,
+                                    last_heartbeat_age_s=round(t - dev.last_heartbeat, 1))
                     continue
                 if capability and capability not in dev.capabilities:
                     continue

@@ -16,14 +16,18 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
+from oc.obs import capture_content, get_logger
 from services.cost import CostLedger
 from services.gate import Gate
 from services.gate.audit import AuditLog
 from services.gate.queue import ApprovalQueue
 from services.placement import place
+
+log = get_logger("mcp")
 
 PROTOCOL = "2025-06-18"
 SERVER_INFO = {"name": "open-computer", "version": "0.0.0"}
@@ -265,12 +269,26 @@ def handle(msg: dict, st: State) -> dict | None:
         name = params.get("name")
         if name not in TOOLS:
             return err(-32602, f"unknown tool: {name}")
+        args = params.get("arguments") or {}
+        shape = {k: type(v).__name__ for k, v in args.items()} if isinstance(args, dict) else type(args).__name__
+        t0 = time.monotonic()
+
+        def ms() -> float:
+            return round((time.monotonic() - t0) * 1000, 1)
+
         try:
-            result = TOOLS[name][2](st, params.get("arguments") or {})
+            result = TOOLS[name][2](st, args)
         except KeyError as e:
+            log.warning("tool call failed", tool=name, args_shape=shape, status="missing_argument", ms=ms())
             return ok({"isError": True, "content": [{"type": "text", "text": f"missing argument: {e.args[0]}"}]})
         except Exception as e:  # tool failure is a tool result, not a protocol error
+            log.error("tool call failed", tool=name, args_shape=shape, status="error", error=type(e).__name__, ms=ms())
             return ok({"isError": True, "content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}]})
+        status = "error" if "error" in result else "ok"
+        (log.warning if status == "error" else log.info)("tool call", tool=name, args_shape=shape, status=status,
+                                                        ms=ms())
+        if capture_content():  # argument values are only ever logged on explicit opt-in (and are redacted)
+            log.debug("tool call args", tool=name, args=args)
         return ok(
             {
                 "isError": "error" in result,
@@ -289,6 +307,7 @@ def serve(stdin=sys.stdin, stdout=sys.stdout, st: State | None = None) -> None:
         try:
             msg = json.loads(line)
         except ValueError:
+            log.warning("parse error: line is not json", chars=len(line))
             stdout.write(
                 json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}) + "\n"
             )

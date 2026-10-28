@@ -17,7 +17,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from oc.obs import get_logger
 from services.device_agent.grants import GrantViolation, resolve_granted_path
+
+log = get_logger("device")
 
 MODES = ("read", "write", "exec")
 DEFAULT_GRANT_TTL = 3600.0
@@ -73,7 +76,24 @@ class GrantStore:
         tmp.write_text(json.dumps({k: asdict(v) for k, v in self._grants.items()}, indent=1, sort_keys=True))
         os.replace(tmp, self._path)
 
+    @staticmethod
+    def _trace(row: dict) -> None:
+        """Mirror a grant audit row into the structured log: ids, mode and verdict, never file paths."""
+        ev = row.get("event")
+        base = {"device_id": row.get("device_id"), "grant_id": row.get("grant_id")}
+        if ev == "grant_check":
+            if row.get("allowed"):
+                log.debug("grant used", mode=row.get("mode"), **base)
+            else:
+                log.warning("grant check denied", mode=row.get("mode"), reason=str(row.get("reason", "")).split(":")[0],
+                            **base)
+        elif ev == "grant_added":
+            log.info("grant added", modes=row.get("modes"), expires_at=row.get("expires_at"), **base)
+        elif ev == "grant_revoked":
+            log.info("grant revoked", **base)
+
     def _log(self, row: dict, audit: Any | None = None) -> None:
+        self._trace(row)
         target = audit if audit is not None else self._audit
         if target is not None and hasattr(target, "append"):
             target.append(row)

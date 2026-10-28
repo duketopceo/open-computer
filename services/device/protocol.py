@@ -21,6 +21,10 @@ import json
 import secrets as _secrets
 import time
 
+from oc.obs import get_logger
+
+log = get_logger("device")
+
 WINDOW = 120.0  # seconds a sealed envelope stays valid
 
 
@@ -44,6 +48,7 @@ def _sig(secret: str, step: dict, ts: float, nonce: str) -> str:
 def seal(step: dict, secret: str, now: float | None = None) -> dict:
     ts = round(time.time() if now is None else now, 3)
     nonce = _secrets.token_hex(16)
+    log.debug("envelope sealed", device_id=step.get("device_id"), kind=step.get("kind"))
     return {"step": step, "ts": ts, "nonce": nonce, "sig": _sig(secret, step, ts, nonce)}
 
 
@@ -51,6 +56,17 @@ def open_envelope(
     env: dict, secret: str, now: float | None = None, seen: set[str] | None = None, window: float = WINDOW
 ) -> dict:
     """Verify and return the step. `seen` is mutated: the nonce is recorded on success."""
+    try:
+        step = _open(env, secret, now, seen, window)
+    except EnvelopeError as e:
+        # Reason only: never the signature, nonce, secret or step contents.
+        log.warning("envelope refused", reason=str(e).split(":")[0])
+        raise
+    log.debug("envelope verified", device_id=step.get("device_id"), kind=step.get("kind"))
+    return step
+
+
+def _open(env: dict, secret: str, now: float | None, seen: set[str] | None, window: float) -> dict:
     try:
         step, ts, nonce, sig = env["step"], float(env["ts"]), str(env["nonce"]), str(env["sig"])
     except (KeyError, TypeError, ValueError) as e:

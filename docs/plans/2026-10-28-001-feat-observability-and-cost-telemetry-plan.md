@@ -3,7 +3,7 @@ title: Observability and OpenRouter cost telemetry — staged plan
 type: feat
 date: 2026-10-28
 origin: docs/brainstorms/2026-10-28-observability-and-openrouter-cost-requirements.md
-status: Stage 1 built (see docs/runbooks/observability.md); Stages 2-5 gated on operator decisions in the origin doc; Stage 6 is a later side track, not scheduled
+status: Stages 1 and 2 built (see docs/runbooks/observability.md); Stages 3-5 gated on operator decisions in the origin doc; Stage 6 is a later side track, not scheduled
 ---
 
 # Observability and OpenRouter cost telemetry
@@ -101,7 +101,7 @@ deny-list lint for operator-specific strings.
 Exit: CI green; `python -m services.openrouter report --by chat` works on a seeded dir; cap pauses on actual
 (not estimated) spend in a unit test.
 
-### Stage 2 — Logging across all services  (R1, R2)
+### Stage 2 — Logging across all services  (R1, R2; built)
 
 **Goal:** the ten services speak the same log dialect, and `OC_DEBUG=1` is genuinely useful.
 

@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from oc.fsproto import AlreadyLeased, ResultImmutable, TaskFinal, adapter as fs_adapter
+from oc.obs import bind, get_logger
 from services.device import GrantStore, adapter as registry_adapter
 from services.device.protocol import WINDOW, mint_secret
 from services.gate.audit import AuditLog
@@ -22,6 +23,9 @@ from services.gate.audit import AuditLog
 from .exec import execute
 from .heartbeat import HEARTBEAT_EVERY, registration_payload
 from .remote import RemoteClient, RemoteError
+
+
+log = get_logger("device_agent")
 
 
 def _load_pending(path: Path) -> dict[str, dict]:
@@ -112,11 +116,14 @@ def main(argv: list[str] | None = None) -> int:
             fs.outbox_write(mailbox, tid, json.dumps(pending[tid]).encode())
         except (TaskFinal, ResultImmutable):
             pass  # finished by other means or failed (e.g. kill switch) — result no longer wanted
-        except (RemoteError, OSError):
+        except (RemoteError, OSError) as e:
+            log.warning("result write deferred", task=tid, error=type(e).__name__)
             return  # transport — stays in pending, retried next cycle
         pending.pop(tid, None)
         _save_pending(pending_file, pending)
 
+    log.info("device agent started", device_id=a.device_id, mode="remote" if a.remote else "local",
+             pending_results=len(pending))
     while True:
         try:
             reg.heartbeat(a.device_id)
@@ -129,15 +136,18 @@ def main(argv: list[str] | None = None) -> int:
                 except (AlreadyLeased, TaskFinal):
                     continue
                 msg = json.loads(fs.task_body(tid))
-                result = execute(
-                    msg.get("envelope", {}),
-                    secret,
-                    seen=seen,
-                    grants=grants,
-                    device_id=a.device_id,
-                    registry=reg,
-                    audit=audit,
-                )
+                with bind(run_id=msg.get("run"), subtask=msg.get("subtask"), task=tid, chat_id=msg.get("chat"),
+                          service="device_agent"):
+                    log.info("task claimed", device_id=a.device_id)
+                    result = execute(
+                        msg.get("envelope", {}),
+                        secret,
+                        seen=seen,
+                        grants=grants,
+                        device_id=a.device_id,
+                        registry=reg,
+                        audit=audit,
+                    )
                 fresh = seen - seen_expiry.keys()
                 if fresh:
                     t = time.time()
@@ -148,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
                 _save_pending(pending_file, pending)
                 flush(tid)
         except RemoteError as e:
+            log.warning("relay unreachable", error=type(e).__name__, retry_in_s=HEARTBEAT_EVERY)
             if a.once:
                 raise SystemExit(f"relay unreachable: {e}")
             time.sleep(HEARTBEAT_EVERY)

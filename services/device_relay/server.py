@@ -24,9 +24,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from oc.fsproto import AlreadyLeased, FSAdapter, ResultImmutable, TaskFinal, adapter as fs_adapter
+from oc.obs import bind, get_logger
 from services.device import adapter as registry_adapter
 from services.device.security import DeviceToken, valid_device_id
 from services.gate.audit import AuditLog
+
+log = get_logger("device_relay")
 
 DID = r"(?P<did>[A-Za-z0-9._-]{1,128})"
 TID = r"(?P<tid>[0-9a-f]{8,64})"
@@ -83,6 +86,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- plumbing ------------------------------------------------------------
     def _send(self, code: int, body: bytes, ctype="application/json", headers: dict | None = None):
+        self._status = code
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -140,18 +144,32 @@ class Handler(BaseHTTPRequestHandler):
         return None, {}
 
     def _handle(self, method: str):
+        t0 = time.monotonic()
+        self._status = 0
         op, args = self._route(method)
+        did = args.get("did")
+        try:
+            self._dispatch(method, op, args)
+        finally:
+            # Access log: route *name* (never the raw path or any header), status, latency, device id.
+            ms = round((time.monotonic() - t0) * 1000, 1)
+            quiet = self._status < 400 and op in ("heartbeat", "inbox")
+            (log.debug if quiet else log.warning if self._status >= 400 else log.info)(
+                "relay request", method=method, op=op or "unrouted", device_id=did, status=self._status, ms=ms)
+
+    def _dispatch(self, method: str, op: str | None, args: dict):
         if op is None:
             return self._send(404, b"not found", "text/plain")
         did = args["did"]
         if not valid_device_id(did) or self._device(did) is None:
             try:
                 self.audit.append({"event": "relay_auth_rejected", "device_id": did, "via": "relay"})
-            except OSError:
-                pass
+            except OSError as e:
+                log.warning("relay auth audit write failed", error=type(e).__name__)
             return self._send(401, b"unauthorized", "text/plain", {"WWW-Authenticate": "Bearer"})
         handler = getattr(self, f"_{method.lower()}_{op}")
-        handler(did, args)
+        with bind(service="device_relay"):
+            handler(did, args)
 
     def do_GET(self):
         self._handle("GET")
@@ -284,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     if wildcard:
         ap.error("refusing to bind every interface — use a specific loopback or tailscale IP")
     srv = make_server(a.port, a.root, host=a.bind)
-    print(f"device relay on {a.bind}:{a.port} root={a.root}", flush=True)
+    log.info("device relay listening", bind=a.bind, port=a.port)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

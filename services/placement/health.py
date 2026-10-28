@@ -10,6 +10,10 @@ from __future__ import annotations
 import socket
 import time
 
+from oc.obs import get_logger
+
+log = get_logger("placement")
+
 _ENDPOINTS = (("127.0.0.1", 8080), ("127.0.0.1", 11434))  # llama.cpp, Ollama
 _TTL = 30.0
 _cache: tuple[float, bool] = (0.0, True)
@@ -21,7 +25,11 @@ def local_endpoints_up(now: float | None = None) -> bool:
     ts, up = _cache
     if now - ts < _TTL:
         return up
+    was = up
     up = _probe()
+    if ts and up != was:
+        log.warning("local endpoints went down" if not up else "local endpoints back up")
+    log.debug("local endpoint probe", up=up)
     globals()["_cache"] = (now, up)
     return up
 

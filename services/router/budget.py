@@ -10,6 +10,10 @@ import json
 import time
 from pathlib import Path
 
+from oc.obs import get_logger
+
+log = get_logger("router")
+
 
 class BudgetHalt(Exception):
     pass
@@ -38,6 +42,7 @@ class Budget:
                 cost = float(row.get("cost", 0.0))
             except (json.JSONDecodeError, ValueError, TypeError):
                 self._append({"event": "budget_halt", "cap": "ledger-corrupt"})
+                log.error("budget halt: spend ledger unreadable", cap="ledger-corrupt")
                 raise BudgetHalt("spend ledger unreadable — failing closed")
             if time.strftime("%Y-%m-%d", time.localtime(row.get("ts", 0))) == today:
                 total += cost
@@ -47,9 +52,11 @@ class Budget:
         """Raise BudgetHalt if a call of est_cost would exceed any cap."""
         if self.task_spend + est_cost > self.task_cap:
             self._append({"event": "budget_halt", "cap": "task", "spend": self.task_spend})
+            log.warning("budget halt", cap="task", limit=self.task_cap, spend=self.task_spend, est_cost=est_cost)
             raise BudgetHalt(f"task cap {self.task_cap} exceeded")
         if self.day_spend() + est_cost > self.daily_cap:
             self._append({"event": "budget_halt", "cap": "daily"})
+            log.warning("budget halt", cap="daily", limit=self.daily_cap, est_cost=est_cost)
             raise BudgetHalt(f"daily cap {self.daily_cap} exceeded")
 
     def record(self, cost: float, engine: str, route: str) -> None:
