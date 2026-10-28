@@ -11,6 +11,7 @@ Config (all optional; defaults work on a fresh checkout and write nothing to dis
   OC_LOG_DIR              if set, also write rotating NDJSON to <dir>/oc.log
   OC_LOG_MAX_BYTES        rotation size (default 20 MB), OC_LOG_BACKUPS (default 5)
   OC_LOG_STDERR=0         silence the stderr sink
+  OC_OBS_CAPTURE_CONTENT=1  allow prompt/argument text in logs (default: metadata only; still redacted)
 
 A logging failure never reaches the caller; it increments `failures()`.
 """
@@ -45,19 +46,28 @@ def _truthy(v: str | None) -> bool:
     return (v or "").strip().lower() in {"1", "true", "yes", "on", "debug"}
 
 
+def capture_content() -> bool:
+    """True only with OC_OBS_CAPTURE_CONTENT=1: the single switch that lets prompt/completion/argument text
+    into local logs and records (still redacted). Off by default; every call site asks here."""
+    return (os.environ.get("OC_OBS_CAPTURE_CONTENT") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         service = record.name.split(".", 1)[1] if "." in record.name else record.name
         ctx = context.current()
-        ctx.setdefault("service", service)
+        ctx.pop("service", None)  # the logger names the service that spoke; a bound `service` is the caller's
         row = {
             "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
             "level": record.levelname,
-            "service": ctx.pop("service"),
+            "service": service,
             "msg": record.getMessage(),
             **ctx,
             **getattr(record, "fields", {}),
         }
+        if row.get("run_id"):  # a line that names its run (a service log with an explicit id) joins the same spine
+            row.setdefault("trace_id", context.trace_id_for(str(row["run_id"])))
+            row.setdefault("chat_id", row["run_id"])
         if record.exc_info:
             row["exc"] = self.formatException(record.exc_info)
         return json.dumps(redact(row), ensure_ascii=False, default=str, separators=(",", ":"))
@@ -173,6 +183,16 @@ class Logger:
 
 def get_logger(service: str) -> Logger:
     return Logger(service)
+
+
+def error_fields(exc: BaseException) -> dict:
+    """Fields describing a caught exception for a log line: the class always, the message (which can echo
+    prompt text, file contents or provider bodies) only with OC_OBS_CAPTURE_CONTENT=1. The full message is still
+    on disk in the audit rows and the OpenRouter call record, where `python -m oc.obs tail` finds it."""
+    out = {"error": type(exc).__name__}
+    if capture_content():
+        out["error_message"] = str(exc)[:300]
+    return out
 
 
 def now() -> float:

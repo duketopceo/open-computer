@@ -11,8 +11,10 @@ when a `GrantStore` (and `device_id`) is supplied, recording every grant check
 from __future__ import annotations
 
 import socket
+import time
 from typing import TYPE_CHECKING, Any
 
+from oc.obs import get_logger
 from services.device.protocol import EnvelopeError, open_envelope
 
 if TYPE_CHECKING:
@@ -20,6 +22,8 @@ if TYPE_CHECKING:
     from services.device.registry import DeviceRegistry
     from services.device_agent.wisp_actuator import WispActuator
     from services.gate.queue import ApprovalQueue
+
+log = get_logger("device_agent")
 
 SUPPORTED = ("echo", "fs_read", "fs_write", "fs_list", "app_action", "browser_action")
 
@@ -55,7 +59,20 @@ def _resolve_capabilities(
     return set()
 
 
-def execute(
+def execute(envelope: dict, secret: str, **kw: Any) -> dict:
+    """Verify the envelope, run the step, return a result record (see `_execute`). Logs the outcome: step
+    kind, verdict, refusal reason and duration. Never the step text, file paths, file contents or results."""
+    t0 = time.monotonic()
+    res = _execute(envelope, secret, **kw)
+    ok = bool(res.get("ok"))
+    reason = res.get("reason") or (str(res.get("error", "")).split(":")[0] if not ok else None)
+    (log.info if ok or res.get("parked") else log.warning)(
+        "step executed" if ok else "step not executed", kind=res.get("kind"), ok=ok, reason=reason,
+        parked=bool(res.get("parked")), ms=round((time.monotonic() - t0) * 1000, 1))
+    return res
+
+
+def _execute(
     envelope: dict,
     secret: str,
     *,

@@ -17,6 +17,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from oc.fsproto import _parse_record, _write_record
+from oc.obs import get_logger
 
 from .protocol import seal
 
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from services.device.registry import Device, DeviceRegistry
 
 PARKED_MAILBOX = "device/parked"
+
+log = get_logger("device")
 
 
 def required_capability(task_msg: dict[str, Any]) -> str | None:
@@ -90,7 +93,8 @@ def drain_parked(
 
         try:
             msg = json.loads(fs.task_body(tid))
-        except Exception:
+        except Exception as e:
+            log.warning("parked task body unreadable", task=tid, error=type(e).__name__)
             msg = {}
 
         dev = pick_device_for_task(registry, msg, now=now)
@@ -99,6 +103,7 @@ def drain_parked(
 
         secret = registry.secret_for(dev.device_id) if hasattr(registry, "secret_for") else None
         if secret is None:
+            log.warning("parked task kept: device has no secret", task=tid, device_id=dev.device_id)
             continue  # device never minted a secret — the agent would refuse unsigned work
 
         step = msg.get("step")
@@ -136,5 +141,7 @@ def drain_parked(
         if audit is not None and hasattr(audit, "append"):
             audit.append(rec)
         drained.append(rec)
+        log.info("parked task drained", task=tid, run_id=msg.get("run") or None, subtask=msg.get("subtask") or None,
+                 device_id=dev.device_id)
 
     return drained

@@ -29,6 +29,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
+from oc.obs import get_logger
+
+log = get_logger("cost")
+
 RUNNING = "running"
 PAUSED = "paused_cap"
 
@@ -92,7 +96,8 @@ class CostLedger:
         held: dict[str, float] = {}
         try:
             rows = self._rows()
-        except LedgerCorrupt:
+        except LedgerCorrupt as e:
+            log.error("ledger unreadable: run treated as paused", run_id=run, error=str(e))
             return RunState(run, None, 0.0, PAUSED, 0)  # fail closed: unreadable means paused
         for r in rows:
             if r.get("run") != run:
@@ -143,12 +148,13 @@ class CostLedger:
         if self._emit is not None:
             try:
                 self._emit(rec)
-            except Exception:  # an emitter must never change accounting
-                pass
+            except Exception as e:  # an emitter must never change accounting
+                log.warning("cost event emitter failed", error=type(e).__name__)
 
     def set_cap(self, run: str, cap: float, by: str = "owner") -> None:
         with self._locked():
             self._notify(self._append({"event": "cap_set", "run": run, "cap": float(cap), "by": by}))
+            log.info("cap set", run_id=run, cap=float(cap), by=by)
 
     def check(self, run: str, est_cost: float = 0.0) -> str | None:
         """Reserve `est_cost` under the cap. Returns a token, or None if it does not fit (run is paused,
@@ -156,8 +162,11 @@ class CostLedger:
         with self._locked():
             st = self.state(run)
             if st.state == PAUSED:
+                log.info("reserve refused: run paused", run_id=run, cap=st.cap, spend=st.spend)
                 return None
             if st.cap is None or st.spend + st.reserved + est_cost > st.cap:
+                log.warning("run paused: cap", run_id=run, cap=st.cap, spend=st.spend, reserved=st.reserved,
+                            est_cost=est_cost)
                 self._notify(
                     self._append(
                         {
@@ -173,12 +182,14 @@ class CostLedger:
                 return None
             token = uuid.uuid4().hex[:10]
             self._append({"event": "reserve", "run": run, "token": token, "est": est_cost})
+            log.debug("reserved", run_id=run, reservation=token, est_cost=est_cost, cap=st.cap, spend=st.spend)
             return token
 
     def release(self, run: str, token: str) -> None:
         """Settle a reservation that produced no cost (worker failed before spending)."""
         with self._locked():
             self._append({"event": "release", "run": run, "token": token})
+            log.debug("released", run_id=run, reservation=token)
 
     def record(self, run: str, subtask: str, usage: Usage, token: str | None = None) -> RunState:
         """Record a finished call. Always recorded, even over the cap: money already spent is truth."""
@@ -199,6 +210,8 @@ class CostLedger:
             if token:
                 self._append({"event": "release", "run": run, "token": token})
             st = self.state(run)
+            log.info("cost recorded", run_id=run, subtask=subtask, model=usage.model, tokens_in=usage.tokens_in,
+                     tokens_out=usage.tokens_out, cost=usage.cost, spend=st.spend, cap=st.cap)
             if st.cap is not None and st.state == RUNNING and st.spend + st.reserved >= st.cap:
                 self._notify(
                     self._append(
@@ -212,6 +225,7 @@ class CostLedger:
                     )
                 )
                 st.state = PAUSED
+                log.warning("run paused: cap", run_id=run, cap=st.cap, spend=st.spend)
             return st
 
     def resume(self, run: str, new_cap: float, by: str) -> RunState:
@@ -222,4 +236,5 @@ class CostLedger:
                 raise ValueError(f"new cap {new_cap} must exceed current spend {st.spend:.6f}")
             self._notify(self._append({"event": "cap_set", "run": run, "cap": float(new_cap), "by": by}))
             self._notify(self._append({"event": "run_resumed", "run": run, "by": by, "cap": float(new_cap)}))
+            log.info("run resumed", run_id=run, cap=float(new_cap), spend=st.spend, by=by)
             return self.state(run)

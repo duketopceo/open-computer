@@ -25,12 +25,17 @@ ever enters the guest.
 from __future__ import annotations
 
 import os
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from .client import ExecResult, SandboxUnavailable, _FailedSandbox
+from oc.obs import get_logger
+
 from .policy import PolicyEngine, bind_egress
+
+log = get_logger("execplane")
 
 
 class _SpaceSandbox:
@@ -87,7 +92,15 @@ class _SpaceSandbox:
         return text
 
     def exec(self, cmd: str) -> ExecResult:
-        r = self._dp.commands.run(cmd)
+        t0 = time.monotonic()
+        try:
+            r = self._dp.commands.run(cmd)
+        except Exception as e:
+            log.error("sandbox exec error", backend="space", cmd_chars=len(cmd), error=type(e).__name__,
+                      ms=round((time.monotonic() - t0) * 1000, 1))
+            raise
+        log.info("sandbox exec", backend="space", cmd_chars=len(cmd), returncode=int(r.exit_code or 0),
+                 ms=round((time.monotonic() - t0) * 1000, 1))
         return ExecResult(returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr)
 
     def pause(self) -> None:
@@ -103,8 +116,9 @@ class _SpaceSandbox:
         """Terminate the sandbox via the management surface. Never raises."""
         try:
             self._sb.kill()
-        except Exception:
-            pass
+            log.info("sandbox closed", backend="space")
+        except Exception as e:
+            log.warning("sandbox close failed", backend="space", error=type(e).__name__)
 
 
 class SpaceAdapter:
@@ -136,9 +150,11 @@ class SpaceAdapter:
                     req.add_header("X-API-Key", self._api_key)
                 with urllib.request.urlopen(req, timeout=3) as r:
                     if r.status == 200:
+                        log.debug("sandbox backend probe", backend="space", available=True)
                         return True
             except OSError:
                 continue
+        log.warning("sandbox backend probe failed", backend="space")
         return False
 
     def make_sandbox(
@@ -191,6 +207,7 @@ class SpaceAdapter:
                 **payload,
             )
         except Exception as e:
+            log.error("sandbox boot failed", backend="space", error=type(e).__name__)
             try:
                 record("failed", reason=type(e).__name__)
             except Exception:

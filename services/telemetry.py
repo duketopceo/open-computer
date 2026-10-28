@@ -16,10 +16,15 @@ import json
 import os
 import socket
 import sys
+import time
 import traceback
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+
+from oc.obs import get_logger
+
+log = get_logger("telemetry")
 
 _HOST = socket.gethostname()
 _TIMEOUT = 2.0
@@ -37,14 +42,20 @@ def _tallyline_env():
 
 
 def _post(url, headers, payload: bytes) -> None:
+    sink = "sentry" if "X-Sentry-Auth" in headers else "tallyline"
     # Cloudflare's bot check 403s the bare urllib UA (error 1010)
     req = urllib.request.Request(url, data=payload, method="POST", headers={
         "User-Agent": "oc-telemetry/0.1 (+open-computer)", **headers,
     })
+    t0 = time.monotonic()
     try:
-        urllib.request.urlopen(req, timeout=_TIMEOUT)
-    except Exception:
-        pass  # telemetry never propagates
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            status = getattr(r, "status", None)
+        log.debug("telemetry sent", sink=sink, status=status, ms=round((time.monotonic() - t0) * 1000, 1),
+                  bytes=len(payload))
+    except Exception as e:  # never propagates; the failure is logged, never the URL or credentials
+        log.warning("telemetry send failed", sink=sink, error=type(e).__name__,
+                    ms=round((time.monotonic() - t0) * 1000, 1))
 
 
 def _send_sentry(title: str, body: str | None, level: str, fingerprint: str | None,
@@ -125,10 +136,11 @@ def report_failure(title: str, *, body: str | None = None, severity: str = "erro
                    **extra) -> None:
     """Report a failure to every configured sink. Never raises."""
     try:
+        log.debug("report", severity=severity, fingerprint=fingerprint)
         _send_sentry(title, body, severity, fingerprint, extra, exc=exc)
         _send_tallyline(title, body, severity, fingerprint, extra)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("telemetry report failed", error=type(e).__name__)
 
 
 def install_excepthook() -> None:

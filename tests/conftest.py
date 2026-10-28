@@ -14,3 +14,29 @@ def _isolated_obs(tmp_path, monkeypatch):
                 "OC_OPENROUTER_BASE_URL"):
         monkeypatch.delenv(var, raising=False)
     yield
+
+
+class RealProviderCall(AssertionError):
+    pass
+
+
+def is_real_provider(url: str) -> bool:
+    return "openrouter.ai" in url
+
+
+@pytest.fixture(autouse=True)
+def _no_real_openrouter(monkeypatch):
+    """Belt and braces on top of "no ambient key": any attempt to open a connection to openrouter.ai from a test
+    fails the test loudly, whatever base URL or key the code under test ended up with."""
+    import urllib.request
+
+    real = urllib.request.urlopen
+
+    def guarded(req, *a, **kw):
+        url = req if isinstance(req, str) else getattr(req, "full_url", "")
+        if is_real_provider(url):
+            raise RealProviderCall(f"test tried to call the real OpenRouter: {url.split('?')[0]}")
+        return real(req, *a, **kw)
+
+    monkeypatch.setattr(urllib.request, "urlopen", guarded)
+    return is_real_provider

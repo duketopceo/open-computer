@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator
 
-FIELDS = ("trace_id", "run_id", "goal", "subtask", "task", "chat_id", "service")
+FIELDS = ("trace_id", "run_id", "goal", "subtask", "task", "chat_id", "service", "request_id")
 
 _ctx: ContextVar[dict] = ContextVar("oc_obs_ctx", default={})
 

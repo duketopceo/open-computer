@@ -24,7 +24,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Iterator
 
-from oc.obs import context, get_logger, redact_str
+from oc.obs import capture_content, context, get_logger, redact_str
 from services.cost import Usage
 
 from . import attribution
@@ -81,10 +81,6 @@ def total_usage(items: list[Usage]) -> Usage | None:
         tokens_out=sum(u.tokens_out for u in items),
         cost=sum(u.cost for u in items),
     )
-
-
-def _capture_content() -> bool:
-    return os.environ.get("OC_OBS_CAPTURE_CONTENT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _headers(key: str) -> dict[str, str]:
@@ -201,7 +197,7 @@ def post(
         raise OpenRouterError(msg, status=status, error_class=klass) from e
     parsed = parse_response(resp)
     row = {**base, "status": "ok", "latency_ms": latency, **parsed}
-    if _capture_content():
+    if capture_content():
         row["prompt"] = payload.get("messages", payload.get("state"))
         try:
             row["completion"] = resp["choices"][0]["message"]["content"]

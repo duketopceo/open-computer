@@ -28,10 +28,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
+from oc.obs import get_logger
+
 from .audit import AuditLog
 from .pii import PIIDecision, scan
 
 DEFAULT_APPROVAL_TTL = 900.0  # seconds
+
+log = get_logger("gate")
 
 
 def payload_hash(payload: dict) -> str:
@@ -70,7 +74,10 @@ class Gate:
         self.approval_ttl = approval_ttl
 
     def scan(self, text: str) -> PIIDecision:
-        return scan(text)
+        decision = scan(text)
+        # Categories only. The scanned text (and anything it matched) is never logged.
+        log.debug("scan", categories=list(decision.categories), chars=len(text))
+        return decision
 
     def approval_for(self, payload: dict, approval_id: str) -> Approval:
         """An unverified claim for `payload`. Holding one proves nothing; the gate checks its log."""
@@ -96,6 +103,7 @@ class Gate:
                     **({"note": note} if note else {}),
                 }
             )
+        log.info("approval granted", approval_id=aid, by=by, model=payload.get("model"))
         return Approval(id=aid, payload_hash=h)
 
     def deny(self, payload: dict, *, by: str = "human", approval_id: str | None = None, note: str = "") -> CallResult:
@@ -116,6 +124,7 @@ class Gate:
                 }
             )
             self._blocked(payload, "sent_back", aid)
+        log.info("approval denied", approval_id=aid, by=by, model=payload.get("model"))
         return CallResult(allowed=False, bytes_sent=0, reason="sent_back")
 
     # --- the single send path ----------------------------------------------
@@ -142,11 +151,15 @@ class Gate:
                     "pii_categories": self.scan(str(payload)).categories,
                 }
             )
+        log.info("cloud call allowed", approval_id=approval.id, model=payload.get("model"),
+                 payload_bytes=len(str(payload)))
         try:
             sent = int(sender(payload))
         except Exception as e:  # the approval is already spent; record the failure, send nothing more
             self.audit.append({"event": "cloud_call_failed", "approval_id": approval.id, "error": type(e).__name__})
+            log.error("cloud call sender failed", approval_id=approval.id, error=type(e).__name__)
             return CallResult(allowed=True, bytes_sent=0, reason="sender_error")
+        log.debug("cloud call sent", approval_id=approval.id, bytes_sent=sent)
         return CallResult(allowed=True, bytes_sent=sent)
 
     # --- checks (overridable hooks so mutation tests can break exactly one) ---
@@ -186,6 +199,10 @@ class Gate:
         )
 
     def _blocked(self, payload: dict, reason: str, approval_id: str | None) -> None:
+        # a replayed or forged approval is a security signal; everything else is routine
+        (log.warning if reason in {"replayed", "payload_mismatch", "unknown_approval"} else log.info)(
+            "cloud call blocked", reason=reason, approval_id=approval_id, model=payload.get("model"),
+            payload_bytes=len(str(payload)))
         self.audit.append(
             {
                 "event": "cloud_call_blocked",

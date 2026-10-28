@@ -20,8 +20,12 @@ import time
 import uuid
 from pathlib import Path
 
+from oc.obs import get_logger
+
 from .gate import Gate, payload_hash  # noqa: F401  (payload_hash re-exported: the one binding hash)
 from .pii import scan
+
+log = get_logger("gate")
 
 
 class QueueError(Exception):
@@ -111,6 +115,8 @@ class ApprovalQueue:
                 "payload": payload,
             }
         )
+        log.info("approval requested", approval_id=item_id, who=who, model=payload.get("model", "<unset>"),
+                 egress=egress, pii=list(decision.categories), est_cost=est_cost, payload_bytes=len(str(payload)))
         return item_id
 
     def supersede(self, item_id: str, *, by: str = "system") -> None:
@@ -121,6 +127,7 @@ class ApprovalQueue:
         self._append(
             {"event": "decision", "id": item_id, "ts": time.time(), "decision": "superseded", "by": by, "note": ""}
         )
+        log.info("approval superseded", approval_id=item_id, by=by)
 
     def decide(
         self,
@@ -160,6 +167,7 @@ class ApprovalQueue:
                 "note": note,
             }
         )
+        log.info("approval decided", approval_id=item_id, decision="approved" if approve else "sent_back", by=by)
         return {
             "id": item_id,
             "approved": approve,

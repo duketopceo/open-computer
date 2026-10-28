@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from oc.fsproto import adapter as fs_adapter
-from oc.obs import bind, get_logger
+from oc.obs import bind, error_fields, get_logger
 from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
 from services.placement import place
@@ -120,6 +120,7 @@ class Orchestrator:
             if device_id is not None:
                 fail_row["device_id"] = device_id
             self.audit.append(fail_row)
+            log.error("run failed before dispatch", origin=origin, **error_fields(e))
             raise
         self.dispatches[run_id] = []
         self._subtasks[run_id] = {s["id"]: s for s in subs}
@@ -135,7 +136,11 @@ class Orchestrator:
             submit_row["device_id"] = device_id
         if run_id in self._chat:
             submit_row["chat"] = self._chat[run_id]
-        log.info("run submitted", goal_chars=len(goal), subtasks=len(subs), origin=origin)
+        log.info("run submitted", goal_chars=len(goal), subtasks=len(subs), origin=origin,
+                 planner_cost=getattr(planned, "cost", None))
+        if log.enabled_debug():
+            log.debug("plan", subtasks=[{"id": s["id"], "deps": s["deps"], "tier": s["tier"],
+                                         "latency": s["latency"], "est_cost": s["est_cost"]} for s in subs])
         self.audit.append(submit_row)
         tmp = self.root / "plan.json.tmp"
         tmp.write_text(json.dumps(subs))
@@ -152,6 +157,7 @@ class Orchestrator:
         """
         plan = self.root / "plan.json"
         if not plan.exists():
+            log.info("recover skipped: no plan on disk", run_id=run_id)
             return False
         subs = json.loads(plan.read_text())
         self.dispatches[run_id] = []
@@ -169,6 +175,8 @@ class Orchestrator:
             elif r.get("event") == "dispatch" and r.get("run") == run_id:
                 self.dispatches[run_id].append(r)
                 self._tid_by_sub[run_id][r["subtask"]] = r["task"]
+        with bind(run_id=run_id, chat_id=self._chat.get(run_id), service="orchestrator"):
+            log.info("run recovered", subtasks=len(subs), dispatched=len(self.dispatches[run_id]))
         return True
 
     def _dep_state(self, tid: str) -> str:
@@ -193,6 +201,7 @@ class Orchestrator:
         )
         self.fs.fail(tid)
         reason = f"dep '{blocked_by}' failed — cannot run"
+        log.warning("dep failed: tombstoned dependent", subtask=sub["id"], blocked_by=blocked_by, task=tid)
         rec = {
             "event": "dispatch",
             "run": run_id,
@@ -258,6 +267,8 @@ class Orchestrator:
                     rec = self._dep_fail(run_id, sub, sub["deps"][states.index("failed")])
                 else:
                     continue  # dep still queued/leased — wait for it
+                log.debug("dispatched", subtask=sid, task=rec["task"], placement=rec["placement"],
+                          deps=len(sub["deps"]))
                 tids[sid] = rec["task"]
                 sent.append(rec)
                 out.append(rec)
@@ -292,7 +303,14 @@ class Orchestrator:
                 break
             if not self.work(work_fn, agent):
                 break
-        return self.results(run_id)
+        out = self.results(run_id)
+        with bind(run_id=run_id, chat_id=self._chat.get(run_id), service="orchestrator"):
+            states: dict[str, int] = {}
+            for r in out.values():
+                states[r["state"]] = states.get(r["state"], 0) + 1
+            (log.info if states.get("FAILED", 0) == 0 and states.get("QUEUED", 0) == 0 else log.warning)(
+                "run settled", states=states, subtasks=len(out))
+        return out
 
 
 def adapter(root: Path | str, **kw) -> Orchestrator:

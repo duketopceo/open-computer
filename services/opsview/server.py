@@ -26,10 +26,12 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from oc.obs import bind, get_logger
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
 from services.opsview import automations, capabilities, devices, goalruns
@@ -39,6 +41,8 @@ from services.opsview.auth import Auth, SESSION_TTL, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import engines as goal_engines
 from services.workspace import routes as workspace
+
+log = get_logger("opsview")
 
 REPO = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
@@ -74,7 +78,7 @@ def _csrf_secret() -> bytes:
         st = p.stat()
         if st.st_mode & 0o077:
             # Readable by others = treat as leaked: rotate, don't trust it.
-            print(f"csrf secret {p} has loose permissions; rotating", file=sys.stderr)
+            log.warning("csrf secret has loose permissions; rotating")
             p.unlink()
         else:
             raw = p.read_bytes()
@@ -91,7 +95,7 @@ def _csrf_secret() -> bytes:
             f.write(raw)
         os.replace(tmp, p)
     except OSError as e:
-        print(f"csrf secret not persisted ({type(e).__name__}); tokens reset on restart", file=sys.stderr)
+        log.warning("csrf secret not persisted; tokens reset on restart", error=type(e).__name__)
     return raw
 
 
@@ -112,7 +116,8 @@ def access_identity(cf_token: str) -> str | None:
             d = json.loads(r.read().decode())
         email = str(d.get("email") or "").strip().lower()
         return email or None
-    except Exception:
+    except Exception as e:
+        log.warning("access identity lookup failed", error=type(e).__name__)
         return None
 
 
@@ -260,10 +265,9 @@ def _resume_goals() -> None:
     """Re-drive goal runs orphaned by a restart. Fails soft — disk is truth."""
     try:
         n = goalruns.resume(goal_engines.work_fn())
-        if n:
-            print(f"resumed {n} goal run(s)")
-    except Exception:
-        pass
+        log.info("goal runs resumed", count=n) if n else log.debug("no goal runs to resume")
+    except Exception as e:
+        log.error("goal run resume failed", error=type(e).__name__)
 
 
 # ----------------------------------------------------------------- routes
@@ -322,8 +326,69 @@ def match(table, path):
     return None, {}
 
 
+_RID = re.compile(r"[A-Za-z0-9._-]{8,64}")
+
+
+def _actor_label(who: str | None) -> str | None:
+    """A stable pseudonym for logs: 'local' stays readable, anyone else is a short hash (never an email)."""
+    if not who:
+        return None
+    return who if who == "local" else "u_" + hashlib.sha256(who.encode()).hexdigest()[:8]
+
+
+def route_label(method: str, path: str) -> str:
+    """The route *template* (handler name), never the raw path: ids stay out of the access log's cardinality."""
+    table = GET_ROUTES if method == "GET" else POST_ROUTES
+    name, _ = match(table, path)
+    if name:
+        return name
+    if path.startswith("/static/") or path.startswith("/assets/"):
+        return "static"
+    if path.startswith("/webauthn/"):
+        return "webauthn"
+    if path in REDIRECTS or path in ("/login", "/enroll", "/"):
+        return {"/": "spa"}.get(path, path.lstrip("/") or "spa")
+    if workspace.is_ws_path(path):
+        return "workspace"
+    return "other"
+
+
 class Handler(BaseHTTPRequestHandler):
     auth = Auth()
+    _status = 0
+    _reason: str | None = None
+    _actor: str | None = None
+    _request_id: str | None = None
+
+    def send_response(self, code, message=None):
+        self._status = code
+        super().send_response(code, message)
+        if self._request_id:
+            self.send_header("X-Request-Id", self._request_id)
+
+    def _observed(self, method: str, fn) -> None:
+        """Request id + access log around one request. The id comes from a well-formed inbound X-Request-Id
+        (so a proxy's id carries through) or is generated, is echoed in the response, and rides every log line
+        the request produces. Logged: method, route template, status, ms, pseudonymous actor, reject reason.
+        Never logged: query strings, cookies, headers, bodies."""
+        t0 = time.monotonic()
+        self._status, self._reason, self._actor = 0, None, None
+        rid = self.headers.get("X-Request-Id", "")
+        self._request_id = rid if _RID.fullmatch(rid) else uuid.uuid4().hex[:16]
+        path = urlparse(self.path).path
+        with bind(request_id=self._request_id, service="opsview"):
+            try:
+                fn()
+            except Exception as e:
+                self._status = self._status or 500
+                self._reason = self._reason or "unhandled"
+                log.error("request crashed", error=type(e).__name__)
+                raise
+            finally:
+                st = self._status
+                (log.warning if st >= 400 else log.info)(
+                    "request", method=method, route=route_label(method, path), status=st,
+                    ms=round((time.monotonic() - t0) * 1000, 1), actor=self._actor, reason=self._reason)
 
     # --- plumbing ---------------------------------------------------------
     def _rp(self) -> str:
@@ -353,7 +418,8 @@ class Handler(BaseHTTPRequestHandler):
                 if email:
                     self._local_cookie = self.auth.access_session(self._rp(), email)
                     who = email
-                    print(f"access session minted for {email}")
+                    log.info("access session minted", actor=_actor_label(email))
+        self._actor = _actor_label(who) if who else None
         return who
 
     def _csrf(self) -> str:
@@ -445,6 +511,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- GET ---------------------------------------------------------------
     def do_GET(self):
+        self._observed("GET", self._do_get)
+
+    def _do_get(self):
         parsed = urlparse(self.path)
         path, qs = parsed.path, parse_qs(parsed.query)
 
@@ -465,6 +534,7 @@ class Handler(BaseHTTPRequestHandler):
                 200, (STATIC / name).read_bytes(), STATIC_TYPES[name] + "; charset=utf-8", {"Cache-Control": "no-cache"}
             )
         if not self._identity():
+            self._reason = "unauthenticated"
             return self._redirect("/login")
         if path in REDIRECTS:
             return self._redirect(REDIRECTS[path])
@@ -684,18 +754,23 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- POST --------------------------------------------------------------
     def do_POST(self):
+        self._observed("POST", self._do_post)
+
+    def _do_post(self):
         self._raw = None  # never reuse a previous request's body
         path = urlparse(self.path).path
         if path.startswith("/webauthn/"):
             return self._webauthn(path)
         who = self._identity()
         if not who:
+            self._reason = "unauthenticated"
             return self._json(401, {"error": "Sign in again."})
         name, args = match(POST_ROUTES, path)
         if name is None and not workspace.is_ws_path(path):
             return self._json(404, {"error": "not found"})
         origin = self.headers.get("Origin")
         if origin and urlparse(origin).netloc != self.headers.get("Host", ""):
+            self._reason = "cross_origin"
             return self._json(403, {"error": "Cross-origin request refused."})
         if name == "p_transcribe":
             # Binary upload: CSRF must come from the header, checked before
@@ -703,10 +778,12 @@ class Handler(BaseHTTPRequestHandler):
             body, token = {}, self.headers.get("X-CSRF-Token", "")
         else:
             if self._raw_body(self.BODY_MAX) is None:
+                self._reason = "body_too_large"
                 return self._json(413, {"error": "Request body too large (max 1 MB)."})
             body = self._body()
             token = self.headers.get("X-CSRF-Token") or str(body.get("csrf", ""))
         if not hmac.compare_digest(token, self._csrf()):
+            self._reason = "csrf"
             return self._json(403, {"error": "Missing or invalid CSRF token. Reload the page and try again."})
         if name is None:
             return workspace.handle_post(self, who, body, path)
@@ -846,7 +923,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 got = None
             if not got:
+                self._reason = "passkey_denied"
                 return self._json(401, {"error": "denied"})
+            log.info("passkey login ok")
             label, cookie = got
             self.send_response(200)
             self._set_session(cookie)
@@ -858,6 +937,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/webauthn/register/begin":
             if not self.auth.consume_token(rp, body.get("token", "")):
+                self._reason = "bad_enroll_token"
                 return self._json(403, {"error": "invalid or expired enroll token"})
             opts, tok = self.auth.begin_register(rp, "luke")
             return self._json(200, {"publicKey": opts["publicKey"], "tok": tok})
@@ -867,7 +947,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 cred_id = None
             if not cred_id:
+                self._reason = "enroll_failed"
                 return self._json(401, {"error": "enrollment failed"})
+            log.info("passkey enrolled")
             return self._json(200, {"ok": True})
         self._json(404, {"error": "not found"})
 
@@ -877,7 +959,7 @@ def make_server(port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
 
 
 def main(port: int = 8791):
-    print(f"console → http://127.0.0.1:{port}")
+    log.info("console listening", host="127.0.0.1", port=port)
     _resume_goals()
     make_server(port).serve_forever()
 
