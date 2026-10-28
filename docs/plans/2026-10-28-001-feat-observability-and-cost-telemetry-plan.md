@@ -3,7 +3,7 @@ title: Observability and OpenRouter cost telemetry — staged plan
 type: feat
 date: 2026-10-28
 origin: docs/brainstorms/2026-10-28-observability-and-openrouter-cost-requirements.md
-status: Stage 1 in progress (separate PR); Stages 2-5 gated on operator decisions in the origin doc; Stage 6 is a later side track, not scheduled
+status: Stage 1 built (see docs/runbooks/observability.md); Stages 2-5 gated on operator decisions in the origin doc; Stage 6 is a later side track, not scheduled
 ---
 
 # Observability and OpenRouter cost telemetry
@@ -70,7 +70,7 @@ Requirement ids (R1-R10) are from the origin brainstorm.
 
 ## Stages
 
-### Stage 1 — Logging foundation, attribution, and OpenRouter cost capture  (R1-R5, R9, R10; built in its own PR)
+### Stage 1 — Logging foundation, attribution, and OpenRouter cost capture  (R1-R5, R9, R10; built)
 
 **Goal:** every OpenRouter call leaves a complete, attributable, redacted local record, carries attribution, and
 the cost ledger records provider-reported spend.

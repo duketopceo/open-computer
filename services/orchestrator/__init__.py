@@ -15,16 +15,20 @@ import uuid
 from pathlib import Path
 
 from oc.fsproto import adapter as fs_adapter
+from oc.obs import bind, get_logger
 from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
 from services.placement import place
 from services.gate.audit import AuditLog
+from services.openrouter import collect_usage, total_usage
 from services.router import adapter as router_adapter
 
 from .collect import collect_run, task_state
 from .decompose import DecomposeError, decompose
 from .dispatch import dispatch
 from .runner import WorkResult, run_once
+
+log = get_logger("orchestrator")
 
 __all__ = [
     "DecomposeError",
@@ -59,6 +63,7 @@ class Orchestrator:
         self._subtasks: dict[str, dict[str, dict]] = {}  # run_id -> id -> sub
         self._tid_by_sub: dict[str, dict[str, str]] = {}  # run_id -> sid -> tid
         self._run_meta: dict[str, dict] = {}  # run_id -> {"origin": ..., "device_id": ...}
+        self._chat: dict[str, str] = {}  # run_id -> chat id (OpenRouter session / per-chat cost views)
 
     def drain_parked(self, *, now: float | None = None) -> list[dict]:
         """Drain tasks queued in `device/parked` into eligible `device/<device_id>` mailboxes."""
@@ -83,12 +88,25 @@ class Orchestrator:
         *,
         origin: str = "cloud",
         device_id: str | None = None,
+        chat_id: str | None = None,
     ) -> str:
-        """Decompose + validate + dispatch every ready subtask. Returns run id."""
+        """Decompose + validate + dispatch every ready subtask. Returns run id.
+
+        `chat_id` groups runs into one conversation for cost attribution (defaults to the run id)."""
         run_id = run_id or uuid.uuid4().hex[:12]
         self._run_meta[run_id] = {"origin": origin, "device_id": device_id}
+        if chat_id:
+            self._chat[run_id] = str(chat_id)
+        with bind(run_id=run_id, chat_id=chat_id, service="orchestrator"):
+            return self._submit(goal, engine, run_id, origin, device_id)
+
+    def _submit(self, goal: str, engine, run_id: str, origin: str, device_id: str | None) -> str:
         try:
-            subs = decompose(goal, engine)
+            with collect_usage() as used:
+                subs = decompose(goal, engine)
+            planned = total_usage(used)
+            if planned is not None and self.ledger is not None:
+                self.ledger.record(run_id, "_plan", planned)  # planner spend counts against the run's cap
         except Exception as e:
             fail_row: dict = {
                 "event": "run_failed",
@@ -115,6 +133,9 @@ class Orchestrator:
         }
         if device_id is not None:
             submit_row["device_id"] = device_id
+        if run_id in self._chat:
+            submit_row["chat"] = self._chat[run_id]
+        log.info("run submitted", goal_chars=len(goal), subtasks=len(subs), origin=origin)
         self.audit.append(submit_row)
         tmp = self.root / "plan.json.tmp"
         tmp.write_text(json.dumps(subs))
@@ -143,6 +164,8 @@ class Orchestrator:
                     "origin": r.get("origin", "cloud"),
                     "device_id": r.get("device_id"),
                 }
+                if r.get("chat"):
+                    self._chat[run_id] = r["chat"]
             elif r.get("event") == "dispatch" and r.get("run") == run_id:
                 self.dispatches[run_id].append(r)
                 self._tid_by_sub[run_id][r["subtask"]] = r["task"]
@@ -203,6 +226,10 @@ class Orchestrator:
         forever — they get a pre-failed tombstone task instead, cascading
         through deeper dependents via fixpoint (bounded by subtask count).
         """
+        with bind(run_id=run_id, chat_id=self._chat.get(run_id), service="orchestrator"):
+            return self._dispatch_ready(run_id)
+
+    def _dispatch_ready(self, run_id: str) -> list[dict]:
         subs = self._subtasks[run_id]
         sent = self.dispatches[run_id]
         tids = self._tid_by_sub[run_id]
@@ -225,6 +252,7 @@ class Orchestrator:
                         sub,
                         ledger=self.ledger,
                         devices=self.devices,
+                        chat_id=self._chat.get(run_id),
                     )
                 elif any(st == "failed" for st in states):
                     rec = self._dep_fail(run_id, sub, sub["deps"][states.index("failed")])

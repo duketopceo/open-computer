@@ -35,6 +35,15 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root, for services.openrouter
+from services.openrouter import attribution as _attr  # noqa: E402
+
+
+def _attribution(url):
+    """App attribution headers on every OpenRouter call (never sent to other hosts)."""
+    return _attr.headers() if "openrouter.ai" in url else {}
+
+
 HERE = Path(__file__).parent
 CORPUS = HERE / "corpus.jsonl"
 OR_BASE = "https://openrouter.ai/api"
@@ -101,6 +110,7 @@ def _post(url, body, auth=True, timeout=TIMEOUT, key=None):
     headers = {"Content-Type": "application/json"}
     if auth:
         headers["Authorization"] = f"Bearer {key or _key()}"
+    headers.update(_attribution(url))
     req = urllib.request.Request(url, data=json.dumps(body).encode(),
                                  headers=headers, method="POST")
     t0 = time.time()
@@ -165,7 +175,7 @@ def _price_tier(slug):
     if not _model_prices:
         req = urllib.request.Request(
             f"{OR_BASE}/v1/models",
-            headers={"Authorization": f"Bearer {_key()}"})
+            headers={"Authorization": f"Bearer {_key()}", **_attribution(OR_BASE)})
         d = json.loads(urllib.request.urlopen(req, timeout=30).read())
         for m in d["data"]:
             try:
