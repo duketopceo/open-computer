@@ -25,6 +25,11 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from services.openrouter import OpenRouterError, collect_usage, total_usage
+from services.openrouter import chat as or_chat
+
+from .runner import WorkResult
+
 
 class WorkerUnavailable(RuntimeError):
     """An execution surface is down. `hint` is an operator remediation
@@ -127,22 +132,23 @@ def _post(url: str, payload: dict, key: str = "", timeout: float = 60.0) -> dict
 
 
 def _chat(url: str, model: str, prompt: str, key: str = "", timeout: float = 60.0) -> tuple[str, float]:
-    """OpenAI-compatible chat call -> (text, est_cost_usd)."""
-    if url == OR_CHAT and not key:
-        raise WorkerUnavailable(
-            "OPENROUTER_API_KEY is not set — cloud calls cannot run",
-            hint="export a key in ~/.config/oc/opsview.env and restart oc-opsview",
-        )
-    out = _post(
-        url,
-        {"model": model, "messages": [{"role": "user", "content": prompt}]},
-        key=key,
-        timeout=timeout,
-    )
-    text = out["choices"][0]["message"]["content"]
-    usage = out.get("usage") or {}
-    tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
-    return text, tokens / 1_000_000 * 0.30  # rough $/Mtok on cheap models
+    """OpenAI-compatible chat call -> (text, cost_usd).
+
+    OpenRouter calls go through services.openrouter: attribution on the request, a full local call record, and
+    the provider-reported cost (no price guess). Local endpoints are free: cost 0.0."""
+    if url == OR_CHAT:
+        if not key:
+            raise WorkerUnavailable(
+                "OPENROUTER_API_KEY is not set — cloud calls cannot run",
+                hint="export a key in ~/.config/oc/opsview.env and restart oc-opsview",
+            )
+        try:
+            res = or_chat(model, prompt, key=key, timeout=timeout)
+        except OpenRouterError as e:
+            raise RuntimeError(str(e)) from e
+        return res.text, res.cost
+    out = _post(url, {"model": model, "messages": [{"role": "user", "content": prompt}]}, key=key, timeout=timeout)
+    return out["choices"][0]["message"]["content"], 0.0
 
 
 def decompose_engine(
@@ -197,20 +203,17 @@ def work_fn(
     """The dispatched-task executor. Placement is honored, not decorative."""
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
 
-    def run(task: dict) -> str:
+    def run(task: dict):
         target = task.get("placement", "")
         if target.startswith("local"):
             return local_work(task)
-        if target == "cloud-sandbox":
-            return sandbox_work(task, model=or_model, api_key=key)
-        # cloud-OpenRouter and anything unrecognized-but-cloud
-        text, _ = _chat(
-            "https://openrouter.ai/api/v1/chat/completions",
-            or_model,
-            task["prompt"],
-            key=key,
-            timeout=90,
-        )
-        return text
+        with collect_usage() as used:
+            if target == "cloud-sandbox":
+                out = sandbox_work(task, model=or_model, api_key=key)
+            else:  # cloud-OpenRouter and anything unrecognized-but-cloud
+                out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
+        usage = total_usage(used)
+        # Provider-reported spend goes to the run's cost ledger (the cap enforces on real dollars).
+        return WorkResult(out, usage) if usage is not None else out
 
     return run

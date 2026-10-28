@@ -26,6 +26,16 @@ import subprocess
 import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root, for services.openrouter
+from services.openrouter import attribution as _attr  # noqa: E402
+
+
+def _attribution(url):
+    """App attribution headers on every OpenRouter call (never sent to other hosts)."""
+    return _attr.headers() if "openrouter.ai" in url else {}
+
 
 OR_BASE = "https://openrouter.ai/api"
 DECIDER_MODEL = "perplexity/pplx-decider-v1.1-27b"
@@ -68,7 +78,7 @@ def _post(url, body, timeout=90):
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {_key()}"}, method="POST")
+                 "Authorization": f"Bearer {_key()}", **_attribution(url)}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 

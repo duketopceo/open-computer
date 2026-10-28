@@ -26,7 +26,8 @@ def _pick_device(devices, sub: dict, *, now: float | None = None):
     return pick_device_for_task(devices, sub, now=now)
 
 
-def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, ledger=None, devices=None) -> dict:
+def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, ledger=None, devices=None,
+             chat_id: str | None = None) -> dict:
     """Route, place, and offer a subtask to the worker inbox.
 
     `devices` is a services.device.DeviceRegistry (or None). A step the
@@ -61,6 +62,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "engine": decision.engine,
         "placement": placement.target,
         "est_cost": sub.get("est_cost", 0.0),
+        **({"chat": chat_id} if chat_id else {}),
         **({"egress_hosts": list(placement.egress_hosts)} if placement.egress_hosts else {}),
         **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
     }
