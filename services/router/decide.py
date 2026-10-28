@@ -9,9 +9,9 @@ Validated against the bench wire: POST {state, questions, model?} ->
 
 from __future__ import annotations
 
-import json
 import time
-import urllib.request
+
+from services.openrouter import post as or_post
 
 from .policy_table import QUESTIONS
 
@@ -35,19 +35,12 @@ def ask_decisions(
     payload: dict = {"state": state, "questions": questions or QUESTIONS}
     if model:
         payload["model"] = model
-    req = urllib.request.Request(
-        f"{base_url.rstrip('/')}/alpha/decisions",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Content-Type": "application/json",
-            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
-        },
-        method="POST",
-    )
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.loads(r.read())
+        d, _ = or_post(
+            f"{base_url.rstrip('/')}/alpha/decisions", payload, key=api_key, timeout=timeout,
+            kind="decision", model=model or DECIDER_MODEL, body_fields=False,
+        )
     except Exception as e:
         raise EngineDown(str(e)) from e
     ms = time.time() - t0

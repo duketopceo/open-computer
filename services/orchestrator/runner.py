@@ -14,6 +14,7 @@ from typing import Callable
 from dataclasses import dataclass
 
 from oc.fsproto import AlreadyLeased
+from oc.obs import bind
 from services.cost import CostLedger, Usage
 from services.telemetry import report_failure
 
@@ -57,7 +58,9 @@ def run_once(
             continue  # another worker won between pending() and claim()
         attempted.append(tid)
         try:
-            result = work_fn(task)
+            with bind(run_id=task.get("run"), subtask=task.get("subtask"), task=tid, chat_id=task.get("chat"),
+                      service="worker"):
+                result = work_fn(task)
         except Exception as e:
             if token:
                 ledger.release(task["run"], token)
