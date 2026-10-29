@@ -183,6 +183,19 @@ class Orchestrator:
         status = self.fs._task_dir(tid) / "status"
         return status.read_text().strip() if status.exists() else "queued"
 
+    def _with_dep_results(self, sub: dict, tids: dict) -> dict:
+        """Append each done dep's result to the step prompt — downstream
+        workers see real outputs (paths, counts) instead of guessing."""
+        chunks = []
+        for d in sub["deps"]:
+            try:
+                chunks.append(f"[{d} result]\n{self.fs.collect('orchestrator', tids[d])[:1500]}")
+            except Exception:
+                continue
+        if not chunks:
+            return sub
+        return {**sub, "prompt": sub["prompt"] + "\n\nPrior step outputs:\n" + "\n\n".join(chunks)}
+
     def _dep_fail(self, run_id: str, sub: dict, blocked_by: str) -> dict:
         """Dep FAILED: dispatch a tombstone task and fail it before any lease.
 
@@ -258,7 +271,7 @@ class Orchestrator:
                         self.place,
                         self.audit,
                         run_id,
-                        sub,
+                        self._with_dep_results(sub, tids),
                         ledger=self.ledger,
                         devices=self.devices,
                         chat_id=self._chat.get(run_id),

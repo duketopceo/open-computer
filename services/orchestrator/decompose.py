@@ -107,7 +107,10 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool,'
         '"needs_egress":bool,"egress_hosts":[domain,...]}. '
         "Set needs_egress when the step must reach the network (downloads, "
-        "APIs); name the exact domains it needs in egress_hosts.\n"
+        "APIs); name the exact domains it needs in egress_hosts. Sandbox steps "
+        "share one filesystem per run — files persist between steps in the "
+        "sandbox working directory; prompts must use relative paths or $HOME "
+        "(never absolute paths like /workspace or /data).\n"
         f"Goal: {goal}"
     )
     text = re.sub(r"^```(json)?\s*|\s*```$", "", raw.strip(), flags=re.M)
