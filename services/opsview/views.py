@@ -804,8 +804,9 @@ def _thought_line(s: dict, now: float) -> str:
     place = str(s.get("placement") or "")
     reason = str(s.get("reason") or "")
     if st in ("LEASED", "RUNNING"):
+        head = f"Working on {place}" if place else "Working"
         took = _dur(s.get("started_ts"), now)
-        return " · ".join(m for m in ((f"Working on {place}" if place else "Working"), took) if m)
+        return f"{head} · {took}" if took else head
     if st == "QUEUED":
         return "Queued"
     if st == "AWAITING-APPROVAL":

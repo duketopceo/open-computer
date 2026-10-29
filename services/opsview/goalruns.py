@@ -19,7 +19,7 @@ from typing import Callable
 
 from oc.fsproto import adapter as fs_adapter
 from services.orchestrator import Orchestrator
-from services.orchestrator.thinking import ThinkingLog
+from services.orchestrator.thinking import PLAN, ThinkingLog, join_thoughts
 from services.placement import place_live
 
 try:  # temporalio is an optional dep — opsview runs without it
@@ -114,7 +114,7 @@ def get_run(run_id: str) -> dict | None:
     start_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_start"}
     thoughts: dict[str, list[str]] = {}
     for t in sorted(ThinkingLog(d / "thinking.ndjson").rows(), key=lambda t: t.get("ts") or 0):
-        key = "_plan" if t.get("subtask") == "_plan" else t.get("task")
+        key = PLAN if t.get("subtask") == PLAN else t.get("task")
         thoughts.setdefault(key, []).append(t["text"])
     subs = []
     for r in rows:
@@ -155,7 +155,7 @@ def get_run(run_id: str) -> dict | None:
         if tid in start_ts:
             rec["started_ts"] = start_ts[tid]
         if tid in thoughts:
-            rec["thinking"] = "\n\n".join(thoughts[tid])
+            rec["thinking"] = join_thoughts(thoughts[tid])
         subs.append(rec)
     out = {
         "run": run_id,
@@ -168,8 +168,8 @@ def get_run(run_id: str) -> dict | None:
         "started": (submit or {}).get("ts"),
         "ended": rows[-1].get("ts") if rows else None,
     }
-    if "_plan" in thoughts:
-        out["plan_thinking"] = "\n\n".join(thoughts["_plan"])
+    if PLAN in thoughts:
+        out["plan_thinking"] = join_thoughts(thoughts[PLAN])
     if failed is not None:
         out["error"] = failed.get("error", "")
         out["error_kind"] = failed.get("kind", "")

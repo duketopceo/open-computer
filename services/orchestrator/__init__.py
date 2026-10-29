@@ -27,7 +27,7 @@ from .collect import collect_run, task_state
 from .decompose import DecomposeError, decompose
 from .dispatch import dispatch
 from .runner import WorkResult, run_once
-from .thinking import ThinkingLog
+from .thinking import PLAN, ThinkingLog, join_thoughts
 
 log = get_logger("orchestrator")
 
@@ -109,7 +109,7 @@ class Orchestrator:
                     subs = decompose(goal, engine)
                 finally:
                     if thoughts:
-                        self.thinking.append(run_id, "", "_plan", "\n\n".join(thoughts))
+                        self.thinking.append(run_id, "", PLAN, join_thoughts(thoughts))
             planned = total_usage(used)
             if planned is not None and self.ledger is not None:
                 self.ledger.record(run_id, "_plan", planned)  # planner spend counts against the run's cap

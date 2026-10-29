@@ -15,6 +15,11 @@ from pathlib import Path
 from oc.obs import error_fields, get_logger, redact_str
 
 CAP = 16_000
+PLAN = "_plan"  # subtask id of the planner's row
+
+
+def join_thoughts(parts: list[str]) -> str:
+    return "\n\n".join(parts)
 log = get_logger("thinking")
 
 
@@ -38,10 +43,12 @@ class ThinkingLog:
             log.warning("thinking not recorded", task=task, **error_fields(e))
 
     def rows(self) -> list[dict]:
-        if not self.path.is_file():
+        try:
+            text = self.path.read_text()
+        except FileNotFoundError:
             return []
         out = []
-        for ln in self.path.read_text().splitlines():
+        for ln in text.splitlines():
             try:
                 r = json.loads(ln)
             except ValueError:

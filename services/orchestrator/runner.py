@@ -20,7 +20,7 @@ from services.cost import CostLedger, Usage
 from services.openrouter import collect_reasoning
 from services.telemetry import report_failure
 
-from .thinking import ThinkingLog
+from .thinking import ThinkingLog, join_thoughts
 
 log = get_logger("worker")
 
@@ -64,7 +64,7 @@ def run_once(
     return attempted
 
 
-def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thinking=None) -> bool:
+def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thinking: ThinkingLog | None) -> bool:
     """One inbox task. True when it was claimed (and so attempted), False when it was held or lost the claim."""
     token = None
     if ledger is not None:
@@ -88,7 +88,7 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
                 result = work_fn(task)
             finally:
                 if thinking is not None and thoughts:
-                    thinking.append(task.get("run", ""), tid, task.get("subtask", ""), "\n\n".join(thoughts))
+                    thinking.append(task.get("run", ""), tid, task.get("subtask", ""), join_thoughts(thoughts))
     except Exception as e:
         log.error("task failed", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1), **error_fields(e))
         if token:
