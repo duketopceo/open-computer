@@ -151,3 +151,20 @@ def _cloud():
     from services.placement import Placement
 
     return Placement("cloud-OpenRouter", "test")
+
+
+def test_failed_start_row_does_not_strand_the_task(fake, sweep):
+    fs, audit, thinking, send = sweep
+    tid = send()
+    real = audit.append
+
+    def flaky(row):
+        if row.get("event") == "worker_start":
+            raise OSError(28, "No space left on device")
+        real(row)
+
+    audit.append = flaky
+    fake.chat_replies.append(chat_reply("ok"))
+    assert run_once(fs, audit, "worker", _calls(1), thinking=thinking) == [tid]
+    assert fs.done(tid)
+    assert [r["event"] for r in audit.rows()] == ["worker_done"]

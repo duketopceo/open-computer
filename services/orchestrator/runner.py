@@ -79,7 +79,10 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
         if token:
             ledger.release(task["run"], token)
         return False  # another worker won between pending() and claim()
-    audit.append({"event": "worker_start", "run": task.get("run"), "task": tid, "subtask": task.get("subtask")})
+    try:  # timing is best-effort: a failed start row must not strand a claimed task
+        audit.append({"event": "worker_start", "run": task.get("run"), "task": tid, "subtask": task.get("subtask")})
+    except OSError as e:
+        log.warning("worker_start not recorded", agent=agent, **error_fields(e))
     t0 = time.monotonic()
     try:
         log.info("task claimed", agent=agent, placement=task.get("placement"), engine=task.get("engine"))
