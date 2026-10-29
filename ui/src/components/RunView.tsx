@@ -18,6 +18,7 @@ export function RunView({ run }: { run: RunDetail }) {
           <span className="mono text-muted">origin {run.origin}</span>
           {run.device_id && <span className="mono text-muted">device {run.device_id}</span>}
         </div>
+        {run.plan_thinking && <Thinking text={run.plan_thinking} className="mt-3" />}
       </header>
 
       <ol className="divide-y divide-line rounded-2xl border border-line bg-white shadow-card">
@@ -38,6 +39,8 @@ export function RunView({ run }: { run: RunDetail }) {
 }
 
 function SubTaskRow({ s }: { s: SubTask }) {
+  const live = s.state === "RUNNING" || s.state === "LEASED";
+  const took = live ? dur(s.started_ts, Date.now() / 1000) : dur(s.started_ts, s.finished_ts);
   return (
     <li className="flex items-start gap-3 px-4 py-3">
       <span className="mt-1.5">
@@ -48,6 +51,11 @@ function SubTaskRow({ s }: { s: SubTask }) {
           <p className="truncate text-sm font-medium text-ink">{s.title || s.subtask}</p>
           <div className="flex shrink-0 items-center gap-2">
             <span className="mono text-muted">{s.engine || "—"}</span>
+            {took && (
+              <span className="mono text-muted" title={live ? "Running for" : "Run time"}>
+                {took}
+              </span>
+            )}
             <span className="mono text-muted">{cost(s.cost)}</span>
             <StateWord state={s.state} />
           </div>
@@ -69,8 +77,20 @@ function SubTaskRow({ s }: { s: SubTask }) {
             {s.hint ? ` — ${s.hint}` : ""}
           </p>
         )}
+        {s.thinking && <Thinking text={s.thinking} className="mt-2" />}
       </div>
     </li>
+  );
+}
+
+function Thinking({ text, className }: { text: string; className?: string }) {
+  return (
+    <details className={className}>
+      <summary className="cursor-pointer select-none text-xs text-muted hover:text-ink">Thinking</summary>
+      <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-canvas p-3 text-xs leading-relaxed text-muted">
+        {text}
+      </pre>
+    </details>
   );
 }
 
