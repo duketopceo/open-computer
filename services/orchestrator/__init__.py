@@ -20,13 +20,14 @@ from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
 from services.placement import place
 from services.gate.audit import AuditLog
-from services.openrouter import collect_usage, total_usage
+from services.openrouter import collect_reasoning, collect_usage, total_usage
 from services.router import adapter as router_adapter
 
 from .collect import collect_run, task_state
 from .decompose import DecomposeError, decompose
 from .dispatch import dispatch
 from .runner import WorkResult, run_once
+from .thinking import ThinkingLog
 
 log = get_logger("orchestrator")
 
@@ -53,6 +54,7 @@ class Orchestrator:
         self.fs = fs_adapter(root / "run")
         self.gate = gate_adapter(root / "gate")
         self.audit = AuditLog(root / "orchestrator.ndjson")
+        self.thinking = ThinkingLog(root / "thinking.ndjson")
         self.router = router or router_adapter(root)
         self.place = place_fn or place
         self.ledger = ledger  # services.cost.CostLedger | None
@@ -102,8 +104,12 @@ class Orchestrator:
 
     def _submit(self, goal: str, engine, run_id: str, origin: str, device_id: str | None) -> str:
         try:
-            with collect_usage() as used:
-                subs = decompose(goal, engine)
+            with collect_usage() as used, collect_reasoning() as thoughts:
+                try:
+                    subs = decompose(goal, engine)
+                finally:
+                    if thoughts:
+                        self.thinking.append(run_id, "", "_plan", "\n\n".join(thoughts))
             planned = total_usage(used)
             if planned is not None and self.ledger is not None:
                 self.ledger.record(run_id, "_plan", planned)  # planner spend counts against the run's cap
@@ -290,7 +296,7 @@ class Orchestrator:
 
     def work(self, work_fn, agent: str = "worker", ttl: float = 60) -> list[str]:
         """One worker sweep, then dispatch the newly-unblocked wave."""
-        done = run_once(self.fs, self.audit, agent, work_fn, ttl=ttl, ledger=self.ledger)
+        done = run_once(self.fs, self.audit, agent, work_fn, ttl=ttl, ledger=self.ledger, thinking=self.thinking)
         for run_id in self.dispatches:
             self.dispatch_ready(run_id)
         return done

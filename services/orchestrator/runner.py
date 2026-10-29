@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from oc.fsproto import AlreadyLeased
 from oc.obs import bind, error_fields, get_logger
 from services.cost import CostLedger, Usage
+from services.openrouter import collect_reasoning
 from services.telemetry import report_failure
+
+from .thinking import ThinkingLog
 
 log = get_logger("worker")
 
@@ -43,23 +46,25 @@ def run_once(
     work_fn: Callable[[dict], object],
     ttl: float = 60,
     ledger: CostLedger | None = None,
+    thinking: ThinkingLog | None = None,
 ) -> list[str]:
     """One sweep of agent's inbox. Returns the task ids attempted.
 
     With a ledger: a task whose run is over its cap is NOT started (left queued, never failed or
-    cancelled), and usage returned via WorkResult is recorded."""
+    cancelled), and usage returned via WorkResult is recorded. With a thinking log: the reasoning text the step's
+    model calls returned is appended to it, whether the step succeeds or fails."""
     attempted = []
     for tid in fs.inbox_ids(agent):
         if not fs.pending(tid):  # leased, tombstoned, or failed — not ours
             continue
         task = json.loads(fs.task_body(tid))
         with _ctx(task, tid):  # every log line below (ledger included) carries the run/subtask/task/chat ids
-            if _run_task(fs, audit, agent, work_fn, ttl, ledger, tid, task):
+            if _run_task(fs, audit, agent, work_fn, ttl, ledger, tid, task, thinking):
                 attempted.append(tid)
     return attempted
 
 
-def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict) -> bool:
+def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thinking=None) -> bool:
     """One inbox task. True when it was claimed (and so attempted), False when it was held or lost the claim."""
     token = None
     if ledger is not None:
@@ -74,10 +79,16 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict) -> b
         if token:
             ledger.release(task["run"], token)
         return False  # another worker won between pending() and claim()
+    audit.append({"event": "worker_start", "run": task.get("run"), "task": tid, "subtask": task.get("subtask")})
     t0 = time.monotonic()
     try:
         log.info("task claimed", agent=agent, placement=task.get("placement"), engine=task.get("engine"))
-        result = work_fn(task)
+        with collect_reasoning() as thoughts:
+            try:
+                result = work_fn(task)
+            finally:
+                if thinking is not None and thoughts:
+                    thinking.append(task.get("run", ""), tid, task.get("subtask", ""), "\n\n".join(thoughts))
     except Exception as e:
         log.error("task failed", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1), **error_fields(e))
         if token:
