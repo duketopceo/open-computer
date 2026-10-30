@@ -1,6 +1,6 @@
 """Append-only job trail: the record the console reads. One NDJSON file per orchestrator root.
 
-Every row carries job, seq, ts and event; secrets never go in (callers pass summaries, not raw env).
+Every row carries job, seq, ts and event; fields are redacted and size-capped on write.
 """
 
 from __future__ import annotations
@@ -9,6 +9,20 @@ import fcntl
 import json
 import time
 from pathlib import Path
+
+from oc.obs import redact
+
+_CLIP = 4000  # per string: a tool call's raw input can carry whole file bodies
+
+
+def _clip(v):
+    if isinstance(v, str):
+        return v if len(v) <= _CLIP else v[:_CLIP] + "… [truncated]"
+    if isinstance(v, dict):
+        return {k: _clip(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_clip(x) for x in v]
+    return v
 
 
 class Trail:
@@ -21,7 +35,8 @@ class Trail:
             fcntl.flock(f, fcntl.LOCK_EX)
             f.seek(0)
             seq = sum(1 for ln in f if f'"job": {json.dumps(job)}' in ln) + 1
-            row = {"job": job, "seq": seq, "ts": time.time(), "event": event, **fields}
+            # The console serves this file: credentials a worker's tool input or output carried never reach it.
+            row = {"job": job, "seq": seq, "ts": time.time(), "event": event, **redact(_clip(fields))}
             f.seek(0, 2)
             if f.tell():
                 f.seek(f.tell() - 1)

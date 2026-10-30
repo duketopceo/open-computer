@@ -307,3 +307,15 @@ def test_trail_tolerates_torn_line(tmp_path):
     assert [r["event"] for r in t.rows("j")] == ["a"]
     t.append("j", "b")  # appending after a torn line must not raise
     assert [r["event"] for r in t.rows("j")][-1] == "b"
+
+
+def test_trail_redacts_credentials_and_caps_big_strings(tmp_path):
+    t = Trail(tmp_path / "trail.ndjson")
+    t.append("j1", "approval_request", kind="tool",
+             detail={"input": {"command": "curl -H 'Authorization: Bearer abcdef123456789' x", "body": "z" * 9000},
+                     "api_key": "plain-value"})
+    t.append("j1", "result", text="key sk-or-v1-abcdefabcdefabcdef12 leaked")
+    raw = (tmp_path / "trail.ndjson").read_text()
+    assert "abcdef123456789" not in raw and "plain-value" not in raw and "sk-or-v1-abcdef" not in raw
+    assert len(raw) < 6000
+    assert [r["seq"] for r in t.rows("j1")] == [1, 2]
