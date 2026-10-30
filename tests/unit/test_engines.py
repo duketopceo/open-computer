@@ -217,3 +217,16 @@ def test_concurrent_steps_of_one_run_create_one_sandbox(scripted):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert len(plane.calls) == 1
+
+
+def test_widening_never_closes_a_vm_with_a_command_in_flight(scripted):
+    first = _FakeSandbox(ExecResult(0, "ok\n", ""))
+    second = _FakeSandbox(ExecResult(0, "ok\n", ""))
+    made = [first, second]
+    plane = _FakePlane()
+    plane.make_sandbox = lambda **kw: (plane.calls.append(kw), made.pop(0))[1]
+    busy = engines._acquire_run_sandbox(plane, "r1", {"h1.example"})
+    engines._acquire_run_sandbox(plane, "r1", {"h2.example"})  # widen while `busy` is mid-command
+    assert not first.closed  # its command must finish first
+    engines._release_run_sandbox(busy)
+    assert first.closed and not second.closed

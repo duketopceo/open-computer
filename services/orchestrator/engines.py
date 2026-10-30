@@ -149,7 +149,10 @@ def _acquire_run_sandbox(plane, run_id: str, hosts: set[str]) -> dict:
         if ent is None or not hosts <= ent["allow"]:
             allow = hosts | (ent["allow"] if ent else set())
             if ent is not None:
-                _close_quiet(ent["sb"])
+                if ent["busy"] > 0:
+                    ent["retired"] = True  # a step is mid-command on it: close when the last one releases
+                else:
+                    _close_quiet(ent["sb"])
             sb = plane.make_sandbox(egress_allowlist=sorted(allow), timeout=_RUN_SANDBOX_TTL_S)
             ent = _RUN_SANDBOXES[run_id] = {"sb": sb, "allow": allow, "last": time.time(), "busy": 0}
         ent["busy"] += 1
@@ -162,6 +165,8 @@ def _release_run_sandbox(ent: dict) -> None:
     with _RUN_LOCK:
         ent["busy"] = max(0, ent["busy"] - 1)
         ent["last"] = time.time()  # idle clock starts when the command ends
+        if ent.get("retired") and ent["busy"] == 0:  # replaced by a widened VM while this command ran
+            _close_quiet(ent["sb"])
 
 
 def _run_sandbox(plane, run_id: str, hosts: set[str]):
