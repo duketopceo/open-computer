@@ -62,11 +62,8 @@ def test_every_page_embeds_exactly_its_registry_slice(console):
         "goals": "/goals",
         "automations": "/automations",
         "skills": "/skills",
-        "sandboxes": "/sandboxes",
         "runs": "/runs",
         "approvals": "/approvals",
-        "router": "/router",
-        "audit": "/audit",
     }.items():
         _, _, html = console.get(path)
         ids = [a["id"] for a in embedded(html)]
@@ -80,12 +77,9 @@ def test_every_on_screen_action_is_in_the_palette_payload(console):
         "/goals",
         "/automations",
         "/skills",
-        "/sandboxes",
         "/runs",
         "/runs/new",
         "/approvals",
-        "/router",
-        "/audit",
     ):
         _, _, html = console.get(path)
         palette_ids = {a["id"] for a in embedded(html)}

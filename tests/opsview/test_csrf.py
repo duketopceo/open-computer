@@ -2,6 +2,8 @@
 that session, and a same-origin Origin; spending and leaving-the-box actions
 also need an explicit confirm."""
 
+import json
+
 import pytest
 
 from services.opsview import server
@@ -70,28 +72,29 @@ def test_confirm_page_names_what_it_touches_and_costs(console):
 
 
 def test_router_free_engine_routes_in_one_step(console, calls):
-    status, _, html = console.post("/router/test", {"q": "summarise this"})
-    assert status == 200 and "Route result" in html and calls["route"] == 1
-    assert "stays on this box" in html or "nothing leaves this box" in html
+    status, _, body = console.post("/api/router/test", {"q": "summarise this"})
+    result = json.loads(body)["result"]
+    assert status == 200 and calls["route"] == 1
+    assert result["engine"] == "table" and result["cost"] == 0.0
 
 
 def test_router_paid_engine_needs_confirm_and_shows_destination(console, calls, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-fixture-not-real")
     monkeypatch.setenv("OPENROUTER_BASE", "https://openrouter.ai/api")
-    status, _, html = console.post("/router/test", {"q": "secret plan"})
-    assert status == 200 and calls["route"] == 0
-    assert "Send this to the decider?" in html and "openrouter.ai" in html and "$0.000004" in html
-    assert "secret plan" in html
-    status, _, html = console.post("/router/test", {"q": "secret plan", "confirm": "1"})
-    assert status == 200 and calls["route"] == 1
+    status, _, body = console.post("/api/router/test", {"q": "secret plan"})
+    data = json.loads(body)
+    assert status == 200 and calls["route"] == 0  # nothing left the box
+    assert data == {"needs_confirm": True, "dest_host": "openrouter.ai", "cost": 0.000004}
+    status, _, body = console.post("/api/router/test", {"q": "secret plan", "confirm": "1"})
+    assert status == 200 and calls["route"] == 1 and "result" in json.loads(body)
 
 
-def test_router_page_shows_destination_before_any_click(console, monkeypatch):
-    _, _, html = console.get("/router")
-    assert "nothing leaves this box" in html
+def test_router_destination_is_in_the_api_before_any_click(console, monkeypatch):
+    data = json.loads(console.get("/api/router")[2])
+    assert data["paid"] is False and data["per_route_cost"] == 0
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-fixture-not-real")
-    _, _, html = console.get("/router")
-    assert "openrouter.ai" in html and "$0.000004" in html
+    data = json.loads(console.get("/api/router")[2])
+    assert data["paid"] is True and data["dest_host"] == "openrouter.ai" and data["per_route_cost"] == 0.000004
 
 
 def test_csp_forbids_inline_and_remote(console):
