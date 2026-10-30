@@ -321,3 +321,44 @@ def test_startup_resume_fails_soft(monkeypatch):
 
     monkeypatch.setattr(agentjobs, "resume_all", boom)
     server._resume_agent_jobs()  # must not raise
+
+
+def test_deny_racing_approve_leaves_no_grant_unless_approved(console, tmp_path):
+    """Approve and deny race on one egress request: the grant exists exactly when the request ended approved."""
+    for i in range(25):
+        host = f"race{i}.example.com"
+        rid, h = ask(detail={"host": host})
+        tokens = [console.csrf(), console.csrf()]
+        barrier = threading.Barrier(2)
+
+        def go(verb, tok):
+            barrier.wait()
+            console.request("POST", ap(J, rid, verb), body=json.dumps({"hash": h, "note": "n"}),
+                            headers={**JSON, "X-CSRF-Token": tok})
+
+        ts = [threading.Thread(target=go, args=a) for a in (("approve", tokens[0]), ("deny", tokens[1]))]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        status = store().get(rid)["status"]
+        assert status in ("approved", "sent_back", "denied")
+        assert (host in policy(tmp_path).approved_egress()) == (status == "approved")
+
+
+def test_expiry_racing_approve_leaves_no_grant(console, tmp_path):
+    rid = store().open(J, "egress", {"host": "late.example.com"}, ttl_s=0.0)
+    h = store().get(rid)["hash"]
+    assert post(console, ap(J, rid, "approve"), {"hash": h})[0] == 409
+    assert store().get(rid)["status"] == "expired"
+    assert not (tmp_path / "exec" / "policy.json").exists()
+
+
+def test_grant_failure_leaves_the_request_pending_and_writes_no_decision(console, tmp_path, monkeypatch):
+    from services.opsview import agentgrants
+
+    def boom(_detail):
+        raise agentgrants.GrantError("could not grant")
+
+    monkeypatch.setattr(agentgrants, "grant_host", boom)
+    rid, h = ask()
+    assert post(console, ap(J, rid, "approve"), {"hash": h})[0] == 500
+    assert store().get(rid)["status"] == "pending"

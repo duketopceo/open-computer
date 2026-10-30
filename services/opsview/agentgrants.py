@@ -1,20 +1,18 @@
 """The S5 grant behind an approved `egress` request: a human-applied execplane policy change.
 
-`decide_lock` is held by the caller across verify -> grant_host -> record decision, so two approvals cannot
-interleave; each grant uses a fresh PolicyEngine (it rewrites its in-memory list, so a shared one drops grants).
+The grant runs inside ApprovalStore.decide's transaction (after verification, before the approval is written), so
+every decision, expiry and grant serialize on the store; each grant uses a fresh PolicyEngine (it rewrites its
+in-memory list, so a shared one drops grants).
 """
 
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
 
 from services.agents.approvals import ApprovalError
 from services.agents.worker import valid_host
 from services.execplane.policy import PolicyEngine
-
-decide_lock = threading.Lock()
 
 
 class GrantError(Exception):

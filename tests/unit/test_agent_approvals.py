@@ -289,3 +289,32 @@ def test_lease_exclusive_then_released(tmp_path):
             assert second is False
     with lease(p) as third:
         assert third is True
+
+
+def test_before_approve_runs_only_for_a_verified_approval(store, clock):
+    calls = []
+    rid = store.open("j1", "egress", {"host": "a.example.com"})
+    h = store.get(rid)["hash"]
+    with pytest.raises(ApprovalError):
+        store.decide(rid, True, "luke", "stale", before_approve=calls.append)  # stale hash: hook never runs
+    store.decide(rid, False, "luke", h, note="no", before_approve=calls.append)  # deny: hook never runs
+    assert calls == []
+    r2 = store.open("j1", "egress", {"host": "b.example.com"})
+    clock.t += 1000  # expired
+    with pytest.raises(ApprovalError):
+        store.decide(r2, True, "luke", store.get(r2)["hash"], before_approve=calls.append)
+    assert calls == [] and store.get(r2)["status"] == "expired"
+    r3 = store.open("j1", "egress", {"host": "c.example.com"})
+    store.decide(r3, True, "luke", store.get(r3)["hash"], before_approve=calls.append)
+    assert [c["id"] for c in calls] == [r3] and store.get(r3)["status"] == "approved"
+
+
+def test_failing_before_approve_writes_no_decision(store):
+    rid = store.open("j1", "egress", {"host": "a.example.com"})
+
+    def boom(_req):
+        raise RuntimeError("grant failed")
+
+    with pytest.raises(RuntimeError):
+        store.decide(rid, True, "luke", store.get(rid)["hash"], before_approve=boom)
+    assert store.get(rid)["status"] == "pending"

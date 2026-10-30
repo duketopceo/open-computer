@@ -93,15 +93,12 @@ def get_job(job: str) -> dict | None:
 
 def decide(job: str, rid: str, approve: bool, by: str, hash_: object, note: str = "") -> None:
     """Record the owner's decision. Raises ApprovalError (404/409/422) or GrantError (500, request stays pending).
-    An egress approval verifies, grants and records under one lock, so a bad request never writes a grant."""
+    An egress approval applies the grant inside the store's decision transaction, after the request is verified
+    and before the approval is written: a deny, an expiry or a replay serialize with it, so no grant outlives a
+    request that did not end approved."""
     store = ApprovalStore(approvals_path())
     r = store.get(rid)
     if r is None or r["job"] != job:
         raise ApprovalError(f"unknown approval {rid}", 404)
-    if approve and r["kind"] == "egress":
-        with agentgrants.decide_lock:
-            store.verify(rid, hash_)
-            agentgrants.grant_host(r["detail"])
-            store.decide(rid, True, by, hash_, note)
-        return
-    store.decide(rid, approve, by, hash_, note)
+    grant = (lambda req: agentgrants.grant_host(req["detail"])) if approve and r["kind"] == "egress" else None
+    store.decide(rid, approve, by, hash_, note, before_approve=grant)

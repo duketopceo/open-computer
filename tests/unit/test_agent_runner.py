@@ -190,3 +190,34 @@ def test_resume_all_without_factory_does_nothing(parts):
     t.append("eeeeeeeeee", "job_start", goal="g", budget=9.0, model="m/x")
     assert _runner(parts).resume_all() == 0
     assert len(t.rows("eeeeeeeeee")) == 1
+
+
+def test_setup_failure_ends_the_job_failed_with_a_redacted_reason(parts):
+    t, s, d = parts
+
+    def bad_factory(job, goal, budget, model):
+        raise RuntimeError("no key sk-ant-api03-" + "A" * 30)
+
+    job = _runner(parts, bad_factory).submit("x", None, "luke")
+    join_all(5)
+    st = replay(t.rows(job))
+    assert st.outcome is not None and st.outcome["status"] == "failed"
+    assert "RuntimeError" in st.outcome["summary"] and "A" * 30 not in st.outcome["summary"]
+    with lease(d / f"{job}.lock") as free:  # the lease is released
+        assert free
+    assert _runner(parts, bad_factory).resume_all() == 0  # a failed job is finished, not retried
+
+
+def test_setup_failure_on_a_resumed_job_also_ends_it(parts):
+    t, s, d = parts
+    ok = Fx([FIN])
+    job = _runner(parts).submit("x", None, "luke")  # queued, no factory
+    t.append(job, "job_start", goal="x", budget=25.0, model="m")  # started, never finished
+
+    def bad_factory(job, goal, budget, model):
+        raise ValueError("config missing")
+
+    assert _runner(parts, bad_factory).resume_all() == 1
+    join_all(5)
+    assert replay(t.rows(job)).outcome["status"] == "failed"
+    assert ok.calls == []

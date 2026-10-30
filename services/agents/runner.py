@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from oc.obs import get_logger
+from oc.obs import get_logger, redact_str
 
 from .approvals import ApprovalStore, ConsoleApprover, lease
 from .loop import DEFAULT_BUDGET, DEFAULT_ORCHESTRATOR_MODEL, AgentLoop
@@ -114,6 +114,17 @@ class JobRunner:
                     loop.run(st.goal, job=job)
         except Exception as e:  # noqa: BLE001 - a driver failure must not kill the console
             log.error("agent job driver failed", job=job, error=type(e).__name__)
+            self._fail(job, e)
+
+    def _fail(self, job: str, e: Exception) -> None:
+        """A setup failure (factory, loop construction) ends the job `failed` instead of leaving it 'running'."""
+        try:
+            st = replay(self.trail.rows(job))
+            if st.outcome is None and st.started:
+                self.trail.append(job, "job_end", status="failed", rounds=st.last_round, spent=round(st.spent, 4),
+                                  summary=redact_str(f"{type(e).__name__}: {e}")[:1000])
+        except Exception as e2:  # noqa: BLE001 - the trail itself is unwritable: nothing more to do
+            log.error("agent job failure not recorded", job=job, error=type(e2).__name__)
 
     def resume_all(self) -> int:
         """Drive every unfinished, recent, unleased job. Needs a factory. Returns how many were started."""

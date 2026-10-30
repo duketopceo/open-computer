@@ -159,7 +159,11 @@ class ApprovalStore:
                    "hash": h, "expires_at": exp})
             return rid
 
-    def decide(self, rid: str, approve: bool, by: str, hash: str, note: str = "") -> dict:
+    def decide(self, rid: str, approve: bool, by: str, hash: str, note: str = "",
+               before_approve: Callable[[dict], None] | None = None) -> dict:
+        """Record a decision. `before_approve(request)` runs for an approval only after the request is verified
+        pending, unexpired and hash-matched, inside the same transaction that writes the decision: a deny, an
+        expiry or a second approve cannot interleave, and if it raises nothing is written."""
         if not isinstance(by, str) or not by.strip():
             raise ApprovalError("a decider is required", 422)
         with self._txn() as write:
@@ -172,6 +176,8 @@ class ApprovalStore:
                 if r and r["status"] == "expired" and r["decision"] is None:
                     write({"event": "decision", "id": rid, "ts": now, "decision": "expired", "by": "ttl", "note": ""})
                 raise e
+            if approve and before_approve is not None:
+                before_approve(reqs[rid])
             write({"event": "decision", "id": rid, "ts": now, "decision": "approved" if approve else "denied",
                    "by": by, "note": str(note)[:500]})
         return self.get(rid)
