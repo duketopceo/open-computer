@@ -34,6 +34,8 @@ from urllib.parse import parse_qs, urlparse
 from oc.obs import bind, get_logger
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
+from services.agents.approvals import ApprovalError
+from services.opsview.agentgrants import GrantError
 from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
@@ -270,6 +272,15 @@ def _resume_goals() -> None:
         log.error("goal run resume failed", error=type(e).__name__)
 
 
+def _resume_agent_jobs() -> None:
+    """Re-drive agent jobs left unfinished by a restart (needs a configured runner). Fails soft — the trail is truth."""
+    try:
+        n = agentjobs.resume_all()
+        log.info("agent jobs resumed", count=n) if n else log.debug("no agent jobs to resume")
+    except Exception as e:
+        log.error("agent job resume failed", error=type(e).__name__)
+
+
 # ----------------------------------------------------------------- routes
 # (pattern, method name). The tests enumerate these tables to prove GETs are
 # side-effect free and that every POST is CSRF-protected.
@@ -307,6 +318,9 @@ GET_ROUTES = [
 ]
 REDIRECTS = {"/fleet": "/sandboxes", "/matrix": "/runs", "/gate": "/approvals", "/ops": "/"}
 POST_ROUTES = [
+    (r"/api/agent-jobs", "p_agent_submit"),
+    (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})/approvals/(?P<aid>ag_[0-9a-f]{8})/approve", "p_agent_approve"),
+    (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})/approvals/(?P<aid>ag_[0-9a-f]{8})/deny", "p_agent_deny"),
     (r"/api/transcribe", "p_transcribe"),
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
@@ -807,6 +821,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"run": rid})
         self._redirect(f"/goals/{rid}", 303)
 
+
+    def p_agent_submit(self, who, body):
+        goal = body.get("goal")
+        goal = goal.strip() if isinstance(goal, str) else ""
+        if not goal or len(goal) > 4000:
+            return self._json(422, {"error": "A goal is required (max 4000 chars)."})
+        try:
+            if body.get("confirm") != "1":
+                return self._json(200, {"needs_confirm": True, **agentjobs.submit_defaults(body.get("budget"))})
+            return self._json(200, {"job": agentjobs.submit(goal, body.get("budget"), who)})
+        except ValueError as e:
+            return self._json(422, {"error": str(e)})
+        except Exception as e:
+            return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+
+    def _agent_decide(self, who, body, id, aid, approve: bool):
+        try:
+            agentjobs.decide(id, aid, approve, who, body.get("hash"), str(body.get("note", "")))
+        except ApprovalError as e:
+            return self._json(e.status, {"error": str(e)})
+        except Exception as e:  # a grant that could not be written: the request stays pending
+            return self._json(500, {"error": str(e) if isinstance(e, GrantError) else type(e).__name__})
+        self._json(200, {"ok": True})
+
+    def p_agent_approve(self, who, body, id, aid):
+        self._agent_decide(who, body, id, aid, True)
+
+    def p_agent_deny(self, who, body, id, aid):
+        self._agent_decide(who, body, id, aid, False)
+
     def p_api_router_test(self, who, body):
         q = str(body.get("q", "")).strip()[:500]
         if not q:
@@ -955,6 +999,7 @@ def make_server(port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
 def main(port: int = 8791):
     log.info("console listening", host="127.0.0.1", port=port)
     _resume_goals()
+    _resume_agent_jobs()
     make_server(port).serve_forever()
 
 
