@@ -9,6 +9,7 @@ fails CLOSED here rather than running the harness on the owner's machine.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ class WorkerTask:
     placement: str = "local"  # "local" | "cloud-sandbox"
     timeout_s: float = 900.0
     est_cost: float = 0.0
+    job: str = ""  # scopes the edit taint: a later job on the same worker and cwd starts clean
 
 
 @dataclass
@@ -58,6 +60,15 @@ class AgentWorker(Protocol):
     def run(self, task: WorkerTask, emit: Emit, approve: Approve) -> WorkerResult: ...
 
 
+def _money(value, default=None):
+    """A cost-like number: finite and >= 0, else `default`. NaN/inf/negative/non-numeric never reach a budget."""
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return default
+    return x if math.isfinite(x) and x >= 0 else default
+
+
 def scrub_env(env: dict) -> dict:
     """Only a short allowlist reaches the harness: no API keys, tokens or session secrets leak in."""
     return {k: v for k, v in env.items() if k in _ENV_ALLOW or k.startswith("LC_")}
@@ -70,6 +81,7 @@ class AcpWorker:
         self.name = name
         self._launch = launch
         self.home = Path(home)
+        self._tainted: set[tuple[str, str]] = set()  # (job, realpath cwd) that edited code
 
     def run(self, task: WorkerTask, emit: Emit, approve: Approve) -> WorkerResult:
         if task.placement == "cloud-sandbox":
@@ -79,8 +91,8 @@ class AcpWorker:
         argv, env = self._launch(scrub_env(dict(os.environ)))
         chunks: list[str] = []
         perms: list[dict] = []
-        cost: list[float] = []
-        state = {"edited_build": False}
+        cost: list[float | None] = [None]  # ACP usage_update.cost is a cumulative session total: keep the latest
+        taint_key = (task.job, os.path.realpath(task.cwd))
 
         def on_update(_sid, upd):
             kind = upd.get("sessionUpdate")
@@ -91,16 +103,15 @@ class AcpWorker:
             elif kind in ("tool_call", "tool_call_update"):
                 emit("tool", {"title": upd.get("title"), "status": upd.get("status"), "kind": upd.get("kind")})
             elif kind == "usage_update" and isinstance(upd.get("cost"), dict):
-                try:
-                    cost.append(float(upd["cost"].get("amount")))
-                except (TypeError, ValueError):
-                    pass
+                latest = _money(upd["cost"].get("amount"))
+                if latest is not None:
+                    cost[0] = latest
 
         def on_permission(_sid, tool_call, options, reply):
             title = tool_call.get("title")
             if str(tool_call.get("kind")) in policy.EDIT_KINDS and policy.touches_build_file(tool_call):
-                state["edited_build"] = True
-            verdict = policy.classify(tool_call, task.cwd, state["edited_build"])
+                self._tainted.add(taint_key)
+            verdict = policy.classify(tool_call, task.cwd, taint_key in self._tainted)
 
             def answer(allow: bool, why: str):
                 want = "allow_once" if allow else "reject_once"
@@ -130,7 +141,7 @@ class AcpWorker:
         try:
             conn.initialize()
             sess = conn.new_session(task.cwd)
-            sid = sess["sessionId"]
+            sid = sess["sessionId"]  # KeyError/TypeError on a malformed reply is a failed result below
             self._pick_model(conn, sid, sess, task.model)
             emit("started", {"worker": self.name, "model": task.model})
             handle = conn.prompt(sid, task.prompt)
@@ -138,13 +149,13 @@ class AcpWorker:
                 stop = handle.wait(task.timeout_s)
             except TimeoutError:
                 conn.cancel(sid)
-                return WorkerResult("timeout", "".join(chunks), "timeout", sum(cost) or None, permissions=perms)
+                return WorkerResult("timeout", "".join(chunks), "timeout", cost[0], permissions=perms)
             status = "done" if stop == "end_turn" else "cancelled" if stop == "cancelled" else "failed"
-            return WorkerResult(status, "".join(chunks), stop, sum(cost) or None, permissions=perms)
-        except AcpError as e:
+            return WorkerResult(status, "".join(chunks), stop, cost[0], permissions=perms)
+        except (AcpError, TimeoutError, KeyError, ValueError, TypeError) as e:
             tail = conn.stderr_tail.decode("utf8", "replace")[-300:]
-            return WorkerResult("failed", "".join(chunks), "error", sum(cost) or None, f"{e}: {tail}".strip(),
-                                perms)
+            return WorkerResult("failed", "".join(chunks), "error", cost[0],
+                                f"{type(e).__name__}: {e}: {tail}".strip(), perms)
         finally:
             conn.close()
 

@@ -34,8 +34,21 @@ _BUILD_CMDS = {
     "cargo": {"build", "test", "check", "clippy"},
     "go": {"build", "test", "vet"},
 }
-_RISKY_FLAGS = {"-p", "-c", "--rootdir", "--confcutdir", "--import-mode", "--override-ini", "-o", "--pre", "--output"}
+# Flags that make an otherwise-read/build command run code or write elsewhere. Matched in every spelling:
+# `--pre=CMD`, an abbreviated long (`--out`), and a short flag with its value attached (`-pPLUGIN`).
+_RISKY_LONG = ("--rootdir", "--confcutdir", "--import-mode", "--override-ini", "--pre", "--output")
+_RISKY_SHORT = "pco"
+_DOC_SUFFIXES = (".md", ".rst", ".txt")
 EDIT_KINDS = {"edit", "delete", "move"}
+
+
+def _risky_flag(arg: str) -> bool:
+    if not arg.startswith("-") or arg in ("-", "--"):
+        return False
+    if arg.startswith("--"):
+        head = arg.split("=", 1)[0]
+        return len(head) > 2 and any(r.startswith(head) for r in _RISKY_LONG)
+    return arg[1] in _RISKY_SHORT
 
 
 def _under(path: str, root: str) -> bool:
@@ -74,10 +87,14 @@ def _shell(cmd: str, cwd: str) -> str:
     if not argv:
         return "ask"
     a0, rest = os.path.basename(argv[0]), argv[1:]
-    if any(a in _RISKY_FLAGS for a in rest):
+    if any(_risky_flag(a) for a in rest):
         return "ask"
-    for a in rest:  # path-looking args must stay inside cwd
-        if not a.startswith("-") and ("/" in a or a.startswith("~") or a == "..") and not _under(_norm(a, cwd), cwd):
+    for a in rest:  # path-looking args (and `--flag=path` values) must stay inside cwd
+        if a.startswith("-"):
+            if "=" not in a:
+                continue
+            a = a.split("=", 1)[1]
+        if a and ("/" in a or a.startswith("~") or a == "..") and not _under(_norm(a, cwd), cwd):
             return "ask"
     if a0 in _READ_CMDS:
         return "allow"
@@ -111,6 +128,8 @@ def classify(tool_call: dict, cwd: str, edited_build_files: bool = False) -> str
         if verdict == "allow" and edited_build_files and os.path.basename(shlex.split(cmd)[0]) in _BUILD_CMDS:
             return "ask"
         return verdict
+    if kind in EDIT_KINDS and any(_in_git_dir(p) for p in paths):
+        return "ask"  # .git/config, hooks and friends execute code through otherwise-allowed git verbs
     if kind == "read" or kind in EDIT_KINDS:
         if paths and all(_under(p, cwd) for p in paths):
             return "allow"
@@ -118,12 +137,15 @@ def classify(tool_call: dict, cwd: str, edited_build_files: bool = False) -> str
     return "ask"
 
 
-_BUILD_NAMES = ("pyproject.toml", "conftest.py", "package.json", "makefile", "setup.py", "tox.ini", "opencode.json")
+def _in_git_dir(path: str) -> bool:
+    return "/.git/" in path or path.endswith("/.git")
 
 
 def touches_build_file(tool_call: dict) -> bool:
-    """True when an edit targets a file that build/test commands execute."""
+    """True when an edit may change something a build/test command executes: anything that is not plain
+    documentation (.md/.rst/.txt), and anything under .git/. The old filename allowlist was unbounded
+    (test_*.py, setup.cfg, build.rs, eslint configs all execute under an allowed command)."""
     return any(
-        os.path.basename(p).lower() in _BUILD_NAMES or p.endswith(".sh") or "/.git/hooks/" in p
+        _in_git_dir(p) or not p.lower().endswith(_DOC_SUFFIXES)
         for p in _paths(tool_call or {})
     )

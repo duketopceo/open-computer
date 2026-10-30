@@ -10,6 +10,8 @@ Script keys (all optional):
   models           model ids offered in the ``model`` config option
   stderr_bytes     bytes written to stderr at startup
   crash_on_start   exit code to die with before reading anything
+  initialize_delay seconds to wait before answering ``initialize``
+  omit_session_id  true: ``session/new`` replies without a sessionId
   prompts          list of step lists, one per ``session/prompt`` call
                    (the last list repeats); ``prompt`` is the one-list form
 Steps: {"update": {...}} | {"permission": {"toolCall":.., "options":..}}
@@ -162,13 +164,17 @@ class Agent:
         method, rid = msg.get("method"), msg.get("id")
         p = msg.get("params") or {}
         if method == "initialize":
+            time.sleep(self.script.get("initialize_delay", 0))
             self.reply(rid, {
                 "protocolVersion": self.script.get("protocolVersion", 1),
                 "agentCapabilities": {"loadSession": True}})
         elif method == "session/new":
             self.sessions += 1
-            self.reply(rid, {"sessionId": f"sess-{self.sessions}",
-                             "configOptions": self.config_options()})
+            res = {"sessionId": f"sess-{self.sessions}",
+                   "configOptions": self.config_options()}
+            if self.script.get("omit_session_id"):
+                del res["sessionId"]
+            self.reply(rid, res)
         elif method == "session/load":
             self.reply(rid, {"configOptions": self.config_options()})
         elif method == "session/set_config_option":

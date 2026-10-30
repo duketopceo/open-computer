@@ -21,7 +21,7 @@ from oc.obs import redact_str
 from services.cost import Usage
 
 from .trail import Trail
-from .worker import AgentWorker, WorkerResult, WorkerTask, WorkerUnavailable
+from .worker import AgentWorker, WorkerResult, WorkerTask, WorkerUnavailable, _money
 
 DEFAULT_BUDGET = 25.0
 WARN_FRACTION = 0.8
@@ -91,52 +91,59 @@ class AgentLoop:
             t.append(job, "job_end", status=status, summary=summary[:1000], spent=round(spent, 4), rounds=rounds)
             return JobOutcome(job, status, summary, spent, rounds)
 
-        plan = self.planner({"phase": "plan", "goal": goal, "budget": self.budget})
-        t.append(job, "plan", steps=plan.get("steps", []), thinking=plan.get("thinking"))
-        if not self._ask(job, "plan", {"steps": plan.get("steps", [])}):
-            return end("rejected", "owner did not approve the plan", 0)
+        rnd = 0
+        try:
+            plan = self.planner({"phase": "plan", "goal": goal, "budget": self.budget})
+            t.append(job, "plan", steps=plan.get("steps", []), thinking=plan.get("thinking"))
+            if not self._ask(job, "plan", {"steps": plan.get("steps", [])}):
+                return end("rejected", "owner did not approve the plan", 0)
 
-        for rnd in range(1, self.max_rounds + 1):
-            state = {"phase": "step", "goal": goal, "round": rnd, "budget": self.budget, "spent": round(spent, 4),
-                     "history": history[-8:]}
-            dec = self.planner(state)
-            t.append(job, "decision", round=rnd, action=dec.get("action"), title=dec.get("title"))
-            if dec.get("action") == "finish":
-                return end("finished", str(dec.get("summary", "")), rnd - 1)
-            if dec.get("action") != "spawn" or not dec.get("prompt"):
-                return end("stalled", f"planner returned an unusable decision: {dec.get('action')!r}", rnd - 1)
+            for rnd in range(1, self.max_rounds + 1):
+                state = {"phase": "step", "goal": goal, "round": rnd, "budget": self.budget, "spent": round(spent, 4),
+                         "history": history[-8:]}
+                dec = self.planner(state)
+                t.append(job, "decision", round=rnd, action=dec.get("action"), title=dec.get("title"))
+                if dec.get("action") == "finish":
+                    return end("finished", str(dec.get("summary", "")), rnd - 1)
+                if dec.get("action") != "spawn" or not dec.get("prompt"):
+                    return end("stalled", f"planner returned an unusable decision: {dec.get('action')!r}", rnd - 1)
 
-            est = float(dec.get("est_cost") or 1.0)
-            if spent + est > self.budget:
-                return end("budget_exhausted", f"next step ({est:.2f}) would pass the {self.budget:.2f} budget", rnd - 1)
-            if not warned and spent + est > WARN_FRACTION * self.budget:
-                warned = True
-                t.append(job, "budget_warn", spent=round(spent, 4), est=est, budget=self.budget)
-                if not self._ask(job, "spend", {"spent": round(spent, 4), "est": est, "budget": self.budget}):
-                    return end("budget_exhausted", "owner declined spend past 80% of the budget", rnd - 1)
-            for risk in dec.get("risky") or []:
-                if not self._ask(job, "risky", {"action": str(risk), "title": dec.get("title")}):
-                    return end("stalled", f"owner declined risky action: {risk}", rnd - 1)
+                est = _money(dec.get("est_cost"), 1.0) or 1.0  # NaN/negative/garbage -> the default estimate
+                if spent + est > self.budget:
+                    return end("budget_exhausted", f"next step ({est:.2f}) would pass the {self.budget:.2f} budget", rnd - 1)
+                if not warned and spent + est > WARN_FRACTION * self.budget:
+                    warned = True
+                    t.append(job, "budget_warn", spent=round(spent, 4), est=est, budget=self.budget)
+                    if not self._ask(job, "spend", {"spent": round(spent, 4), "est": est, "budget": self.budget}):
+                        return end("budget_exhausted", "owner declined spend past 80% of the budget", rnd - 1)
+                for risk in dec.get("risky") or []:
+                    if not self._ask(job, "risky", {"action": str(risk), "title": dec.get("title")}):
+                        return end("stalled", f"owner declined risky action: {risk}", rnd - 1)
 
-            place_to = self.placement(dec)
-            task = WorkerTask(dec["prompt"], self.cwd, self.model, placement=place_to, est_cost=est)
-            t.append(job, "spawn", round=rnd, title=dec.get("title"), placement=place_to, worker=self.worker.name)
-            try:
-                res = self.worker.run(task, lambda ev, d, _r=rnd: t.append(job, ev, round=_r, **d), self.approve_tool(job))
-            except WorkerUnavailable as e:
-                res = WorkerResult("failed", "", "unavailable", detail=str(e))
-            cost = res.cost if res.cost is not None else est  # unreported -> charge the estimate (fail conservative)
-            spent += cost
-            if self.ledger is not None:
-                self.ledger.record(job, f"round-{rnd}", Usage(self.model, 0, 0, cost))
-            history.append({"round": rnd, "title": dec.get("title"), "status": res.status,
-                            "result": redact_str((res.text or res.detail)[:RESULT_CAP])})
-            t.append(job, "result", round=rnd, status=res.status, stop=res.stop_reason, cost=round(cost, 4),
-                     text=res.text[:RESULT_CAP], detail=res.detail[:300])
-            failures = 0 if res.status == "done" else failures + 1
-            if failures >= self.max_failures:
-                return end("stalled", f"{failures} consecutive worker failures", rnd)
-        return end("max_rounds", f"stopped after {self.max_rounds} rounds", self.max_rounds)
+                place_to = self.placement(dec)
+                task = WorkerTask(dec["prompt"], self.cwd, self.model, placement=place_to, est_cost=est, job=job)
+                t.append(job, "spawn", round=rnd, title=dec.get("title"), placement=place_to, worker=self.worker.name)
+                try:
+                    res = self.worker.run(task, lambda ev, d, _r=rnd: t.append(job, ev, round=_r, **d), self.approve_tool(job))
+                except WorkerUnavailable as e:
+                    res = WorkerResult("failed", "", "unavailable", detail=str(e))
+                except Exception as e:  # noqa: BLE001 - a worker bug is a failed round, not a dead job
+                    res = WorkerResult("failed", "", "error", detail=f"{type(e).__name__}: {e}")
+                reported = _money(res.cost)  # a pluggable worker may report NaN/negative: charge the estimate
+                cost = reported if reported is not None else est  # unreported -> charge the estimate
+                spent += cost
+                if self.ledger is not None:
+                    self.ledger.record(job, f"round-{rnd}", Usage(self.model, 0, 0, cost))
+                history.append({"round": rnd, "title": dec.get("title"), "status": res.status,
+                                "result": redact_str((res.text or res.detail)[:RESULT_CAP])})
+                t.append(job, "result", round=rnd, status=res.status, stop=res.stop_reason, cost=round(cost, 4),
+                         text=res.text[:RESULT_CAP], detail=res.detail[:300])
+                failures = 0 if res.status == "done" else failures + 1
+                if failures >= self.max_failures:
+                    return end("stalled", f"{failures} consecutive worker failures", rnd)
+            return end("max_rounds", f"stopped after {self.max_rounds} rounds", self.max_rounds)
+        except Exception as e:  # noqa: BLE001 - a planner or trail failure must still leave a terminal job_end
+            return end("failed", f"{type(e).__name__}: {e}", rnd)
 
     def approve_tool(self, job: str) -> Approve:
         return lambda kind, detail: self._ask(job, kind, detail)

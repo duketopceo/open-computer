@@ -221,8 +221,9 @@ class AcpConnection:
         except Exception:  # noqa: BLE001 — fail closed
             reply()
 
-    def _call(self, method, params, timeout=CALL_TIMEOUT_S):
-        return self._start(method, params).wait(timeout)
+    def _call(self, method, params, timeout=None):
+        # read at call time so tests (and operators) can shorten the module default
+        return self._start(method, params).wait(CALL_TIMEOUT_S if timeout is None else timeout)
 
     def _start(self, method, params) -> _Future:
         fut = _Future()

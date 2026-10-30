@@ -153,3 +153,12 @@ def test_no_thinking_no_toggle():
 
     run = _run()
     assert "Thinking" not in views.work_inspect(run, "0", [], 200.0) + views.work_main(run, 200.0)
+
+
+def test_failed_step_error_is_escaped_in_the_inspector_narrative():
+    from services.opsview import views
+
+    run = _run(state="FAILED", error="boom <img src=x onerror=alert(1)>", result=None)
+    inspector = views.work_inspect(run, "0", [], 200.0)
+    assert "<img" not in inspector and "&lt;img src=x onerror=alert(1)&gt;" in inspector
+    assert "<img" not in views.work_main(run, 200.0)
