@@ -10,11 +10,17 @@ export function Sidebar({
   selected,
   identity,
   onSelect,
+  view,
+  onAgents,
+  pending,
 }: {
   runs: RunSummary[];
   selected: string | null;
   identity: string;
   onSelect: (id: string) => void;
+  view: "runs" | "agents";
+  onAgents: () => void;
+  pending: number;
 }) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-white/60">
@@ -27,12 +33,30 @@ export function Sidebar({
           onClick={() => onSelect("")}
           className={cn(
             "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-            selected === "" || selected === null
+            view === "runs" && (selected === "" || selected === null)
               ? "bg-teal-soft text-teal"
               : "text-ink hover:bg-black/5",
           )}
         >
           <CmdIcon /> Computer
+        </button>
+        <button
+          onClick={onAgents}
+          aria-current={view === "agents" ? "page" : undefined}
+          className={cn(
+            "mt-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
+            view === "agents" ? "bg-teal-soft text-teal" : "text-ink hover:bg-black/5",
+          )}
+        >
+          <CmdIcon /> Agent jobs
+          {pending > 0 && (
+            <span
+              className="ml-auto rounded-full bg-violet-100 px-1.5 text-[11px] font-semibold text-violet-800"
+              aria-label={`${pending} awaiting approval`}
+            >
+              {pending}
+            </span>
+          )}
         </button>
       </nav>
 
@@ -50,7 +74,7 @@ export function Sidebar({
                 onClick={() => onSelect(r.run)}
                 className={cn(
                   "mb-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-colors",
-                  selected === r.run ? "bg-teal-soft text-teal" : "text-ink hover:bg-black/5",
+                  view === "runs" && selected === r.run ? "bg-teal-soft text-teal" : "text-ink hover:bg-black/5",
                 )}
               >
                 <span className="truncate text-[13px]">{r.goal}</span>

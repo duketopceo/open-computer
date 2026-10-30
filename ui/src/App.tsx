@@ -3,13 +3,16 @@ import {
   ApiError,
   errorMessage,
   getRun,
+  listAgentJobs,
   listRuns,
   session,
   submitGoal,
+  type AgentJobSummary,
   type RunDetail,
   type RunSummary,
   type Session,
 } from "@/lib/api";
+import { AgentJobs } from "@/components/AgentJobs";
 import { Composer } from "@/components/Composer";
 import { RunView } from "@/components/RunView";
 import { Sidebar } from "@/components/Sidebar";
@@ -36,6 +39,9 @@ export default function App() {
   const [draft, setDraft] = useState<string | undefined>();
   const [error, setError] = useState("");
   const [link, setLink] = useState<Link>("ok");
+  const [view, setView] = useState<"runs" | "agents">("runs");
+  const [jobs, setJobs] = useState<AgentJobSummary[] | null>(null);
+  const [jobsError, setJobsError] = useState("");
 
   // Responses for a run the user has navigated away from must be dropped.
   // Synced at commit (not render): concurrent React may abandon a render.
@@ -61,6 +67,34 @@ export default function App() {
       }),
     [noteSuccess],
   );
+
+  // Never rejects: failures land in jobsError (inline retry) and the link banner. A success here
+  // must not clear "offline": the runs poll owns that signal.
+  const refreshJobs = useCallback(
+    () =>
+      listAgentJobs()
+        .then((j) => {
+          setJobs(j);
+          setJobsError("");
+        })
+        .catch((e) => {
+          noteFailure(e);
+          if (!(e instanceof ApiError && e.kind === "auth")) setJobsError(errorMessage(e, "Could not load agent jobs."));
+        }),
+    [noteFailure],
+  );
+
+  useEffect(() => {
+    refreshJobs();
+  }, [refreshJobs]);
+
+  const jobsActive = !!jobs?.some((j) => j.status === "running" || j.awaiting_approval);
+  useEffect(() => {
+    if (link === "auth") return;
+    const ms = link === "offline" ? 10000 : jobsActive ? 2500 : 8000;
+    const id = setInterval(refreshJobs, ms);
+    return () => clearInterval(id);
+  }, [link, jobsActive, refreshJobs]);
 
   useEffect(() => {
     session()
@@ -168,8 +202,12 @@ export default function App() {
         runs={runs}
         selected={selected}
         identity={sess?.identity ?? ""}
+        view={view}
+        onAgents={() => setView("agents")}
+        pending={(jobs ?? []).reduce((n, j) => n + (j.pending || 0), 0)}
         onSelect={(id) => {
           if (submitting) return;
+          setView("runs");
           setConfirm(null);
           setError("");
           setSelected(id || null);
@@ -178,6 +216,16 @@ export default function App() {
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
         {link !== "ok" && <LinkBanner link={link} />}
+        {view === "agents" ? (
+          <AgentJobs
+            jobs={jobs}
+            jobsError={jobsError}
+            link={link}
+            onRefresh={refreshJobs}
+            onOk={noteSuccess}
+            onFail={noteFailure}
+          />
+        ) : (
         <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-6 py-10">
           {error && (
             <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
@@ -238,6 +286,7 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
       </main>
     </div>
   );
