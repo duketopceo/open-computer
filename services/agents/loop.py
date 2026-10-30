@@ -17,6 +17,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable
 
+from oc.obs import redact_str
 from services.cost import Usage
 
 from .trail import Trail
@@ -129,7 +130,7 @@ class AgentLoop:
             if self.ledger is not None:
                 self.ledger.record(job, f"round-{rnd}", Usage(self.model, 0, 0, cost))
             history.append({"round": rnd, "title": dec.get("title"), "status": res.status,
-                            "result": (res.text or res.detail)[:RESULT_CAP]})
+                            "result": redact_str((res.text or res.detail)[:RESULT_CAP])})
             t.append(job, "result", round=rnd, status=res.status, stop=res.stop_reason, cost=round(cost, 4),
                      text=res.text[:RESULT_CAP], detail=res.detail[:300])
             failures = 0 if res.status == "done" else failures + 1
