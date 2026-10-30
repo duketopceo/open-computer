@@ -15,7 +15,7 @@ Script keys (all optional):
   prompts          list of step lists, one per ``session/prompt`` call
                    (the last list repeats); ``prompt`` is the one-list form
 Steps: {"write": {"path", "text"}} | {"spawn_grandchild": true} | {"update": {...}} | {"permission": {"toolCall":.., "options":..}}
-| {"delay": s} | {"wait_cancel": true} | {"stderr": n} | {"stderr_text": s} | {"huge_line": n}
+| {"delay": s} | {"wait_cancel": true} | {"stderr": n} | {"stderr_text": s} | {"shell": cmd} | {"flood": n} | {"huge_line": n}
 | {"crash": code} | {"stop": reason}. A cancel (or a cancelled permission
 outcome) ends the prompt with stopReason "cancelled".
 
@@ -149,6 +149,12 @@ class Agent:
             elif "stderr" in st:
                 sys.stderr.write("e" * st["stderr"])
                 sys.stderr.flush()
+            elif "shell" in st:  # {"shell": "cmd"}: run a command in the agent's cwd (e.g. a harness that commits)
+                import subprocess
+                subprocess.run(st["shell"], shell=True, check=False, capture_output=True)
+            elif "flood" in st:  # {"flood": n}: n tool_call_update events
+                for i in range(st["flood"]):
+                    self.update(sid, {"sessionUpdate": "tool_call_update", "title": f"t{i}", "status": "completed"})
             elif "stderr_text" in st:
                 sys.stderr.write(st["stderr_text"])
                 sys.stderr.flush()

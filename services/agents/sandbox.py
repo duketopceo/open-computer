@@ -31,6 +31,9 @@ POLL_MAX = 256 * 1024
 OUT_CAP = 64 * 1024 * 1024
 ERR_CAP = 1024 * 1024
 MAX_FAILS = 5
+DIFF_OK = "OC-DIFF-COMPLETE"
+KILL_BUDGET_S = 5.0
+KILL_GRACE_S = 3.0
 SEED_BUDGET_S = 120
 COLLECT_BUDGET_S = 60
 
@@ -83,6 +86,7 @@ class SandboxProc:
         self._rc: int | None = None
         self._done = threading.Event()
         self._killed = False
+        self._finish_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._out_off = self._err_off = 0
         self.note = ""  # why the relay ended abnormally (flood, dead relay, exec failures)
@@ -210,13 +214,18 @@ class SandboxProc:
         return True
 
     def _finish(self, rc: int) -> None:
-        self._rc = rc
-        for fd in (self._w_out, self._w_err):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        self._done.set()
+        """End the stream exactly once, from any thread: the pump when it finishes, or kill()/close() when the pump
+        is wedged inside a hung exec. Closing the write ends is what unblocks the ACP reader."""
+        with self._finish_lock:
+            if self._done.is_set():
+                return
+            self._rc = rc
+            self._done.set()  # before the close: _write refuses to touch an fd it may be about to lose
+            for fd in (self._w_out, self._w_err):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
     # -- Popen surface -----------------------------------------------------
     def _send(self, data: bytes) -> None:
@@ -243,10 +252,24 @@ class SandboxProc:
         if self._killed:
             return
         self._killed = True
-        try:
-            self._exec(self._relay("close", self._dir))
+        try:  # bypasses _xlock (a wedged poll holds it) and has a deadline
+            _exec_with_deadline(self._sb, self._relay("close", self._dir), KILL_BUDGET_S)
         except Exception:  # noqa: BLE001 - the VM close is the backstop
             pass
+        # Whatever happened to the close exec, the stream must end soon: a relay that never saw the marker would
+        # otherwise leave the pump polling forever and the ACP reader (and so conn.close()) blocked.
+        timer = threading.Timer(KILL_GRACE_S, self._finish, args=(255,))
+        timer.daemon = True
+        timer.start()
+
+    def close(self) -> None:
+        """Release the host side: end the stream and close the read ends (the VM close kills the relay)."""
+        self._finish(255)
+        for f in (self.stdout, self.stderr):
+            try:
+                f.close()
+            except OSError:
+                pass
 
 
 def _exec_with_deadline(sb, cmd: str, seconds: float):
@@ -278,6 +301,8 @@ class SandboxSession:
     hosts: list[str]
     seed_files: int
     collect_budget_s: float = COLLECT_BUDGET_S
+    base_sha: str = "HEAD"  # replaced by the seed commit; HEAD only if seeding recorded none
+    diff_file: str = "/tmp/oc-diff.out"
     _closed: bool = field(default=False, repr=False)
 
     def finish(self) -> tuple[list[str], str]:
@@ -285,9 +310,13 @@ class SandboxSession:
         changed, problem = [], ""
         try:
             self.proc.join(5)
+            # Diff against the commit recorded at seed time (a harness that commits moves HEAD), to a file, not a
+            # pipe (a failing git would hide behind base64's exit status), and only trust output ending in the marker.
+            out = shlex.quote(self.diff_file)
             r = _exec_with_deadline(
                 self.sb, f"cd {shlex.quote(self.cwd)} && git add -A && "
-                f"git -c user.name=oc -c user.email=oc@localhost diff --cached --binary HEAD | base64 -w0",
+                f"git -c user.name=oc -c user.email=oc@localhost diff --cached --binary {self.base_sha} > {out} && "
+                f"base64 -w0 {out} && echo && echo {DIFF_OK}",
                 self.collect_budget_s)
             cap = ws_mod.PATCH_CAP_BYTES * 4 // 3 + 16  # base64 inflates by 4/3; checked before decoding
             if r is None:
@@ -296,9 +325,11 @@ class SandboxSession:
                 problem = f"work lost: could not collect the sandbox diff (rc={r.returncode})"
             elif len(r.stdout) > cap:
                 problem = "sandbox patch rejected: over the size cap"
+            elif r.stdout.rstrip().rsplit("\n", 1)[-1] != DIFF_OK:
+                problem = "work lost: the sandbox diff command did not complete"
             else:
                 try:
-                    patch = base64.b64decode(r.stdout.strip(), validate=True)
+                    patch = base64.b64decode(r.stdout.rstrip().rsplit("\n", 2)[0].strip(), validate=True)
                 except (binascii.Error, ValueError):
                     patch = b""
                     problem = "work lost: sandbox diff was not valid base64"
@@ -315,6 +346,7 @@ class SandboxSession:
     def close(self) -> None:
         if not self._closed:
             self._closed = True
+            self.proc.close()
             try:
                 self.sb.close()
             except Exception:  # noqa: BLE001
@@ -364,7 +396,8 @@ class SandboxLauncher:
         proc = SandboxProc(sb, self.relay_dir, poll_s=self.poll_s, idle_poll_s=self.idle_poll_s)
         sess = SandboxSession(proc, self.vm_dir, wsp, sb, norm, seed_files, self.collect_budget_s)
         try:
-            self._seed(sb, tar_b64)
+            sess.base_sha = self._seed(sb, tar_b64)
+            sess.diff_file = self.relay_dir + ".diff"
             for path, content in files.items():
                 r = sb.exec(_write_file_cmd(path, content.encode()))
                 if r.returncode != 0:
@@ -378,7 +411,7 @@ class SandboxLauncher:
             raise SandboxError(f"sandbox setup failed: {type(e).__name__}: {e}") from None
         return sess
 
-    def _seed(self, sb, tar_b64: str) -> None:
+    def _seed(self, sb, tar_b64: str) -> str:
         w = shlex.quote(self.vm_dir)
         pre = sb.exec("git --version >/dev/null && python3 -V >/dev/null && command -v ori >/dev/null")
         if pre.returncode != 0:
@@ -400,3 +433,8 @@ class SandboxLauncher:
         )
         if r.returncode != 0:
             raise SandboxError(f"seeding the sandbox failed: {(r.stderr or '')[:200]}")
+        r = sb.exec(f"cd {w} && git rev-parse HEAD")
+        sha = (r.stdout or "").strip()
+        if r.returncode != 0 or len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+            raise SandboxError("could not record the sandbox base commit")
+        return sha

@@ -180,10 +180,13 @@ def _scan_headers(patch: bytes) -> None:
     """Reject forbidden paths and modes in the header lines of every file section (hunk bodies are skipped:
     a removed line starting `-- ` looks like a header). The scratch-tree check below is the real backstop."""
     in_header = False
+    inflated = 0  # running total: many hunks each under the cap must not add up to gigabytes
     for raw in patch.splitlines():
         line = raw.decode("utf8", "replace")
-        if line.startswith("literal ") and line[8:].isdigit() and int(line[8:]) > WORKSPACE_CAP_BYTES:
-            raise WorkspaceError("binary hunk would inflate past the workspace size cap")
+        if line.startswith("literal ") and line[8:].isdigit():
+            inflated += int(line[8:])
+            if inflated > WORKSPACE_CAP_BYTES:
+                raise WorkspaceError("binary hunks would inflate past the workspace size cap")
         if line.startswith("diff --git "):
             in_header = True
             for tok in _split_diff_git(line[len("diff --git "):]):

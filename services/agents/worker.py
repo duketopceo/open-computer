@@ -80,6 +80,9 @@ def money(value, default=None):
     return x if math.isfinite(x) and x >= 0 else default
 
 
+MAX_TOOL_EVENTS = 500  # per round; the rest of a flood is counted, not recorded
+MAX_OWNER_ASKS = 20  # owner approvals one round may raise
+MAX_PERMISSIONS = 2000
 _HOST_LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 _NUMERIC_LABEL = re.compile(r"^(0x[0-9a-f]*|[0-9]+)$")
 _BAD_SUFFIX = (".local", ".internal", ".localhost", ".localdomain", ".lan", ".home", ".corp")
@@ -98,9 +101,9 @@ def valid_host(host) -> str | None:
     except UnicodeError:
         return None
     labels = h.split(".")
-    if len(h) > 253 or len(labels) < 2 or not all(_HOST_LABEL.match(x) for x in labels):
+    if len(h) > 253 or len(labels) < 2 or not all(_HOST_LABEL.fullmatch(x) for x in labels):
         return None
-    if _NUMERIC_LABEL.match(labels[-1]) or h.endswith(_BAD_SUFFIX):
+    if _NUMERIC_LABEL.fullmatch(labels[-1]) or h.endswith(_BAD_SUFFIX):
         return None  # a numeric or hex last label is an IPv4 spelling (inet_aton: 0x7f.1, 127.0.0.0x1)
     return h
 
@@ -164,6 +167,7 @@ class AcpWorker:
         perms: list[dict] = []
         cost: list[float | None] = [None]  # ACP usage_update.cost is a cumulative session total: keep the latest
         taint_key = (task.job, os.path.realpath(task.cwd))
+        seen = {"tool": 0, "perm": 0, "ask": 0}  # a hostile harness must not flood the trail or the owner
 
         def on_update(_sid, upd):
             kind = upd.get("sessionUpdate")
@@ -172,6 +176,9 @@ class AcpWorker:
                 if c.get("type") == "text":
                     chunks.append(c.get("text", ""))
             elif kind in ("tool_call", "tool_call_update"):
+                seen["tool"] += 1
+                if seen["tool"] > MAX_TOOL_EVENTS:
+                    return  # counted, not recorded: Trail.append is O(file) under a shared lock
                 emit("tool", {"title": upd.get("title"), "status": upd.get("status"), "kind": upd.get("kind")})
             elif kind == "usage_update" and isinstance(upd.get("cost"), dict):
                 latest = money(upd["cost"].get("amount"))
@@ -180,6 +187,7 @@ class AcpWorker:
 
         def on_permission(_sid, tool_call, options, reply):
             title = tool_call.get("title")
+            seen["perm"] += 1
             if str(tool_call.get("kind")) in policy.EDIT_KINDS and policy.touches_build_file(tool_call):
                 self._tainted.add(taint_key)
             verdict = policy.classify(tool_call, cwd, taint_key in self._tainted)
@@ -193,6 +201,10 @@ class AcpWorker:
 
             if verdict != "ask":
                 answer(verdict == "allow", verdict)
+                return
+            seen["ask"] += 1
+            if seen["ask"] > MAX_OWNER_ASKS or seen["perm"] > MAX_PERMISSIONS:
+                answer(False, "denied (too many requests this round)")  # never a new thread or approval row
                 return
 
             def ask():  # risky action: runs off the reader thread so approval may take a while

@@ -74,6 +74,15 @@ class FakeSandbox:
 
     def close(self) -> None:
         self.closed = True
+        pidf = Path(self.relay_dir) / "relay.pid"  # a real VM close destroys everything inside it
+        try:
+            with open(Path(self.relay_dir) / "close", "ab") as f:  # the relay kills the harness's process group
+                f.write(b"1")
+            time.sleep(0.3)
+            pid = int(pidf.read_text())
+            os.kill(pid, signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
 
 
 class FakePlane:

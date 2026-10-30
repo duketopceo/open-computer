@@ -171,9 +171,10 @@ def test_template_without_the_harness_binary_fails_the_preflight(tmp_path, repo)
     e = Env(tmp_path, {})
     (e.bindir / "ori").unlink()
     e.launcher.env_extra["PATH"] = "/nonexistent"
-    with pytest.raises(WorkerUnavailable):
+    with pytest.raises(WorkerUnavailable, match="lacks git, python3 or the ori harness"):
         e.run(repo)
     assert e.plane.sandboxes[0].closed
+    assert not any("relay.py serve" in c for c in e.plane.sandboxes[0].cmds)
 
 
 def test_unoffered_model_fails_closed_and_closes_the_vm(tmp_path, repo):
@@ -406,6 +407,7 @@ def test_workspace_survives_across_rounds_and_is_private(tmp_path, repo):
     ("169.254.169.254", False), ("x.local", False), ("x.internal", False), ("host.docker.internal", False),
     ("*.example.com", False), ("example", False), ("api.example.com.", False), ("api.example.com:443", False),
     ("https://api.example.com", False), ("api.example.com/path", False), (" api.example.com", False),
+    ("foo\n.example.com", False), ("a.b\t.example.com", False), ("a.example.com\n", False),
     ("0x7f.0x1", False), ("127.0.0.0x1", False), ("0xa9.0xfe.0xa9.0xfe", False), ("0x7f.0.0.0x1", False),
     ("a" * 64 + ".com", False), ("", False), (None, False), (5, False), ("-a.example.com", False),
 ])
@@ -657,3 +659,84 @@ def test_workspace_dirs_are_private_and_git_runs_hardened(tmp_path, repo, monkey
 def test_each_hostile_patch_is_rejected_for_the_right_reason(tmp_path, repo, patch, msg):
     with pytest.raises(wsm.WorkspaceError, match=msg):
         _ws(tmp_path, repo).apply_patch(patch)
+
+
+# ------------------------------------------------------------------ code-review fixes (run 20261030-131300-078eb2c1)
+def test_a_harness_that_commits_still_returns_its_work(tmp_path, repo):
+    git_id = "git -c user.name=h -c user.email=h@x"
+    e = Env(tmp_path, {"prompt": [{"write": {"path": "app.py", "text": "print('c')\n"}},
+                                  {"shell": f"{git_id} add -A && {git_id} commit -qm work"}]})
+    res, _ = e.run(repo)
+    assert res.status == "done" and res.changed == ["app.py"]
+    assert (Path(res.workspace) / "app.py").read_text() == "print('c')\n"
+
+
+def test_a_diff_command_that_fails_is_work_lost_not_an_empty_success(tmp_path, repo):
+    e = Env(tmp_path, {"prompt": [{"write": {"path": "app.py", "text": "x\n"}}, {"shell": "rm -rf .git"}]})
+    res, _ = e.run(repo)
+    assert res.status == "failed" and "work lost" in res.detail
+    assert (Path(res.workspace) / "app.py").read_text() == "print('v1')\n"
+
+
+def test_cumulative_binary_hunks_are_capped(tmp_path, repo, monkeypatch):
+    monkeypatch.setattr(wsm, "WORKSPACE_CAP_BYTES", 1000)
+    section = (b"diff --git a/%s b/%s\nnew file mode 100644\nindex 0000000..1111111\nGIT binary patch\n"
+               b"literal 600\nHcmV\n\n")
+    patch = b"".join(section % (n, n) for n in (b"a.bin", b"b.bin"))  # each under the cap, together over it
+    with pytest.raises(wsm.WorkspaceError, match="inflate"):
+        _ws(tmp_path, repo).apply_patch(patch)
+
+
+def test_tool_event_and_approval_floods_are_bounded(tmp_path, repo):
+    from tests.unit.test_agents import _worker
+
+    w, _ = _worker(tmp_path, {"prompt": [{"flood": 3000}] + [_perm({"title": f"p{i}", "kind": "execute",
+                                                                     "rawInput": {"command": "git push origin main"}})
+                                                              for i in range(40)]})
+    events, asked = [], []
+    res = w.run(WorkerTask("go", str(repo), "fake/model-a"), lambda e, d: events.append(e),
+                lambda k, d: asked.append(d) or True)
+    assert res.status == "done"
+    assert events.count("tool") == 500
+    assert len(asked) == 20 and [p["verdict"] for p in res.permissions].count("approved") == 20
+    assert all("too many" in p["verdict"] for p in res.permissions[20:])
+
+
+class _HangSb:
+    """Every exec blocks (a wedged VM) until released."""
+
+    def __init__(self):
+        self.release = threading.Event()
+
+    def exec(self, cmd):
+        from services.execplane import ExecResult
+
+        self.release.wait(30)
+        return ExecResult(1, "")
+
+
+def test_kill_on_a_wedged_vm_returns_and_ends_the_stream(tmp_path, monkeypatch):
+    monkeypatch.setattr(sbx, "KILL_BUDGET_S", 0.2)
+    monkeypatch.setattr(sbx, "KILL_GRACE_S", 0.2)
+    sb = _HangSb()
+    p = SandboxProc(sb, "/x", poll_s=0.01, idle_poll_s=0.01)
+    holder = threading.Thread(target=lambda: p._exec("poll"), daemon=True)  # a poll holding the exec lock
+    holder.start()
+    time.sleep(0.1)
+    t0 = time.time()
+    p.kill()
+    assert time.time() - t0 < 3
+    assert p.wait(5) == 255  # force-finished: the reader gets EOF instead of blocking forever
+    assert p.stdout.read(1) == b""
+    p.close()
+    sb.release.set()
+
+
+def test_a_failed_open_releases_the_pipe_fds(tmp_path, repo):
+    e = Env(tmp_path, {})
+    (e.bindir / "ori").unlink()  # the preflight fails after the SandboxProc was created
+    before = len(os.listdir("/proc/self/fd"))
+    for _ in range(3):
+        with pytest.raises(WorkerUnavailable):
+            e.run(repo)
+    assert len(os.listdir("/proc/self/fd")) <= before + 1
