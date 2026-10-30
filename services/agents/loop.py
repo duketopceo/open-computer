@@ -20,6 +20,7 @@ from typing import Callable
 from oc.obs import redact_str
 from services.cost import Usage
 
+from .replay import HISTORY_TAIL, INTERRUPTED_RESULT, ReplayState, replay
 from .trail import Trail
 from .worker import AgentWorker, WorkerResult, WorkerTask, WorkerUnavailable, money, valid_host
 
@@ -82,11 +83,27 @@ class AgentLoop:
 
     def run(self, goal: str, job: str | None = None) -> JobOutcome:
         job = job or uuid.uuid4().hex[:10]
+        self.trail.append(job, "job_start", goal=goal[:500], budget=self.budget, model=self.model)
+        return self._drive(job, goal, self.budget, self.model, ReplayState())
+
+    def resume(self, job: str) -> JobOutcome:
+        """Continue a job from its trail (the trail is the state). A finished job returns its recorded outcome;
+        a round spawned without a result is charged its estimate once and counted as failed, never replayed."""
+        st = replay(self.trail.rows(job))
+        if st.outcome is not None:
+            o = st.outcome
+            return JobOutcome(job, str(o.get("status")), str(o.get("summary", "")), float(o.get("spent") or 0.0),
+                              int(o.get("rounds") or 0))
+        if not st.started:
+            raise ValueError(f"no trail for job {job!r}")
+        budget = st.budget if st.budget is not None else self.budget
+        return self._drive(job, st.goal, budget, st.model or self.model, st)
+
+    def _drive(self, job: str, goal: str, budget: float, model: str, st: ReplayState) -> JobOutcome:
         t = self.trail
-        t.append(job, "job_start", goal=goal[:500], budget=self.budget, model=self.model)
-        history: list[dict] = []
-        spent, failures, warned = 0.0, 0, False
-        granted: set[str] = set()  # egress hosts the owner approved in THIS job: asked once per (job, host)
+        history, spent, failures, warned = list(st.history), st.spent, st.failures, st.warned
+        granted: set[str] = set(st.granted)  # egress hosts the owner approved in THIS job: asked once per (job, host)
+        last = st.last_round
 
         def end(status: str, summary: str, rounds: int) -> JobOutcome:
             # redact before cutting: a secret split by the slice would otherwise escape every pattern
@@ -94,16 +111,39 @@ class AgentLoop:
                      rounds=rounds)
             return JobOutcome(job, status, summary, spent, rounds)
 
-        rnd = 0
+        def charge(rnd: int, cost: float) -> None:
+            # the ledger does not dedupe: a round the ledger already holds is never written twice
+            if self.ledger is not None and f"round-{rnd}" not in self.ledger.by_subtask(job):
+                self.ledger.record(job, f"round-{rnd}", Usage(model, 0, 0, cost))
+
+        rnd = last
         try:
-            plan = self.planner({"phase": "plan", "goal": goal, "budget": self.budget})
-            t.append(job, "plan", steps=plan.get("steps", []), thinking=plan.get("thinking"))
-            if not self._ask(job, "plan", {"steps": plan.get("steps", [])}):
+            if st.plan_steps is None:
+                plan = self.planner({"phase": "plan", "goal": goal, "budget": budget})
+                t.append(job, "plan", steps=plan.get("steps", []), thinking=plan.get("thinking"))
+                steps = plan.get("steps", [])
+            else:
+                steps = st.plan_steps  # a resumed job reuses the plan it already wrote
+            if st.plan_approved is None:
+                st.plan_approved = self._ask(job, "plan", {"steps": steps})
+            if not st.plan_approved:
                 return end("rejected", "owner did not approve the plan", 0)
 
-            for rnd in range(1, self.max_rounds + 1):
-                state = {"phase": "step", "goal": goal, "round": rnd, "budget": self.budget, "spent": round(spent, 4),
-                         "history": history[-8:]}
+            if st.inflight is not None:
+                f = st.inflight
+                rnd, cost = f["round"], f["est"]
+                charge(rnd, cost)
+                spent += cost
+                failures += 1
+                last = rnd
+                history.append({"round": rnd, "title": f["title"], "status": "failed", "result": INTERRUPTED_RESULT})
+                t.append(job, "round_interrupted", round=rnd, charged=round(cost, 4))
+            if failures >= self.max_failures:
+                return end("stalled", f"{failures} consecutive worker failures", last)
+
+            for rnd in range(last + 1, self.max_rounds + 1):
+                state = {"phase": "step", "goal": goal, "round": rnd, "budget": budget, "spent": round(spent, 4),
+                         "history": history[-HISTORY_TAIL:]}
                 dec = self.planner(state)
                 t.append(job, "decision", round=rnd, action=dec.get("action"), title=dec.get("title"))
                 if dec.get("action") == "finish":
@@ -112,13 +152,13 @@ class AgentLoop:
                     return end("stalled", f"planner returned an unusable decision: {dec.get('action')!r}", rnd - 1)
 
                 est = money(dec.get("est_cost")) or 1.0  # NaN/negative/garbage/zero -> the default estimate
-                if spent + est > self.budget:
-                    return end("budget_exhausted", f"next step ({est:.2f}) would pass the {self.budget:.2f} budget", rnd - 1)
-                if not warned and spent + est > WARN_FRACTION * self.budget:
-                    warned = True
-                    t.append(job, "budget_warn", spent=round(spent, 4), est=est, budget=self.budget)
-                    if not self._ask(job, "spend", {"spent": round(spent, 4), "est": est, "budget": self.budget}):
+                if spent + est > budget:
+                    return end("budget_exhausted", f"next step ({est:.2f}) would pass the {budget:.2f} budget", rnd - 1)
+                if not warned and spent + est > WARN_FRACTION * budget:
+                    t.append(job, "budget_warn", spent=round(spent, 4), est=est, budget=budget)
+                    if not self._ask(job, "spend", {"spent": round(spent, 4), "est": est, "budget": budget}):
                         return end("budget_exhausted", "owner declined spend past 80% of the budget", rnd - 1)
+                    warned = True  # only an approved ask counts: a restart replays the same rule from the trail
                 place_to = self.placement(dec)
                 sandboxed = place_to == "cloud-sandbox"
                 for risk in dec.get("risky") or []:
@@ -145,9 +185,9 @@ class AgentLoop:
                             granted.add(host)
                         if host not in hosts:
                             hosts.append(host)
-                task = WorkerTask(dec["prompt"], self.cwd, self.model, placement=place_to, est_cost=est, job=job,
+                task = WorkerTask(dec["prompt"], self.cwd, model, placement=place_to, est_cost=est, job=job,
                                   egress_hosts=tuple(hosts))
-                t.append(job, "spawn", round=rnd, title=dec.get("title"), placement=place_to, worker=self.worker.name)
+                t.append(job, "spawn", round=rnd, title=dec.get("title"), placement=place_to, worker=self.worker.name, est=est)
                 try:
                     res = self.worker.run(task, lambda ev, d, _r=rnd: t.append(job, ev, round=_r, **d), self.approve_tool(job))
                 except WorkerUnavailable as e:
@@ -155,9 +195,10 @@ class AgentLoop:
                 except Exception as e:  # noqa: BLE001 - a worker bug is a failed round, not a dead job
                     res = WorkerResult("failed", "", "error", detail=redact_str(f"{type(e).__name__}: {e}"))
                 cost = money(res.cost, est)  # unreported, NaN or negative -> charge the estimate (fail conservative)
+                if sandboxed:
+                    cost = max(cost, est)  # a harness reporting 0 is not free
                 spent += cost
-                if self.ledger is not None:
-                    self.ledger.record(job, f"round-{rnd}", Usage(self.model, 0, 0, cost))
+                charge(rnd, cost)
                 history.append({"round": rnd, "title": dec.get("title"), "status": res.status,
                                 "result": redact_str(res.text or res.detail)[:RESULT_CAP]})
                 t.append(job, "result", round=rnd, status=res.status, stop=res.stop_reason, cost=round(cost, 4),
