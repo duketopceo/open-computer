@@ -68,12 +68,17 @@ _n = [0]
 
 
 def chat_reply(text="ok", *, cost=0.0012, model="vendor/model", gid=None, tokens_in=10, tokens_out=5, provider="Acme",
-               with_cost=True):
+               with_cost=True, reasoning=None, reasoning_details=None):
     _n[0] += 1
     usage = {"prompt_tokens": tokens_in, "completion_tokens": tokens_out, "total_tokens": tokens_in + tokens_out,
              "prompt_tokens_details": {"cached_tokens": 2}, "completion_tokens_details": {"reasoning_tokens": 1}}
     if with_cost:
         usage["cost"] = cost
         usage["cost_details"] = {"upstream_inference_cost": None}
+    message = {"role": "assistant", "content": text}
+    if reasoning is not None:
+        message["reasoning"] = reasoning
+    if reasoning_details is not None:
+        message["reasoning_details"] = reasoning_details
     return {"id": gid or f"gen-test{_n[0]:04d}", "model": model, "provider": provider,
-            "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}], "usage": usage}
+            "choices": [{"message": message, "finish_reason": "stop"}], "usage": usage}

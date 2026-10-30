@@ -159,3 +159,84 @@ def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
     assert ":8080 refused" in sub["error"] and sub["hint"] == "start llama-local.service"
     status, _, html = console.get(f"/goals/{rid}")
     assert "LocalModelUnavailable" in html and "start llama-local.service" in html
+
+
+def _write_run(base, rid, rows, thinking=None):
+    import json
+
+    d = base / rid
+    (d / "run").mkdir(parents=True)
+    (d / "orchestrator.ndjson").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    if thinking is not None:
+        (d / "thinking.ndjson").write_text("".join(json.dumps(r) + "\n" for r in thinking))
+    return d
+
+
+def test_run_detail_carries_start_time_per_step(console, monkeypatch, tmp_path):
+    import time
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = goalruns.submit(
+        "Timed", lambda prompt: '[{"id":"a","title":"first","prompt":"p1"}]', lambda task: "out", by="test"
+    )
+    got = None
+    for _ in range(200):
+        got = goalruns.get_run(rid)
+        if got and got["subtasks"] and got["subtasks"][0]["state"] == "DONE":
+            break
+        time.sleep(0.05)
+    (s,) = got["subtasks"]
+    assert s["ts"] <= s["started_ts"] <= s["finished_ts"]
+
+
+def test_old_runs_without_start_or_thinking_still_render(console, monkeypatch, tmp_path):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    _write_run(tmp_path, "goal_01d01d00", [
+        {"event": "run_submit", "run": "goal_01d01d00", "goal": "old", "subtasks": 1, "ts": 10.0},
+        {"event": "dispatch", "run": "goal_01d01d00", "task": "t1", "subtask": "a", "ts": 11.0},
+        {"event": "worker_done", "task": "t1", "ts": 15.0},
+    ])
+    got = goalruns.get_run("goal_01d01d00")
+    (s,) = got["subtasks"]
+    assert "started_ts" not in s and "thinking" not in s and "plan_thinking" not in got
+    assert console.get("/goals/goal_01d01d00")[0] == 200
+
+
+def test_thinking_rows_attach_to_steps_and_plan(console, monkeypatch, tmp_path):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_7e1ab000"
+    _write_run(tmp_path, rid, [
+        {"event": "run_submit", "run": rid, "goal": "g", "subtasks": 2, "ts": 10.0},
+        {"event": "dispatch", "run": rid, "task": "t1", "subtask": "a", "ts": 11.0},
+        {"event": "worker_start", "run": rid, "task": "t1", "subtask": "a", "ts": 12.0},
+        {"event": "worker_done", "task": "t1", "ts": 14.0},
+        {"event": "dispatch", "run": rid, "task": "t2", "subtask": "b", "ts": 15.0},
+        {"event": "worker_fail", "run": rid, "task": "t2", "subtask": "b", "kind": "DependencyFailed",
+         "error": "dep failed", "ts": 15.0},
+    ], thinking=[
+        {"run": rid, "task": "", "subtask": "_plan", "ts": 10.5, "text": "plan reasons"},
+        {"run": rid, "task": "t1", "subtask": "a", "ts": 13.9, "text": "step reasons"},
+    ])
+    got = goalruns.get_run(rid)
+    a, b = got["subtasks"]
+    assert got["plan_thinking"] == "plan reasons"
+    assert a["thinking"] == "step reasons" and a["started_ts"] == 12.0 and a["finished_ts"] == 14.0
+    assert "started_ts" not in b and b["finished_ts"] == 15.0 and "thinking" not in b  # tombstone never ran
+
+
+def test_reclaimed_step_uses_latest_start_and_joins_thinking(console, monkeypatch, tmp_path):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_2c1a1e00"
+    _write_run(tmp_path, rid, [
+        {"event": "run_submit", "run": rid, "goal": "g", "subtasks": 1, "ts": 10.0},
+        {"event": "dispatch", "run": rid, "task": "t1", "subtask": "a", "ts": 11.0},
+        {"event": "worker_start", "run": rid, "task": "t1", "subtask": "a", "ts": 12.0},
+        {"event": "worker_start", "run": rid, "task": "t1", "subtask": "a", "ts": 80.0},
+        {"event": "worker_done", "task": "t1", "ts": 90.0},
+    ], thinking=[
+        {"run": rid, "task": "t1", "subtask": "a", "ts": 70.0, "text": "attempt one"},
+        {"run": rid, "task": "t1", "subtask": "a", "ts": 89.0, "text": "attempt two"},
+    ])
+    (s,) = goalruns.get_run(rid)["subtasks"]
+    assert s["started_ts"] == 80.0
+    assert s["thinking"] == "attempt one\n\nattempt two"

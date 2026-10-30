@@ -6,7 +6,16 @@ import urllib.request
 import pytest
 
 from oc import obs
-from services.openrouter import CallStore, OpenRouterError, chat, collect_usage, post, summarize, total_usage
+from services.openrouter import (
+    CallStore,
+    OpenRouterError,
+    chat,
+    collect_reasoning,
+    collect_usage,
+    post,
+    summarize,
+    total_usage,
+)
 from services.openrouter import attribution
 from services.openrouter.__main__ import main as cli
 from services.openrouter.generation import compare, fetch_generation, reconcile
@@ -254,3 +263,49 @@ def test_no_stray_openrouter_urlopen_outside_the_client():
         text = p.read_text()
         assert not re.search(r"openrouter\.ai[^\n]*\n[^\n]*urlopen|urlopen[^\n]*openrouter\.ai", text), p
     assert urllib.request  # (keeps the import used)
+
+
+# --- reasoning -----------------------------------------------------------------------------------
+def test_reasoning_string_is_collected(fake):
+    fake.chat_replies.append(chat_reply("answer", reasoning="think A"))
+    with collect_reasoning() as box:
+        res = chat("m", "p", key="k")
+    assert res.text == "answer" and box == ["think A"]
+
+
+def test_reasoning_details_text_and_summary_joined_encrypted_skipped(fake):
+    fake.chat_replies.append(chat_reply("x", reasoning_details=[
+        {"type": "reasoning.text", "text": "step one"},
+        {"type": "reasoning.encrypted", "data": "opaque-blob"},
+        {"type": "reasoning.summary", "summary": "in short"},
+    ]))
+    with collect_reasoning() as box:
+        chat("m", "p", key="k")
+    assert box == ["step one\n\nin short"]
+
+
+def test_no_reasoning_leaves_box_empty(fake):
+    fake.chat_replies.append(chat_reply("x"))
+    with collect_reasoning() as box:
+        chat("m", "p", key="k")
+    assert box == []
+
+
+def test_failed_call_collects_no_reasoning(fake):
+    fake.chat_replies.append(500)
+    with collect_reasoning() as box, pytest.raises(OpenRouterError):
+        chat("m", "p", key="k")
+    assert box == []
+
+
+def test_reasoning_outside_a_collector_is_ignored(fake):
+    fake.chat_replies.append(chat_reply("x", reasoning="unseen"))
+    assert chat("m", "p", key="k").text == "x"
+
+
+def test_reasoning_is_never_requested(fake):
+    fake.chat_replies.append(chat_reply("x", reasoning="r"))
+    with collect_reasoning():
+        chat("m", "p", key="k")
+    body = fake.requests[-1]["body"]
+    assert "reasoning" not in body and "include_reasoning" not in body

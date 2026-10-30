@@ -101,3 +101,55 @@ def test_first_loopback_page_csrf_posts_cleanly(console):
     token = re.search(r'name="csrf-token" content="([0-9a-f]+)"', html).group(1)
     status, _, body = post_json(console, "/goals", {"goal": "probe"}, cookie=cookie, token=token)
     assert status == 200 and json.loads(body).get("needs_confirm"), body
+
+
+def _run(**sub):
+    base = {"subtask": "a", "title": "first", "state": "DONE", "engine": "or", "placement": "cloud-OpenRouter",
+            "reason": "", "ts": 100.0, "started_ts": 110.0, "finished_ts": 114.2, "result": "out"}
+    return {"run": "goal_00000001", "goal": "g", "subtasks": [{**base, **sub}], "declared": 1,
+            "worker_failures": [], "started": 99.0, "ended": 115.0}
+
+
+def test_step_duration_runs_from_claim_not_dispatch():
+    from services.opsview import views
+
+    run = _run()
+    assert "4.2s" in views.work_main(run, 200.0) and "14s" not in views.work_main(run, 200.0)
+    assert "4.2s" in views.page_goal_detail(run, 200.0)
+    inspector = views.work_inspect(run, "0", [], 200.0)
+    assert inspector.count("4.2s") == 2  # step line and Details row agree
+
+
+def test_step_that_never_ran_shows_no_duration():
+    from services.opsview import views
+
+    run = _run(state="FAILED", error="dep 'x' failed — cannot run")
+    del run["subtasks"][0]["started_ts"]
+    assert "Duration" not in views.work_inspect(run, "0", [], 200.0)
+    assert "14s" not in views.work_main(run, 200.0) and "14.2s" not in views.page_goal_detail(run, 200.0)
+
+
+def test_running_step_shows_elapsed_since_claim():
+    from services.opsview import views
+
+    run = _run(state="LEASED", finished_ts=None, result=None)
+    assert "Working on cloud-OpenRouter · 5.0s" in views.work_main(run, 115.0)
+
+
+def test_thinking_renders_escaped_and_collapsed():
+    from services.opsview import views
+
+    run = _run(thinking="<script>alert(1)</script> because")
+    run["plan_thinking"] = "plan <b>why</b>"
+    inspector = views.work_inspect(run, "0", [], 200.0)
+    assert "<script>alert" not in inspector and "&lt;script&gt;alert(1)&lt;/script&gt; because" in inspector
+    assert '<details class="w-details w-thinking"><summary>Thinking</summary>' in inspector
+    main = views.work_main(run, 200.0)
+    assert "plan &lt;b&gt;why&lt;/b&gt;" in main and "<b>why" not in main
+
+
+def test_no_thinking_no_toggle():
+    from services.opsview import views
+
+    run = _run()
+    assert "Thinking" not in views.work_inspect(run, "0", [], 200.0) + views.work_main(run, 200.0)

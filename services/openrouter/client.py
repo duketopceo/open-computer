@@ -33,6 +33,7 @@ from .store import CallStore
 log = get_logger("openrouter")
 DEFAULT_BASE = "https://openrouter.ai/api/v1"
 _collector: ContextVar[list | None] = ContextVar("oc_or_usage", default=None)
+_reasoning: ContextVar[list | None] = ContextVar("oc_or_reasoning", default=None)
 
 
 def base_url() -> str:
@@ -69,6 +70,43 @@ def collect_usage() -> Iterator[list[Usage]]:
         yield box
     finally:
         _collector.reset(token)
+
+
+@contextmanager
+def collect_reasoning() -> Iterator[list[str]]:
+    """Gather the reasoning text models returned on every OpenRouter call made inside the block.
+
+    Only what the model sends back unasked is kept; nothing here requests reasoning (it costs tokens)."""
+    box: list[str] = []
+    token = _reasoning.set(box)
+    try:
+        yield box
+    finally:
+        _reasoning.reset(token)
+
+
+_DETAIL_FIELD = {"reasoning.text": "text", "reasoning.summary": "summary"}
+
+
+def extract_reasoning(resp: dict) -> str:
+    """`message.reasoning`, else the text/summary entries of `message.reasoning_details`; encrypted entries are
+    opaque and skipped."""
+    try:
+        msg = resp["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    if not isinstance(msg, dict):
+        return ""
+    if isinstance(msg.get("reasoning"), str) and msg["reasoning"].strip():
+        return msg["reasoning"]
+    parts = []
+    for d in msg.get("reasoning_details") or []:
+        if not isinstance(d, dict):
+            continue
+        v = d.get(_DETAIL_FIELD.get(d.get("type"), ""))
+        if isinstance(v, str) and v.strip():
+            parts.append(v)
+    return "\n\n".join(parts)
 
 
 def total_usage(items: list[Usage]) -> Usage | None:
@@ -214,6 +252,11 @@ def post(
     if sink is not None and (parsed["tokens_in"] or parsed["tokens_out"] or parsed["cost_source"] == "provider"):
         sink.append(Usage(parsed["model_served"] or str(base["model_requested"]), parsed["tokens_in"],
                           parsed["tokens_out"], parsed["cost"]))
+    thoughts = _reasoning.get()
+    if thoughts is not None:
+        text = extract_reasoning(resp)
+        if text:
+            thoughts.append(text)
     row["_raw_usage"] = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
     return resp, row
 
