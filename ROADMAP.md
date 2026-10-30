@@ -54,7 +54,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 
 | Id | Phase | Unit | Status |
 |---|---|---|---|
-| OC-001 | P0 | Reconcile docs with code: rebase PR #6, fix stale README/ROADMAP/ARCHITECTURE_MAP | in review (this PR) |
+| OC-001 | P0 | Reconcile docs with code: rebase PR #6, fix stale README/ROADMAP/ARCHITECTURE_MAP | done (#18); README and this board refreshed again on 2026-10-29 |
 | OC-002 | P0 | Decide and record: name, router (keep/shrink/delete), fsproto (keep), Anthropic models in TIER_MODELS | options written: docs/decisions-options.md (owner decides) |
 | OC-003 | P0 | Packaging: pyproject.toml, uv.lock, pinned Python, remove sys.path hacks | partial: pyproject.toml + uv.lock + pytest/ruff config (#22); sys.path hacks remain |
 | OC-004 | P0 | CI: GitHub-hosted workflow (public repo, free runners) | done (#22): hosted ubuntu-latest, SHA-pinned actions, pull_request only; python and console-e2e jobs; mypy not configured, not added |
@@ -119,6 +119,34 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-064 | P6 | Remote HTTPS MCP with auth (prerequisite for public directories) | open |
 | OC-065 | P6 | Anthropic directory submission (claude.ai/directory/manage) | open |
 | OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open |
+
+## Landed since 2026-10-14
+
+These merged to `main` after the unit table above was last reconciled. They are not all tracked as OC units;
+the table rows keep their last verified state. Read [docs/FEATURES.md](docs/FEATURES.md) as of 2026-10-14.
+
+| Area | What | PRs |
+|---|---|---|
+| Device plane | Personal Computer device plane: registry, signed step envelopes, device placement target, remote pull relay, agent mode, device fleet view in the console | #52 (plan), #53, #54, #57, #59 |
+| Sandbox backends | SPACE backend skeleton and adapter seam, live wiring, production path, egress binding, backend conformance suite, host decision runbook | #56, #60, #61, #66, #67, #69 |
+| Placement | Blocked target when the local endpoint is dead, instead of crash-landing | #64 |
+| Console | React front door modeled on Perplexity Computer, with voice | #62 |
+| Telemetry | Optional fields omitted rather than sent as null | #65 |
+| Observability | Stage 0: brainstorm and staged plan (#70). Stage 1: structured logging foundation, OpenRouter attribution and cost capture, real spend into the cost ledger (#72). Stage 2: structured logging in every service and the `python -m oc.obs tail` trace timeline (#73). Guide: [docs/runbooks/observability.md](docs/runbooks/observability.md) | #70, #72, #73 |
+
+## Open work
+
+Open pull requests as of 2026-10-29. None are on `main` yet; #75 to #77 are stacked in that order.
+
+| PR | What | State |
+|---|---|---|
+| [#74](https://github.com/duketopceo/open-computer/pull/74) | Observability Stage 3 plan: an optional Postgres or Supabase sink (off unless `OC_OBS_SINK_POSTGRES_URL` is set), shipped from the local NDJSON files so the database never affects a run. Docs only; plan, no code | Waiting for maintainer review and answers to its open questions |
+| [#75](https://github.com/duketopceo/open-computer/pull/75) | Orchestrator fix for live goal runs: one shared sandbox per run, dependency outputs in step prompts, nonzero exit reported as a real failure, code-running steps no longer demoted to a chat endpoint | Open, checks passing |
+| [#76](https://github.com/duketopceo/open-computer/pull/76) | Console shows per-step run times and, when the model returns it, a collapsible Thinking view | Open, stacked on #75 |
+| [#77](https://github.com/duketopceo/open-computer/pull/77) | Long-horizon agent orchestrator, slice 1: planner loop with a budget and approvals, ACP worker (OpenCode first), job trail API. Sandbox launcher, resume and console UI are later slices; see `docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md` on its branch | Open, stacked on #76 |
+
+Observability next steps after Stage 3 (see the [plan](docs/plans/2026-10-28-001-feat-observability-and-cost-telemetry-plan.md)):
+vendor-neutral export recipes, and console cost views read from the store.
 
 ## Product direction (owner, 2026-10-11)
 
