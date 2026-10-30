@@ -242,6 +242,10 @@ class Handler(BaseHTTPRequestHandler):
         if not body:
             return self._send(400, b"empty result refused - a tombstoned empty result is permanent", "text/plain")
         try:
+            body.decode("utf-8")
+        except UnicodeDecodeError:
+            return self._send(400, b"result must be UTF-8 text - a tombstoned undecodable result is permanent", "text/plain")
+        try:
             self.fs.outbox_write(self._mailbox(did), tid, body)
         except ResultImmutable:
             return self._send(409, b"result immutable", "text/plain")

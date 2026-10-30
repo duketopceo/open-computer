@@ -140,6 +140,15 @@ def test_relay_result_rejects_missing_or_empty_body(relay):
     assert relay.fs.inbox_ids(f"device/{DID}") == [tid]  # not tombstoned by an empty write
 
 
+def test_relay_result_rejects_non_utf8_body(relay):
+    """A tombstoned non-UTF-8 result is permanent and uncollectable, wedging dependents."""
+    tid = relay.fs.send(f"device/{DID}", {"envelope": {}})
+    relay.fs.claim(f"device/{DID}", tid, ttl=60)
+    assert req(relay, "POST", f"/tasks/{tid}/result", secret=relay.secret, body=b"\xff\xfe bad")[0] == 400
+    assert relay.fs.inbox_ids(f"device/{DID}") == [tid]  # not tombstoned
+    assert req(relay, "POST", f"/tasks/{tid}/result", secret=relay.secret, body="ok \u00e9".encode())[0] == 200
+
+
 def test_relay_claim_rejects_non_dict_and_bad_ttl(relay):
     tid = relay.fs.send(f"device/{DID}", {"envelope": {}}, ttl=120)
     assert req(relay, "POST", f"/tasks/{tid}/claim", secret=relay.secret, body=b"[1,2]")[0] == 400

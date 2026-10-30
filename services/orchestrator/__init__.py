@@ -24,7 +24,7 @@ from services.openrouter import collect_reasoning, collect_usage, total_usage
 from services.router import adapter as router_adapter
 
 from .collect import collect_run, task_state
-from .decompose import DecomposeError, decompose
+from .decompose import DEP_OUTPUT_CAP, DecomposeError, decompose
 from .dispatch import dispatch
 from .runner import WorkResult, run_once
 from .thinking import PLAN, ThinkingLog, join_thoughts
@@ -200,10 +200,12 @@ class Orchestrator:
         chunks = []
         for d in sub["deps"]:
             try:
-                out = self.fs.collect("orchestrator", tids[d])[:1500]
+                out = self.fs.collect("orchestrator", tids[d])
             except Exception:
                 log.warning("dep result not collectable; holding dependent", dep=d, subtask=sub["id"])
                 return None
+            if len(out) > DEP_OUTPUT_CAP:
+                out = out[:DEP_OUTPUT_CAP] + f"\n[output truncated at {DEP_OUTPUT_CAP} characters]"
             out = out.replace("<<<", "< < <").replace(">>>", "> > >")
             chunks.append(f"<<<DATA step={d}\n{out}\nDATA>>>")
         if not chunks:
