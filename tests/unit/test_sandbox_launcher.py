@@ -599,3 +599,61 @@ def test_a_plain_diff_adding_a_credential_file_is_caught_by_the_tree_check(tmp_p
     with pytest.raises(wsm.WorkspaceError, match="forbidden path"):
         w.apply_patch(b"--- /dev/null\n+++ b/sub/.env\n@@ -0,0 +1 @@\n+K=v\n")
     assert _snapshot(w) == before
+
+
+# ------------------------------------------------------------------ late review: assert each layer
+def test_valid_host_returns_the_normalised_form():
+    assert valid_host("API.Example.COM") == "api.example.com"
+    assert valid_host("b\u00fccher.example") == "xn--bcher-kva.example"
+
+
+def test_vm_lifetime_is_the_sum_of_the_budgets_and_the_event_names_the_hosts(tmp_path, repo):
+    e = Env(tmp_path, {"prompt": [_msg("ok")]})
+    _, events = e.run(repo, hosts=["api.example.com"], timeout_s=20.0)
+    assert e.plane.created[0]["timeout"] == 120 + 20 + 60
+    assert next(d for ev, d in events if ev == "sandbox")["hosts"] == ["api.example.com"]
+
+
+def test_the_second_round_is_seeded_from_the_first_rounds_edit(tmp_path, repo):
+    e = Env(tmp_path, {"prompt": [{"write": {"path": "app.py", "text": "print('r1')\n"}}]})
+    assert e.run(repo, job="two")[0].changed == ["app.py"]
+    (tmp_path / "vm" / "work").rename(tmp_path / "vm" / "work1")  # a new VM starts empty
+    (tmp_path / "vm" / "relay").rename(tmp_path / "vm" / "relay1")
+    assert e.run(repo, job="two")[0].status == "done"
+    assert (tmp_path / "vm" / "work" / "app.py").read_text() == "print('r1')\n"
+
+
+def test_workspace_files_omit_a_denied_file_that_reached_the_workspace(tmp_path, repo):
+    w = _ws(tmp_path, repo)
+    (w.path / ".env").write_text("K=v\n")
+    (w.path / "sub").mkdir()
+    (w.path / "sub" / "x.pem").write_text("k\n")
+    assert w.files() == ["README.md", "app.py"]
+    assert ".env" not in w.tar_b64() and len(w.tar_b64()) > 0
+
+
+def test_workspace_dirs_are_private_and_git_runs_hardened(tmp_path, repo, monkeypatch):
+    w = _ws(tmp_path, repo)
+    assert (w.path.parent.stat().st_mode & 0o777) == 0o700
+    seen = []
+    real = subprocess.run
+
+    def spy(cmd, **kw):
+        seen.append((cmd, kw.get("env") or {}))
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(wsm.subprocess, "run", spy)
+    w.apply_patch(GOOD)
+    assert seen and all(f"core.hooksPath={os.devnull}" in c for c, _ in seen)
+    assert all(env.get("GIT_CONFIG_NOSYSTEM") == "1" and env.get("GIT_CONFIG_GLOBAL") == os.devnull for _, env in seen)
+
+
+@pytest.mark.parametrize("patch,msg", [
+    (HOSTILE["traversal"], "forbidden path"), (HOSTILE["rename-out"], "forbidden path"),
+    (HOSTILE["absolute"], "forbidden path"), (HOSTILE["env"], "forbidden path"),
+    (HOSTILE["symlink"], "symlink"), (HOSTILE["gitlink"], "symlink"),
+    (HOSTILE["mode-change-symlink"], "symlink"), (HOSTILE["mode-octal-spelling"], "symlink"),
+])
+def test_each_hostile_patch_is_rejected_for_the_right_reason(tmp_path, repo, patch, msg):
+    with pytest.raises(wsm.WorkspaceError, match=msg):
+        _ws(tmp_path, repo).apply_patch(patch)
