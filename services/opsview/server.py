@@ -719,7 +719,7 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def g_api_audit(self, qs):
-        f, q = consoleapi.clean_audit_query((qs.get("f") or ["all"])[0], (qs.get("q") or [""])[0])
+        f, q = (qs.get("f") or ["all"])[0], (qs.get("q") or [""])[0]
         self._json(200, consoleapi.audit_payload(read_ndjson(audit_path()), f, q))
 
     def g_frag_status(self, qs):

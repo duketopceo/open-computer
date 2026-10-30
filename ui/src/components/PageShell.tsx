@@ -4,7 +4,7 @@ import { session } from "@/lib/api";
 import { useRouter } from "@/lib/router";
 import { NavList } from "./NavList";
 
-function Brand() {
+export function Brand() {
   return (
     <span className="flex items-center gap-2">
       <span className="grid h-6 w-6 place-items-center rounded-md bg-teal text-white">
@@ -93,8 +93,7 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
       >
         <div className="mx-auto w-full max-w-5xl">
           <h1 className="font-display text-2xl text-ink">{title}</h1>
-          {sub && <p className="mt-1 mb-6 max-w-2xl text-sm text-muted">{sub}</p>}
-          {!sub && <div className="mb-6" />}
+          {sub ? <p className="mt-1 mb-6 max-w-2xl text-sm text-muted">{sub}</p> : <div className="mb-6" />}
           {children}
         </div>
       </main>

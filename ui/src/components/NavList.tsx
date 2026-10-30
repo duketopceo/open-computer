@@ -6,11 +6,11 @@ const ITEM = "flex items-center rounded-lg px-2.5 py-1.5 text-sm transition-colo
 
 export function NavList({ items, label = "Console" }: { items: NavItem[]; label?: string }) {
   const { path } = useRouter();
+  const here = path.replace(/\/+$/, "") || "/";
   return (
     <nav aria-label={label}>
       <ul>
         {items.map((it) => {
-          const here = path.replace(/\/+$/, "") || "/";
           // sandbox detail (/sandboxes/<id>) keeps its section highlighted
           const active =
             it.spa && (here === it.href || (it.href !== "/" && here.startsWith(it.href + "/"))) ? "page" : undefined;

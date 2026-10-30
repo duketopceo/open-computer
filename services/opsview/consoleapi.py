@@ -47,7 +47,7 @@ def audit_payload(rows: list[dict], f: str, q: str) -> dict:
     """`rows` is the whole log, oldest first. Newest AUDIT_LIMIT matches are returned."""
     f, q = clean_audit_query(f, q)
     matched = [r for r in rows if audit_match(r, f, q)]
-    shown = list(reversed(matched))[:AUDIT_LIMIT]
+    shown = matched[-AUDIT_LIMIT:][::-1]
     return {
         "f": f,
         "q": q,

@@ -3,7 +3,7 @@ import { PageShell } from "@/components/PageShell";
 import { DataState } from "@/components/DataState";
 import { Empty, StatusWord, Table, Td, Time } from "@/components/DataTable";
 import { Button } from "@/components/primitives";
-import { getAudit, type AuditFilter } from "@/lib/api";
+import { auditQuery, getAudit, type AuditFilter } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Link, useRouter } from "@/lib/router";
 import { useFetch } from "@/lib/useFetch";
@@ -15,13 +15,7 @@ const FILTERS: [AuditFilter, string][] = [
   ["decisions", "Decisions"],
 ];
 
-function href(f: AuditFilter, q: string): string {
-  const p = new URLSearchParams();
-  if (f !== "all") p.set("f", f);
-  if (q) p.set("q", q);
-  const s = p.toString();
-  return `/audit${s ? `?${s}` : ""}`;
-}
+const href = (f: AuditFilter, q: string) => `/audit${auditQuery(f, q)}`;
 
 export default function Audit() {
   const { search, navigate } = useRouter();

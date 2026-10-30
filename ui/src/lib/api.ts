@@ -141,16 +141,21 @@ export async function getRun(id: string): Promise<RunDetail> {
   return json<RunDetail>(`/api/runs/${encodeURIComponent(id)}`);
 }
 
+// JSON POST with a fresh CSRF token (the convention for every mutation).
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const token = await csrf();
+  return json<T>(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function submitGoal(
   goal: string,
   confirm: boolean,
 ): Promise<{ needs_confirm?: boolean; cap?: number; run?: string }> {
-  const token = await csrf();
-  return json("/goals", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-    body: JSON.stringify({ goal, confirm: confirm ? "1" : undefined }),
-  });
+  return postJson("/goals", { goal, confirm: confirm ? "1" : undefined });
 }
 
 export async function transcribe(audio: Blob): Promise<string> {
@@ -253,19 +258,17 @@ export const getDevices = () => json<DevicesPayload>("/api/devices");
 export const getSandboxes = () => json<SandboxesPayload>("/api/sandboxes");
 export const getRouter = () => json<RouterPayload>("/api/router");
 
-export function getAudit(f: AuditFilter, q: string): Promise<AuditPayload> {
+/** The `?f=&q=` suffix shared by the audit page URL and its API URL (defaults omitted). */
+export function auditQuery(f: AuditFilter, q: string): string {
   const p = new URLSearchParams();
   if (f !== "all") p.set("f", f);
   if (q) p.set("q", q);
   const qs = p.toString();
-  return json<AuditPayload>(`/api/audit${qs ? `?${qs}` : ""}`);
+  return qs ? `?${qs}` : "";
 }
 
-export async function testRoute(q: string, confirm: boolean): Promise<RouteTestResponse> {
-  const token = await csrf();
-  return json<RouteTestResponse>("/api/router/test", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-    body: JSON.stringify({ q, confirm: confirm ? "1" : undefined }),
-  });
+export const getAudit = (f: AuditFilter, q: string) => json<AuditPayload>(`/api/audit${auditQuery(f, q)}`);
+
+export function testRoute(q: string, confirm: boolean): Promise<RouteTestResponse> {
+  return postJson("/api/router/test", { q, confirm: confirm ? "1" : undefined });
 }

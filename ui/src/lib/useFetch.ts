@@ -18,7 +18,7 @@ export function useFetch<T>(fn: () => Promise<T>, deps: unknown[]) {
 
   useEffect(() => {
     const id = ++seq.current;
-    setState((s) => ({ ...s, error: "", loading: true }));
+    setState((s) => (s.loading && !s.error ? s : { ...s, error: "", loading: true }));
     run
       .current()
       .then((data) => {
