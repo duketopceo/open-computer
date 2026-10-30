@@ -48,7 +48,8 @@ async function open(base, p, { theme = "dark", w = 1440, h = 900 } = {}) {
   return { ctx, page };
 }
 
-const ROUTES = ["/overview", "/sandboxes", "/runs", "/runs/new", "/approvals", "/router", "/audit"];
+// Server-rendered pages only: Devices, Sandboxes, Router and Audit moved to the React app (spa.e2e.mjs).
+const ROUTES = ["/overview", "/runs", "/runs/new", "/approvals"];
 
 for (const theme of ["dark", "light"]) {
   for (const w of [1440, 390]) {
@@ -101,12 +102,18 @@ test("@keyboard shortcuts: ? overlay, g-nav, palette, Esc returns focus", async 
   assert.equal(await dlg.locator("li").count(), 2);
   await page.keyboard.press("Escape");
   assert.equal(await dlg.count(), 0);
-  for (const [seq, url] of [["g r", "/approvals"], ["g n", "/runs"], ["g x", "/sandboxes"], ["g u", "/router"], ["g e", "/audit"]]) {
+  for (const [seq, url] of [["g r", "/approvals"], ["g n", "/runs"]]) {
     await Promise.all([page.waitForURL(RO + url), page.keyboard.press(seq.split(" ")[0]).then(() => page.keyboard.press(seq.split(" ")[1]))]);
   }
-  await page.keyboard.press("Control+k");
-  await page.getByRole("combobox", { name: "Command palette" }).fill("blocked");
-  await Promise.all([page.waitForURL(/f=blocked/), page.keyboard.press("Enter")]);
+  // Pages that moved to the React app are still one `g` chord away, but the SPA has no chords
+  // yet (PR 8), so each chord starts from a freshly loaded server-rendered page.
+  for (const [seq, url] of [["g x", "/sandboxes"], ["g d", "/devices"], ["g u", "/router"], ["g e", "/audit"]]) {
+    const { ctx: c2, page: p2 } = await open(RO, "/overview");
+    await Promise.all([p2.waitForURL(RO + url), p2.keyboard.press(seq.split(" ")[0]).then(() => p2.keyboard.press(seq.split(" ")[1]))]);
+    await p2.getByRole("heading", { level: 1 }).waitFor();
+    await c2.close();
+  }
+  await page.goto(RO + "/overview", { waitUntil: "networkidle" });
   // Esc from the palette hands focus back to the element that opened it
   await page.locator("#main").focus();
   await page.keyboard.press("Control+k");
@@ -139,7 +146,7 @@ test("@keyboard approvals: oldest first, a approves, r needs a note, keyboard on
   await page.waitForFunction(() => document.querySelectorAll("tbody.item").length === 1);
   assert.match(await page.locator("#toasts").textContent(), /Approved .*'s request/);
   await page.keyboard.press("Escape");
-  const audit = await (await ctx.request.get(RW + "/audit?f=decisions")).text();
+  const audit = await (await ctx.request.get(RW + "/api/audit?f=decisions")).text();
   assert.match(audit, /approved/); assert.match(audit, /sent back/);
   await ctx.close();
 });
@@ -169,16 +176,6 @@ test("@log virtualized viewer: line numbers, 5,000-line DOM cap, reaches the las
   await page.keyboard.press("End");
   await page.waitForFunction(() => document.querySelector("#log .ln:last-child .no")?.textContent === "12001");
   assert.ok((await nodes()) <= 5000);
-  await ctx.close();
-});
-
-test("@perf no layout shift when the sandbox skeleton resolves", async () => {
-  const { ctx, page } = await open(RO, "/overview", {});
-  await page.addInitScript(() => { window.__cls = 0; new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: "layout-shift", buffered: true }); });
-  await page.goto(RO + "/sandboxes", { waitUntil: "networkidle" });
-  await page.waitForSelector("table.dense");
-  assert.ok((await page.evaluate(() => window.__cls)) <= 0.02);
-  assert.equal(await page.locator("table.dense tbody tr").first().evaluate((e) => e.getBoundingClientRect().height), 32);
   await ctx.close();
 });
 

@@ -167,3 +167,105 @@ export async function transcribe(audio: Blob): Promise<string> {
   if (!text) throw new ApiError("Didn't catch any speech — try again.", "client");
   return text;
 }
+// --- Console pages (Devices, Sandboxes, Router, Audit) -------------------
+// Conventions for every page port (see docs/plans/2026-10-30-*-console-react-unification-plan.md):
+//   * reads are GET /api/<thing> returning an object (never a bare array);
+//   * errors are {"error": "..."} with a 4xx/5xx status and surface as ApiError;
+//   * writes are POST /api/<thing> with a JSON body and a fresh `X-CSRF-Token`
+//     from csrf() (see submitGoal / testRoute);
+//   * the server returns raw values; React's default escaping is the only
+//     escaping, so never inject them as raw HTML.
+
+export interface Device {
+  device_id: string;
+  os: string;
+  capabilities: string[];
+  roots: string[];
+  state: "online" | "asleep" | "offline";
+  last_heartbeat: number;
+  active_grants: number;
+  inbox_depth: number;
+}
+
+export interface DevicesPayload {
+  devices: Device[];
+  total: number;
+  online: number;
+  eligible: number;
+  parked_depth: number;
+}
+
+export interface SandboxesPayload {
+  configured: boolean;
+  up: boolean;
+  api_host: string;
+  sandboxes: Record<string, unknown>[];
+}
+
+export interface LedgerRow {
+  ts: number;
+  event: string;
+  route: string;
+  engine: string;
+  cost: number;
+}
+
+export interface RouterPayload {
+  paid: boolean;
+  dest_host: string;
+  per_route_cost: number;
+  spend: number;
+  cap: number;
+  ledger: LedgerRow[];
+}
+
+export interface RouteResult {
+  route: string;
+  tier: string;
+  engine: string;
+  confidence: number;
+  cost: number;
+  ms: number;
+}
+
+export type RouteTestResponse =
+  | { needs_confirm: true; dest_host: string; cost: number }
+  | { result: RouteResult };
+
+export type AuditFilter = "all" | "blocked" | "allowed" | "decisions";
+
+export interface AuditRow {
+  ts: number;
+  event: string;
+  result: "blocked" | "allowed" | "approved" | "sent back" | "recorded";
+  detail: string;
+}
+
+export interface AuditPayload {
+  f: AuditFilter;
+  q: string;
+  total: number;
+  shown: number;
+  rows: AuditRow[];
+}
+
+export const getDevices = () => json<DevicesPayload>("/api/devices");
+export const getSandboxes = () => json<SandboxesPayload>("/api/sandboxes");
+export const getRouter = () => json<RouterPayload>("/api/router");
+
+export function getAudit(f: AuditFilter, q: string): Promise<AuditPayload> {
+  const p = new URLSearchParams();
+  if (f !== "all") p.set("f", f);
+  if (q) p.set("q", q);
+  const qs = p.toString();
+  return json<AuditPayload>(`/api/audit${qs ? `?${qs}` : ""}`);
+}
+
+export async function testRoute(q: string, confirm: boolean): Promise<RouteTestResponse> {
+  const token = await csrf();
+  return json<RouteTestResponse>("/api/router/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+    body: JSON.stringify({ q, confirm: confirm ? "1" : undefined }),
+  });
+}

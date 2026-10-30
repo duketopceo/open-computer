@@ -1,14 +1,8 @@
 import type { RunSummary } from "@/lib/api";
 import { rel } from "@/lib/format";
 import { cn } from "@/lib/cn";
-
-const OPERATOR = [
-  { label: "Devices", href: "/devices" },
-  { label: "Sandboxes", href: "/sandboxes" },
-  { label: "Approvals", href: "/approvals" },
-  { label: "Router", href: "/router" },
-  { label: "Audit", href: "/audit" },
-];
+import { NAV } from "@/lib/nav";
+import { NavList } from "./NavList";
 
 export function Sidebar({
   runs,
@@ -81,15 +75,7 @@ export function Sidebar({
         <p className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted">
           Operator
         </p>
-        {OPERATOR.map((o) => (
-          <a
-            key={o.href}
-            href={o.href}
-            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-muted hover:bg-black/5 hover:text-ink"
-          >
-            {o.label}
-          </a>
-        ))}
+        <NavList items={NAV.filter((n) => n.href !== "/")} label="Operator" />
         {identity && (
           <p className="mt-2 truncate px-2.5 text-[11px] text-muted" title={identity}>
             {identity}
