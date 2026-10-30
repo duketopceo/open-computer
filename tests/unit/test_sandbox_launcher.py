@@ -271,7 +271,7 @@ class _GarbageSb:
         return ExecResult(0, self.stdout)
 
 
-@pytest.mark.parametrize("garbage", ["not json", json.dumps({"out": "!!!", "err": "", "out_n": 0, "err_n": 0,
+@pytest.mark.parametrize("garbage", ["not json", "x" * 3_000_000, json.dumps({"out": "!!!", "err": "", "out_n": 0, "err_n": 0,
                                                               "rc": None, "alive": True, "ready": True}),
                                      json.dumps({"out": "", "err": "", "out_n": "0", "err_n": 0, "rc": None,
                                                  "alive": True, "ready": True}),
@@ -345,6 +345,9 @@ HOSTILE = {
     "absolute": b"diff --git a/etc b//etc/passwd\nnew file mode 100644\n--- /dev/null\n+++ //etc/passwd\n@@ -0,0 +1 @@\n+x\n",
     "header-mismatch": b"diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/.git/hooks/x\n@@ -1 +1 @@\n-print('v1')\n+evil\n",
     "mode-change-symlink": b"diff --git a/app.py b/app.py\nold mode 100644\nnew mode 120000\n",
+    "mode-octal-spelling": b"diff --git a/app.py b/app.py\nold mode 100644\nnew mode 0120000\n",
+    "marker-delete": b"diff --git a/.oc-workspace b/.oc-workspace\ndeleted file mode 100644\n--- a/.oc-workspace\n+++ /dev/null\n@@ -1 +0,0 @@\n-1\n",
+    "binary-inflate": b"diff --git a/b.bin b/b.bin\nnew file mode 100644\nindex 0000000..1111111\nGIT binary patch\nliteral 999999999\nHcmV\n\n",
 }
 
 
@@ -356,6 +359,28 @@ def test_hostile_patches_are_rejected_and_leave_the_workspace_unchanged(tmp_path
         w.apply_patch(HOSTILE[name])
     assert _snapshot(w) == before
     assert not (w.path / ".gitattributes").exists() and not (w.path.parent / "x").exists()
+
+
+def test_tree_growth_past_the_workspace_cap_is_rejected(tmp_path, repo, monkeypatch):
+    w = _ws(tmp_path, repo)
+    monkeypatch.setattr(wsm, "WORKSPACE_CAP_BYTES", 10)
+    before = _snapshot(w)
+    with pytest.raises(wsm.WorkspaceError, match="size cap"):
+        w.apply_patch(GOOD)
+    assert _snapshot(w) == before
+
+
+def test_rename_reports_both_paths(tmp_path, repo):
+    w = _ws(tmp_path, repo)
+    patch = (b"diff --git a/README.md b/docs/README.md\nsimilarity index 100%\nrename from README.md\n"
+             b"rename to docs/README.md\n")
+    assert sorted(w.apply_patch(patch)) == ["README.md", "docs/README.md"]
+
+
+@pytest.mark.parametrize("name", [".pgpass", "a/.vault-token", "x.kdbx", "k.tfvars", "my_apikey.txt", "t.token",
+                                  ".kube/config", ".gnupg/pubring.kbx", ".ORI/auth", "keyrings/x"])
+def test_more_credential_shapes_are_never_seeded(name):
+    assert wsm.denied(name)
 
 
 def test_oversized_patch_is_rejected(tmp_path, repo, monkeypatch):
@@ -381,6 +406,7 @@ def test_workspace_survives_across_rounds_and_is_private(tmp_path, repo):
     ("169.254.169.254", False), ("x.local", False), ("x.internal", False), ("host.docker.internal", False),
     ("*.example.com", False), ("example", False), ("api.example.com.", False), ("api.example.com:443", False),
     ("https://api.example.com", False), ("api.example.com/path", False), (" api.example.com", False),
+    ("0x7f.0x1", False), ("127.0.0.0x1", False), ("0xa9.0xfe.0xa9.0xfe", False), ("0x7f.0.0.0x1", False),
     ("a" * 64 + ".com", False), ("", False), (None, False), (5, False), ("-a.example.com", False),
 ])
 def test_valid_host(h, ok):
@@ -477,3 +503,99 @@ def test_a_secret_split_by_the_detail_cut_is_still_redacted(tmp_path):
 
     AgentLoop(t, planner, Recorder(), model="m", cwd=str(tmp_path)).run("g", job="k")
     assert "sk-or" not in (tmp_path / "t2.ndjson").read_text()
+
+
+# ------------------------------------------------------------------ review fixes: wedged transports
+def test_a_dead_acp_reader_cannot_wedge_the_poll_thread_or_leak_the_vm(tmp_path, repo):
+    # line 1 is malformed JSON (the ACP reader dies); line 2 is far over the 64 KB pipe capacity
+    e = Env(tmp_path, {"prompt": [{"huge_line": 1000}, {"huge_line": 600_000}]})
+    t0 = time.time()
+    res, _ = e.run(repo, timeout_s=30.0)
+    assert res.status == "failed" and time.time() - t0 < 25 and e.plane.sandboxes[0].closed
+
+
+def test_kill_stops_a_harness_that_stopped_reading_stdin(tmp_path):
+    bindir = make_bindir(tmp_path)
+    vm = tmp_path / "vm"
+    vm.mkdir()
+    relay_dir = str(vm / "relay")
+    sb = FakePlane(bindir, relay_dir).make_sandbox([])
+    proc = SandboxProc(sb, relay_dir, poll_s=0.02, idle_poll_s=0.05)
+    proc.start(["sleep", "100"], {"PATH": f"{bindir}:/usr/bin:/bin"}, str(vm))
+    for _ in range(40):  # ~2 MB the sleeping harness never reads: the relay's stdin writer blocks
+        proc._send(b"z" * 50_000)
+    proc.kill()
+    assert proc.wait(15) != 0
+    sb.close()
+
+
+def test_collect_and_seed_have_deadlines(tmp_path, repo):
+    e = Env(tmp_path, {"prompt": [{"write": {"path": "app.py", "text": "x\n"}}]}, hang_when=lambda c: "diff --cached" in c)
+    e.launcher.collect_budget_s = 0.3
+    res, _ = e.run(repo)
+    assert res.status == "failed" and "time budget" in res.detail and e.plane.sandboxes[0].closed
+    (tmp_path / "s").mkdir()
+    e2 = Env(tmp_path / "s", {"prompt": [_msg("x")]})
+    e2.launcher.seed_budget_s = -1
+    with pytest.raises(WorkerUnavailable, match="time budget"):
+        e2.run(repo)
+    assert e2.plane.sandboxes[0].closed
+
+
+def test_emit_failure_still_closes_the_vm(tmp_path, repo):
+    e = Env(tmp_path, {"prompt": [_msg("x")]})
+
+    def emit(ev, d):
+        raise OSError("disk full")
+
+    task = WorkerTask("do", str(repo), "fake/model-a", placement="cloud-sandbox", timeout_s=20, job="j9")
+    with pytest.raises(OSError):
+        e.worker.run(task, emit, lambda k, d: False)
+    assert e.plane.sandboxes[0].closed
+
+
+# ------------------------------------------------------------------ mutation-review gaps
+class _RawResult:
+    name = "raw"
+
+    def __init__(self, text, detail):
+        self.text, self.detail = text, detail
+
+    def run(self, task, emit, approve):
+        return WorkerResult("failed", self.text, "error", 0.1, self.detail)
+
+
+def test_result_text_and_detail_are_redacted_before_they_are_cut(tmp_path):
+    detail = "x" * (300 - 12 - 1) + " " + KEY
+    text = "t" * (2000 - 12 - 1) + " " + KEY
+    _loop(tmp_path, _scripted(_sp(heavy=False)), _RawResult(text, detail), lambda k, d: True).run("g", job="j")
+    assert "sk-or" not in (tmp_path / "trail.ndjson").read_text()
+
+
+def test_stderr_tail_is_redacted_before_it_is_cut(tmp_path):
+    from tests.unit.test_agents import _worker
+
+    w, _ = _worker(tmp_path, {"prompt": [{"stderr_text": "x " + KEY + "y" * 270}, {"crash": 3}]})
+    res = w.run(WorkerTask("go", str(tmp_path), "fake/model-a"), lambda e, d: None, lambda k, d: False)
+    assert res.status == "failed" and "a" * 8 not in res.detail and KEY not in res.detail
+
+
+def test_sandbox_problem_text_is_redacted(tmp_path, repo):
+    # the VM names a file after a key; the host rejects the patch (a .pem) and quotes the path in its reason
+    e = Env(tmp_path, {"prompt": [{"write": {"path": f"{KEY}.pem", "text": "x\n"}}]})
+    res, _ = e.run(repo)
+    assert res.status == "failed" and "rejected" in res.detail and KEY not in res.detail
+
+
+def test_duplicate_hosts_collapse_to_one_grant(tmp_path, repo):
+    e = Env(tmp_path, {"prompt": [_msg("ok")]})
+    assert e.run(repo, hosts=["API.example.com", "api.example.com"])[0].status == "done"
+    assert e.plane.created[0]["egress"] == ["api.example.com"]
+
+
+def test_a_plain_diff_adding_a_credential_file_is_caught_by_the_tree_check(tmp_path, repo):
+    w = _ws(tmp_path, repo)
+    before = _snapshot(w)
+    with pytest.raises(wsm.WorkspaceError, match="forbidden path"):
+        w.apply_patch(b"--- /dev/null\n+++ b/sub/.env\n@@ -0,0 +1 @@\n+K=v\n")
+    assert _snapshot(w) == before

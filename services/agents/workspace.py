@@ -14,6 +14,7 @@ import io
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -21,12 +22,15 @@ from pathlib import Path
 
 SEED_CAP_BYTES = 25 * 1024 * 1024
 PATCH_CAP_BYTES = 4 * 1024 * 1024
+WORKSPACE_CAP_BYTES = 2 * SEED_CAP_BYTES  # a deflated binary hunk must not inflate past this on disk
 _JOB_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 # Matched case-insensitively against EVERY component of a relative path.
 CREDENTIAL_PATTERNS = (
     ".env*", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "id_*", "auth.json", ".netrc", ".npmrc", ".pypirc",
     ".git-credentials", ".aws", ".ssh", ".docker", "kubeconfig", "*.tfstate", "*credentials*", "*secret*",
-    "service-account*.json",
+    "service-account*.json", ".ori", "keyrings", ".pgpass", ".htpasswd", ".my.cnf", ".vault-token", "*.kdbx", "*.gpg",
+    "*.asc", "*.p8", "*.keystore", "*.tfvars", "wallet.dat", ".boto", ".s3cfg", ".dockercfg", ".kube", ".gnupg", "*.token",
+    "*apikey*", "*api_key*", ".oc-workspace",
 )
 _GIT_ONLY = (".git", ".gitattributes", ".gitmodules")  # never seeded, never accepted back
 _GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
@@ -79,19 +83,13 @@ def file_list(src: Path) -> list[str]:
             st = os.lstat(p)
         except OSError:
             continue
-        if not stat_is_regular(st) or not _under(src, p):
+        if not stat.S_ISREG(st.st_mode) or not _under(src, p):
             continue
         total += st.st_size
         if total > SEED_CAP_BYTES:
             raise WorkspaceError(f"repo seed is over {SEED_CAP_BYTES // (1024 * 1024)} MB; refusing to seed a sandbox")
         out.append(rel)
     return out
-
-
-def stat_is_regular(st) -> bool:
-    import stat
-
-    return stat.S_ISREG(st.st_mode)
 
 
 def _under(root: Path, p: Path) -> bool:
@@ -129,15 +127,15 @@ class Workspace:
             for n in filenames:
                 full = Path(dirpath) / n
                 rel = os.path.relpath(full, self.path)
-                if rel == ".oc-workspace" or denied(rel) or not stat_is_regular(os.lstat(full)):
+                if rel == ".oc-workspace" or denied(rel) or not stat.S_ISREG(os.lstat(full).st_mode):
                     continue
                 out.append(rel)
         return sorted(out)
 
-    def tar_b64(self) -> str:
+    def tar_b64(self, files: list[str] | None = None) -> str:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-            for rel in self.files():
+            for rel in self.files() if files is None else files:
                 tf.add(self.path / rel, arcname=rel, recursive=False)
         return base64.b64encode(buf.getvalue()).decode()
 
@@ -152,12 +150,20 @@ class Workspace:
         with tempfile.TemporaryDirectory(dir=self.path.parent, prefix=".scratch-") as tmp:
             scratch = Path(tmp) / "w"
             shutil.copytree(self.path, scratch, symlinks=True)
-            _git(["apply", "--check", "-"], scratch, input_=patch)
-            _git(["apply", "-"], scratch, input_=patch)
+            _git(["apply", "-"], scratch, input_=patch)  # atomic: a patch that does not apply changes nothing
             _verify_tree(scratch)
             names = _git(["apply", "--numstat", "-z", "-"], self.path, input_=patch).stdout
         _git(["apply", "-"], self.path, input_=patch)
-        return _numstat_paths(names)
+        sources = [ln[len("rename from "):] for ln in patch.decode("utf8", "replace").splitlines()
+                   if ln.startswith("rename from ")]  # numstat names only the destination of a pure rename
+        return list(dict.fromkeys(_numstat_paths(names) + sources))
+
+
+def _octal(text: str) -> int:
+    try:
+        return int(text, 8)  # git parses modes as octal: '0120000' is a symlink too
+    except ValueError:
+        return -1
 
 
 def _bad_path(tok: str) -> bool:
@@ -176,6 +182,8 @@ def _scan_headers(patch: bytes) -> None:
     in_header = False
     for raw in patch.splitlines():
         line = raw.decode("utf8", "replace")
+        if line.startswith("literal ") and line[8:].isdigit() and int(line[8:]) > WORKSPACE_CAP_BYTES:
+            raise WorkspaceError("binary hunk would inflate past the workspace size cap")
         if line.startswith("diff --git "):
             in_header = True
             for tok in _split_diff_git(line[len("diff --git "):]):
@@ -186,8 +194,9 @@ def _scan_headers(patch: bytes) -> None:
             continue
         if line.startswith("@@") or line.startswith("GIT binary patch") or line.startswith("Binary files "):
             in_header = False
+            continue
         elif line.startswith(("new mode ", "old mode ", "new file mode ", "deleted file mode ")):
-            if line.split()[-1] in ("120000", "160000"):
+            if _octal(line.split()[-1]) in (0o120000, 0o160000):
                 raise WorkspaceError(f"patch uses a symlink/gitlink mode: {line}")
         elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
             if _bad_path(line.split(" ", 2)[2]):
@@ -199,12 +208,13 @@ def _scan_headers(patch: bytes) -> None:
 
 def _split_diff_git(rest: str) -> list[str]:
     if rest.startswith('"'):
-        return [t for t in re.findall(r'"((?:[^"\\]|\\.)*)"', rest)]
+        return re.findall(r'"((?:[^"\\]|\\.)*)"', rest)
     half = len(rest) // 2
     return [rest[:half], rest[half + 1:]] if rest[half:half + 1] == " " else rest.split(" ")
 
 
 def _verify_tree(root: Path) -> None:
+    total = 0
     for dirpath, dirnames, filenames in os.walk(root):
         for n in dirnames + filenames:
             full = Path(dirpath) / n
@@ -213,6 +223,10 @@ def _verify_tree(root: Path) -> None:
                 continue  # the scratch's own repo metadata
             if full.is_symlink():
                 raise WorkspaceError(f"patch would create a symlink: {rel}")
+            if full.is_file():
+                total += full.stat().st_size
+                if total > WORKSPACE_CAP_BYTES:
+                    raise WorkspaceError("patch would grow the workspace past its size cap")
             if rel != ".oc-workspace" and denied(rel):
                 raise WorkspaceError(f"patch would create a forbidden path: {rel}")
 
@@ -227,7 +241,7 @@ def _numstat_paths(raw: bytes) -> list[str]:
             continue
         fields = head.decode("utf8", "replace").split("\t", 2)
         if len(fields) == 3 and fields[2] == "":  # rename/copy: next two entries are the old and new path
-            out.append(parts[i + 2].decode("utf8", "replace"))
+            out.extend(p.decode("utf8", "replace") for p in parts[i + 1:i + 3])
             i += 3
         else:
             out.append(fields[-1])

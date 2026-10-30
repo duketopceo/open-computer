@@ -12,6 +12,7 @@ import base64
 import binascii
 import json
 import os
+import select
 import shlex
 import subprocess
 import threading
@@ -19,6 +20,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+from services.execplane import PolicyDenied
 
 from . import workspace as ws_mod
 
@@ -38,6 +41,10 @@ class SandboxError(RuntimeError):
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def _write_file_cmd(path: str, data: bytes) -> str:
+    return f"mkdir -p {shlex.quote(os.path.dirname(path))} && echo {_b64(data)} | base64 -d > {shlex.quote(path)}"
 
 
 class _Stdin:
@@ -69,6 +76,8 @@ class SandboxProc:
         self.stdout = os.fdopen(r_out, "rb")
         self.stderr = os.fdopen(r_err, "rb")
         self._w_out, self._w_err = w_out, w_err
+        os.set_blocking(w_out, False)  # a slow or dead reader must never wedge the poll thread
+        os.set_blocking(w_err, False)
         self.stdin = _Stdin(self)
         self.pid = 0
         self._rc: int | None = None
@@ -90,8 +99,8 @@ class SandboxProc:
     def start(self, argv: list[str], env: dict, cwd: str) -> None:
         d = shlex.quote(self._dir)
         launch = (
-            f"mkdir -p {d} && echo {_b64(RELAY_SOURCE.encode())} | base64 -d > {d}/relay.py && "
-            f"echo {_b64(json.dumps(env).encode())} | base64 -d > {d}/env.json && "
+            f"{_write_file_cmd(self._dir + '/relay.py', RELAY_SOURCE.encode())} && "
+            f"{_write_file_cmd(self._dir + '/env.json', json.dumps(env).encode())} && "
             f"(setsid nohup python3 {d}/relay.py serve {d} {shlex.quote(cwd)} "
             + " ".join(shlex.quote(a) for a in argv)
             + " >/dev/null 2>&1 </dev/null &)"
@@ -100,7 +109,7 @@ class SandboxProc:
             r = self._exec(launch)
         except Exception as e:  # noqa: BLE001
             raise SandboxError(f"relay launch failed: {type(e).__name__}: {e}") from None
-        if getattr(r, "returncode", 1) != 0:
+        if r.returncode != 0:
             raise SandboxError(f"relay launch failed: rc={r.returncode}: {(r.stderr or '')[:200]}")
         for _ in range(30):  # handshake: the relay must survive the exec that started it
             st = self._poll_once(0)
@@ -115,8 +124,8 @@ class SandboxProc:
     def _poll_once(self, limit: int = POLL_MAX) -> dict | None:
         try:
             r = self._exec(self._relay("poll", self._dir, self._out_off, self._err_off, limit))
-            if r.returncode != 0:
-                return None
+            if r.returncode != 0 or len(r.stdout) > 2 * (limit * 4 // 3 + 4) + 512:
+                return None  # untrusted size: checked before any parsing
             msg = json.loads(r.stdout.strip().splitlines()[-1])
             out = base64.b64decode(msg["out"], validate=True)
             err = base64.b64decode(msg["err"], validate=True)
@@ -153,11 +162,16 @@ class SandboxProc:
                         self.note = "output flood"
                         self._finish(255)
                         return
-                    self._write(self._w_out, st["out"])
+                    if not self._write(self._w_out, st["out"]):
+                        self.note = self.note or "reader gone"
+                        self._finish(255)
+                        return
                 if st["err"]:
                     self._err_off += len(st["err"])
-                    if self._err_off <= ERR_CAP:
-                        self._write(self._w_err, st["err"])
+                    if self._err_off <= ERR_CAP and not self._write(self._w_err, st["err"]):
+                        self.note = self.note or "reader gone"
+                        self._finish(255)
+                        return
                 more = len(st["out"]) >= POLL_MAX or len(st["err"]) >= POLL_MAX
                 if st["rc"] is not None and not more:
                     self._finish(st["rc"])
@@ -178,15 +192,22 @@ class SandboxProc:
             self.note = self.note or "poll thread error"
             self._finish(255)
 
-    @staticmethod
-    def _write(fd: int, data: bytes) -> None:
+    def _write(self, fd: int, data: bytes) -> bool:
+        """Feed the ACP reader's pipe. False when it is gone: the reader died (bad line) or the connection was
+        killed. The pipe is non-blocking so a reader that stopped reading can never wedge this thread."""
         view = memoryview(data)
         while view:
+            if self._killed or self._done.is_set():
+                return False
             try:
                 n = os.write(fd, view)
+            except BlockingIOError:
+                select.select([], [fd], [], 0.25)
+                continue
             except OSError:
-                return  # reader closed
+                return False
             view = view[n:]
+        return True
 
     def _finish(self, rc: int) -> None:
         self._rc = rc
@@ -209,6 +230,10 @@ class SandboxProc:
             if r.returncode != 0:
                 raise OSError("sandbox send failed")
 
+    def join(self, timeout: float) -> None:
+        if self._thread is not None:
+            self._thread.join(timeout)
+
     def wait(self, timeout: float | None = None) -> int:
         if not self._done.wait(timeout):
             raise subprocess.TimeoutExpired("sandbox-harness", timeout)
@@ -224,6 +249,26 @@ class SandboxProc:
             pass
 
 
+def _exec_with_deadline(sb, cmd: str, seconds: float):
+    """sb.exec in a helper thread: None when it does not return in time (the VM is closed right after)."""
+    box: list = []
+
+    def run():
+        try:
+            box.append(sb.exec(cmd))
+        except Exception as e:  # noqa: BLE001
+            box.append(e)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(seconds)
+    if not box:
+        return None
+    if isinstance(box[0], Exception):
+        raise box[0]
+    return box[0]
+
+
 @dataclass
 class SandboxSession:
     proc: SandboxProc
@@ -232,20 +277,25 @@ class SandboxSession:
     sb: object
     hosts: list[str]
     seed_files: int
+    collect_budget_s: float = COLLECT_BUDGET_S
     _closed: bool = field(default=False, repr=False)
 
-    def finish(self, vm_alive: Callable[[], bool] | None = None) -> tuple[list[str], str]:
+    def finish(self) -> tuple[list[str], str]:
         """Collect the VM's diff and apply it to the job workspace, then close the VM. -> (changed, problem)."""
         changed, problem = [], ""
         try:
-            if self.proc._thread is not None:
-                self.proc._thread.join(5)
-            r = self.sb.exec(
-                f"cd {shlex.quote(self.cwd)} && git add -A && "
-                f"git -c user.name=oc -c user.email=oc@localhost diff --cached --binary HEAD | base64 -w0"
-            )
-            if r.returncode != 0:
+            self.proc.join(5)
+            r = _exec_with_deadline(
+                self.sb, f"cd {shlex.quote(self.cwd)} && git add -A && "
+                f"git -c user.name=oc -c user.email=oc@localhost diff --cached --binary HEAD | base64 -w0",
+                self.collect_budget_s)
+            cap = ws_mod.PATCH_CAP_BYTES * 4 // 3 + 16  # base64 inflates by 4/3; checked before decoding
+            if r is None:
+                problem = "work lost: collecting the sandbox diff exceeded its time budget"
+            elif r.returncode != 0:
                 problem = f"work lost: could not collect the sandbox diff (rc={r.returncode})"
+            elif len(r.stdout) > cap:
+                problem = "sandbox patch rejected: over the size cap"
             else:
                 try:
                     patch = base64.b64decode(r.stdout.strip(), validate=True)
@@ -296,8 +346,8 @@ class SandboxLauncher:
         try:
             wsp = ws_mod.Workspace(self.root, job)
             wsp.init(src)
-            tar_b64 = wsp.tar_b64()
-            seed_files = len(wsp.files())
+            names = wsp.files()
+            tar_b64, seed_files = wsp.tar_b64(names), len(names)
         except ws_mod.WorkspaceError as e:
             raise SandboxError(str(e)) from None
         if not self.plane.sandboxes_available():
@@ -307,18 +357,16 @@ class SandboxLauncher:
             sb = self.plane.make_sandbox(egress_allowlist=norm, timeout=life)
         except ValueError as e:  # bind_egress: bad input
             raise SandboxError(f"sandbox refused: {e}") from None
-        except Exception as e:  # noqa: BLE001 - PolicyDenied and friends
-            msg = str(e)
-            if type(e).__name__ == "PolicyDenied":
-                msg = f"no execplane grant for host: {msg}"
-            raise SandboxError(f"sandbox refused: {msg}") from None
+        except PolicyDenied as e:
+            raise SandboxError(f"sandbox refused: no execplane grant for host: {e}") from None
+        except Exception as e:  # noqa: BLE001 - boot failure, SDK error...
+            raise SandboxError(f"sandbox refused: {e}") from None
         proc = SandboxProc(sb, self.relay_dir, poll_s=self.poll_s, idle_poll_s=self.idle_poll_s)
-        sess = SandboxSession(proc, self.vm_dir, wsp, sb, norm, seed_files)
+        sess = SandboxSession(proc, self.vm_dir, wsp, sb, norm, seed_files, self.collect_budget_s)
         try:
             self._seed(sb, tar_b64)
             for path, content in files.items():
-                d = shlex.quote(os.path.dirname(path))
-                r = sb.exec(f"mkdir -p {d} && echo {_b64(content.encode())} | base64 -d > {shlex.quote(path)}")
+                r = sb.exec(_write_file_cmd(path, content.encode()))
                 if r.returncode != 0:
                     raise SandboxError("could not write the harness config in the sandbox")
             proc.start(argv, {**env, **self.env_extra}, self.vm_dir)
@@ -339,7 +387,10 @@ class SandboxLauncher:
         r = sb.exec(f"mkdir -p {w} && : > {tmp}")
         if r.returncode != 0:
             raise SandboxError("could not prepare the sandbox work dir")
+        deadline = time.monotonic() + self.seed_budget_s
         for i in range(0, len(tar_b64), SEND_CHUNK):
+            if time.monotonic() > deadline:
+                raise SandboxError("seeding the sandbox exceeded its time budget")
             r = sb.exec(f"printf %s {shlex.quote(tar_b64[i:i + SEND_CHUNK])} >> {tmp}")
             if r.returncode != 0:
                 raise SandboxError("seeding the sandbox failed")

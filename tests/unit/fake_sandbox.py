@@ -25,20 +25,19 @@ def make_bindir(root: Path) -> Path:
     ori = b / "ori"
     ori.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_AGENT} "$@"\n')
     ori.chmod(0o755)
-    for tool in ("python3",):
-        link = b / tool
-        if not link.exists():
-            link.symlink_to(sys.executable)
+    link = b / "python3"
+    if not link.exists():
+        link.symlink_to(sys.executable)
     return b
 
 
 class FakeSandbox:
     def __init__(self, bindir: Path, relay_dir: str, *, exec_timeout=30.0, max_cmd=2_000_000, max_stdout=8_000_000,
-                 latency=0.0, raise_on_nonzero=False, kill_bg_on_return=False, raise_when=None):
+                 latency=0.0, raise_on_nonzero=False, kill_bg_on_return=False, raise_when=None, hang_when=None):
         self.bindir, self.relay_dir = bindir, relay_dir
         self.exec_timeout, self.max_cmd, self.max_stdout = exec_timeout, max_cmd, max_stdout
         self.latency, self.raise_on_nonzero = latency, raise_on_nonzero
-        self.kill_bg_on_return, self.raise_when = kill_bg_on_return, raise_when
+        self.kill_bg_on_return, self.raise_when, self.hang_when = kill_bg_on_return, raise_when, hang_when
         self.closed = False
         self.cmds: list[str] = []
 
@@ -50,6 +49,8 @@ class FakeSandbox:
         if self.raise_when and self.raise_when(cmd):
             raise RuntimeError("sandbox expired")
         self.cmds.append(cmd)
+        if self.hang_when and self.hang_when(cmd):
+            time.sleep(3)
         time.sleep(self.latency)
         env = {"PATH": f"{self.bindir}:/usr/bin:/bin", "HOME": str(self.bindir.parent), "LANG": "C.UTF-8"}
         r = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, timeout=self.exec_timeout)

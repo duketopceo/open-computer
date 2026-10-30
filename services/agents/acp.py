@@ -311,7 +311,10 @@ class AcpConnection:
             self._proc.wait(5)
         except subprocess.TimeoutExpired:
             self._kill()
-            self._proc.wait()
+            try:
+                self._proc.wait(10)  # bounded: a transport that cannot die must not hang the worker thread
+            except subprocess.TimeoutExpired:
+                pass
         if self._own_group:
             self._kill()  # the direct child may be gone while a grandchild still holds the group
         for t in self._threads:

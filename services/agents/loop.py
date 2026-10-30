@@ -129,7 +129,7 @@ class AgentLoop:
                 hosts: list[str] = []
                 if sandboxed:
                     proposed = list(dec["egress"]) if isinstance(dec.get("egress"), list) else []
-                    proposed += [str(r)[len("egress:"):] for r in dec.get("risky") or [] if str(r).startswith("egress:")]
+                    proposed += [str(r).removeprefix("egress:") for r in dec.get("risky") or [] if str(r).startswith("egress:")]
                     for raw in proposed:
                         host = valid_host(raw)
                         if host is None:

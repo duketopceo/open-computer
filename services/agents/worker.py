@@ -81,10 +81,10 @@ def money(value, default=None):
 
 
 _HOST_LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+_NUMERIC_LABEL = re.compile(r"^(0x[0-9a-f]*|[0-9]+)$")
 _BAD_SUFFIX = (".local", ".internal", ".localhost", ".localdomain", ".lan", ".home", ".corp")
 # The harness environment inside a VM: the same allowlist idea, with static values (nothing from the host).
-VM_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/oc/home", "LANG": "C.UTF-8", "TERM": "dumb",
-          "TMPDIR": "/tmp"}
+VM_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "TERM": "dumb", "TMPDIR": "/tmp"}
 
 
 def valid_host(host) -> str | None:
@@ -100,8 +100,8 @@ def valid_host(host) -> str | None:
     labels = h.split(".")
     if len(h) > 253 or len(labels) < 2 or not all(_HOST_LABEL.match(x) for x in labels):
         return None
-    if labels[-1].isdigit() or h.endswith(_BAD_SUFFIX):
-        return None
+    if _NUMERIC_LABEL.match(labels[-1]) or h.endswith(_BAD_SUFFIX):
+        return None  # a numeric or hex last label is an IPv4 spelling (inet_aton: 0x7f.1, 127.0.0.0x1)
     return h
 
 
@@ -143,19 +143,19 @@ class AcpWorker:
                                      files=files, timeout_s=task.timeout_s, check_host=valid_host)
         except SandboxError as e:
             raise WorkerUnavailable(str(e)) from None
-        emit("sandbox", {"hosts": sess.hosts, "files": sess.seed_files, "workspace": str(sess.ws.path)})
         res = None
         try:
+            emit("sandbox", {"hosts": sess.hosts, "files": sess.seed_files, "workspace": str(sess.ws.path)})
             res = self._drive(task, emit, approve, argv, env, sess.cwd, sess.proc)
         finally:  # collect after the connection (and relay) closed, then always close the VM
             changed, problem = sess.finish()
             if res is not None:
                 res.changed, res.workspace = changed, str(sess.ws.path)
+                note = problem or sess.proc.note
                 if problem:
                     res.status = "failed"
-                    res.detail = redact_str(f"{problem}; {res.detail}".strip("; "))
-                elif sess.proc.note:
-                    res.detail = redact_str(f"{sess.proc.note}; {res.detail}".strip("; "))
+                if note:
+                    res.detail = redact_str(f"{note}; {res.detail}".strip("; "))
         return res
 
     def _drive(self, task: WorkerTask, emit: Emit, approve: Approve, argv: list[str], env: dict, cwd: str,

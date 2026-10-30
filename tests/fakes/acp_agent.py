@@ -15,7 +15,7 @@ Script keys (all optional):
   prompts          list of step lists, one per ``session/prompt`` call
                    (the last list repeats); ``prompt`` is the one-list form
 Steps: {"write": {"path", "text"}} | {"spawn_grandchild": true} | {"update": {...}} | {"permission": {"toolCall":.., "options":..}}
-| {"delay": s} | {"wait_cancel": true} | {"stderr": n} | {"huge_line": n}
+| {"delay": s} | {"wait_cancel": true} | {"stderr": n} | {"stderr_text": s} | {"huge_line": n}
 | {"crash": code} | {"stop": reason}. A cancel (or a cancelled permission
 outcome) ends the prompt with stopReason "cancelled".
 
@@ -148,6 +148,9 @@ class Agent:
                     self.get()
             elif "stderr" in st:
                 sys.stderr.write("e" * st["stderr"])
+                sys.stderr.flush()
+            elif "stderr_text" in st:
+                sys.stderr.write(st["stderr_text"])
                 sys.stderr.flush()
             elif "huge_line" in st:
                 sys.stdout.write("x" * st["huge_line"] + "\n")

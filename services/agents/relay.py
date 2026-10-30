@@ -32,6 +32,18 @@ def _read_from(path, off, limit):
         return b""
 
 
+def _size(path):
+    try:
+        return os.stat(path).st_size
+    except OSError:
+        return 0
+
+
+def _read_text(path):
+    with open(path) as f:
+        return f.read()
+
+
 def _append(path, data):
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
@@ -66,13 +78,17 @@ def serve(d, cwd, argv):
         except OSError:
             pass
 
-    def pump_in():
-        off, path = 0, os.path.join(d, "in")
+    def watch_close():  # its own thread: pump_in can block writing to a harness that stopped reading
         while not stop.is_set():
             if os.path.exists(os.path.join(d, "close")):
                 kill_group()
                 return
-            chunk = _read_from(path, off, 1 << 20)
+            time.sleep(0.05)
+
+    def pump_in():
+        off, path = 0, os.path.join(d, "in")
+        while not stop.is_set():
+            chunk = _read_from(path, off, 1 << 20) if _size(path) > off else b""
             if chunk:
                 off += len(chunk)
                 try:
@@ -91,15 +107,10 @@ def serve(d, cwd, argv):
                 return
             _append(path, chunk)
 
-    def heartbeat():
-        while not stop.is_set():
-            _write_atomic(os.path.join(d, "hb"), "%f" % time.time())
-            time.sleep(1.0)
-
     threads = [threading.Thread(target=pump_in, daemon=True),
                threading.Thread(target=pump_out, args=(proc.stdout, "out"), daemon=True),
                threading.Thread(target=pump_out, args=(proc.stderr, "err"), daemon=True),
-               threading.Thread(target=heartbeat, daemon=True)]
+               threading.Thread(target=watch_close, daemon=True)]
     for t in threads:
         t.start()
     _write_atomic(os.path.join(d, "ready"), "1")
@@ -114,7 +125,7 @@ def serve(d, cwd, argv):
 
 def _alive(d):
     try:
-        pid = int(open(os.path.join(d, "relay.pid")).read())
+        pid = int(_read_text(os.path.join(d, "relay.pid")))
         os.kill(pid, 0)
     except (OSError, ValueError):
         return False
@@ -128,7 +139,7 @@ def _alive(d):
 def poll(d, out_off, err_off, limit):
     rc = None
     try:
-        rc = int(open(os.path.join(d, "rc")).read())  # read rc FIRST: once it exists no more bytes will arrive
+        rc = int(_read_text(os.path.join(d, "rc")))  # read rc FIRST: once it exists no more bytes will arrive
     except (OSError, ValueError):
         pass
     out = _read_from(os.path.join(d, "out"), out_off, limit)
