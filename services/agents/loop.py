@@ -21,7 +21,7 @@ from oc.obs import redact_str
 from services.cost import Usage
 
 from .trail import Trail
-from .worker import AgentWorker, WorkerResult, WorkerTask, WorkerUnavailable, _money
+from .worker import AgentWorker, WorkerResult, WorkerTask, WorkerUnavailable, money
 
 DEFAULT_BUDGET = 25.0
 WARN_FRACTION = 0.8
@@ -108,7 +108,7 @@ class AgentLoop:
                 if dec.get("action") != "spawn" or not dec.get("prompt"):
                     return end("stalled", f"planner returned an unusable decision: {dec.get('action')!r}", rnd - 1)
 
-                est = _money(dec.get("est_cost"), 1.0) or 1.0  # NaN/negative/garbage -> the default estimate
+                est = money(dec.get("est_cost")) or 1.0  # NaN/negative/garbage/zero -> the default estimate
                 if spent + est > self.budget:
                     return end("budget_exhausted", f"next step ({est:.2f}) would pass the {self.budget:.2f} budget", rnd - 1)
                 if not warned and spent + est > WARN_FRACTION * self.budget:
@@ -129,8 +129,7 @@ class AgentLoop:
                     res = WorkerResult("failed", "", "unavailable", detail=str(e))
                 except Exception as e:  # noqa: BLE001 - a worker bug is a failed round, not a dead job
                     res = WorkerResult("failed", "", "error", detail=f"{type(e).__name__}: {e}")
-                reported = _money(res.cost)  # a pluggable worker may report NaN/negative: charge the estimate
-                cost = reported if reported is not None else est  # unreported -> charge the estimate
+                cost = money(res.cost, est)  # unreported, NaN or negative -> charge the estimate (fail conservative)
                 spent += cost
                 if self.ledger is not None:
                     self.ledger.record(job, f"round-{rnd}", Usage(self.model, 0, 0, cost))

@@ -60,7 +60,7 @@ class AgentWorker(Protocol):
     def run(self, task: WorkerTask, emit: Emit, approve: Approve) -> WorkerResult: ...
 
 
-def _money(value, default=None):
+def money(value, default=None):
     """A cost-like number: finite and >= 0, else `default`. NaN/inf/negative/non-numeric never reach a budget."""
     try:
         x = float(value)
@@ -103,7 +103,7 @@ class AcpWorker:
             elif kind in ("tool_call", "tool_call_update"):
                 emit("tool", {"title": upd.get("title"), "status": upd.get("status"), "kind": upd.get("kind")})
             elif kind == "usage_update" and isinstance(upd.get("cost"), dict):
-                latest = _money(upd["cost"].get("amount"))
+                latest = money(upd["cost"].get("amount"))
                 if latest is not None:
                     cost[0] = latest
 

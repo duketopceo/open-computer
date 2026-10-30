@@ -46,7 +46,7 @@ def _risky_flag(arg: str) -> bool:
     if not arg.startswith("-") or arg in ("-", "--"):
         return False
     if arg.startswith("--"):
-        head = arg.split("=", 1)[0]
+        head = arg.split("=", 1)[0]  # `--out` abbreviates `--output`; a bare `--` must not match every flag
         return len(head) > 2 and any(r.startswith(head) for r in _RISKY_LONG)
     return arg[1] in _RISKY_SHORT
 
@@ -90,11 +90,12 @@ def _shell(cmd: str, cwd: str) -> str:
     if any(_risky_flag(a) for a in rest):
         return "ask"
     for a in rest:  # path-looking args (and `--flag=path` values) must stay inside cwd
+        val = a
         if a.startswith("-"):
             if "=" not in a:
                 continue
-            a = a.split("=", 1)[1]
-        if a and ("/" in a or a.startswith("~") or a == "..") and not _under(_norm(a, cwd), cwd):
+            val = a.split("=", 1)[1]
+        if val and ("/" in val or val.startswith("~") or val == "..") and not _under(_norm(val, cwd), cwd):
             return "ask"
     if a0 in _READ_CMDS:
         return "allow"
@@ -142,9 +143,7 @@ def _in_git_dir(path: str) -> bool:
 
 
 def touches_build_file(tool_call: dict) -> bool:
-    """True when an edit may change something a build/test command executes: anything that is not plain
-    documentation (.md/.rst/.txt), and anything under .git/. The old filename allowlist was unbounded
-    (test_*.py, setup.cfg, build.rs, eslint configs all execute under an allowed command)."""
+    """True unless the edit targets plain documentation (.md/.rst/.txt); anything under .git/ always counts."""
     return any(
         _in_git_dir(p) or not p.lower().endswith(_DOC_SUFFIXES)
         for p in _paths(tool_call or {})
