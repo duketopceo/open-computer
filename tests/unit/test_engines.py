@@ -184,3 +184,36 @@ def test_unavailable_error_names_the_backend(scripted, monkeypatch):
     monkeypatch.setenv("OC_EXECPLANE_BACKEND", "space")
     with pytest.raises(engines.SandboxWorkerUnavailable, match="space"):
         engines.sandbox_work({"prompt": "x"}, api_key="k", plane=_FakePlane(available=False))
+
+
+def test_reaper_skips_busy_run_sandbox_and_release_restarts_idle_clock(scripted):
+    plane = _FakePlane(out="ok\n")
+    ent = engines._acquire_run_sandbox(plane, "r1", set())
+    ent["last"] -= engines._RUN_SANDBOX_IDLE_S + 1
+    engines._reap_run_sandboxes()
+    assert not plane.sb.closed and "r1" in engines._RUN_SANDBOXES  # command in flight
+    engines._release_run_sandbox(ent)
+    engines._reap_run_sandboxes()
+    assert not plane.sb.closed  # idle clock restarted at release
+
+
+def test_exec_failure_releases_busy_count(scripted):
+    plane = _FakePlane(out="ok\n")
+    plane.sb.exec = lambda cmd: (_ for _ in ()).throw(OSError("boom"))
+    with pytest.raises(OSError):
+        engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=plane)
+    assert engines._RUN_SANDBOXES["r1"]["busy"] == 0
+
+
+def test_concurrent_steps_of_one_run_create_one_sandbox(scripted):
+    import threading
+
+    plane = _FakePlane(out="ok\n")
+    ts = [
+        threading.Thread(target=engines.sandbox_work, args=({"prompt": "a", "run": "r1"},),
+                         kwargs={"api_key": "k", "plane": plane})
+        for _ in range(6)
+    ]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(plane.calls) == 1
