@@ -958,7 +958,7 @@ def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> st
         )
         out.append(
             f'<h2>Subtask</h2><div class="w-card"><p class="w-card-t">{e(title)}</p>'
-            f'<p class="w-card-sub muted caption">{_thought_line(sub, now)}</p>{err_t}{doc}'
+            f'<p class="w-card-sub muted caption">{e(_thought_line(sub, now))}</p>{err_t}{doc}'
             f"{_thinking(sub.get('thinking'))}"
             f'<details class="w-details"><summary>Details</summary>'
             f'<table class="kv dense"><tbody>{rows}</tbody></table></details></div>'

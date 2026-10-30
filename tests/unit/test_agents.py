@@ -47,6 +47,45 @@ def test_policy_table(tc, want):
     assert policy.classify(tc, CWD) == want
 
 
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "rg --pre=./evil.sh x",
+        "git diff --output=/tmp/x",
+        "git diff --output=out.txt",
+        "pytest -pfoo",
+        "pytest --override-ini=addopts=-x",
+        "rg --out=x pattern",
+        "pytest --rootdir=/",
+        "pytest -c other.ini",
+        "grep -o x f",
+        "pytest -qpfoo",
+        "pytest -vvc other.ini",
+        "go test -exec 'sh -c id' ./...",
+        "go build -toolexec x ./...",
+        "ruff check --output-file=conftest.py",
+        "cargo test --config x",
+        "rg --ignore-file=/etc/passwd x",
+        "rg --ignore-file=../x x",
+    ],
+)
+def test_risky_flags_ask_in_every_spelling(cmd):
+    assert policy.classify({"kind": "execute", "rawInput": {"command": cmd}}, CWD) == "ask"
+
+
+@pytest.mark.parametrize("cmd", ["git log --pretty=oneline", "pytest -q tests", "rg -n foo src", "git diff --stat", "rg --ignore-file=sub/x x"])
+def test_benign_flags_stay_allowed(cmd):
+    assert policy.classify({"kind": "execute", "rawInput": {"command": cmd}}, CWD) == "allow"
+
+
+def test_edits_under_dot_git_ask_and_docs_do_not_taint():
+    assert policy.classify({"kind": "edit", "locations": [{"path": "/work/proj/.git/config"}]}, CWD) == "ask"
+    assert policy.touches_build_file({"locations": [{"path": "/work/proj/tests/test_x.py"}]})
+    assert policy.touches_build_file({"locations": [{"path": "/work/proj/setup.cfg"}]})
+    assert not policy.touches_build_file({"locations": [{"path": "/work/proj/README.md"}]})
+    assert policy.touches_build_file({"locations": [{"path": "/work/proj/tests/test_notes.txt"}]})  # doctest-able
+
+
 def test_build_commands_demoted_after_build_file_edit():
     tc = {"kind": "execute", "rawInput": {"command": "pytest -q"}}
     assert policy.classify(tc, CWD, edited_build_files=True) == "ask"
@@ -157,6 +196,52 @@ def test_worker_timeout_cancels(tmp_path):
     assert res.status == "timeout"
 
 
+def _run_worker(w, cwd, job="", **kw):
+    return w.run(WorkerTask("go", str(cwd), "fake/model-a", job=job, **kw), lambda e, d: None, lambda k, d: False)
+
+
+def test_edit_taint_survives_rounds_within_a_job_but_not_into_the_next_job(tmp_path):
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    edit = _perm({"title": "edit", "kind": "edit", "locations": [{"path": str(cwd / "test_x.py")}]})
+    run = _perm({"title": "run", "kind": "execute", "rawInput": {"command": "pytest -q"}})
+    w, _ = _worker(tmp_path, {"prompt": [edit]})
+    assert _run_worker(w, cwd, job="j1").status == "done"
+    assert w._tainted == {("j1", str(cwd.resolve()))}
+    (tmp_path / "w2").mkdir()
+    w2, _ = _worker(tmp_path / "w2", {"prompt": [run]})
+    w2._tainted = w._tainted  # same long-lived worker state, next round
+    res = _run_worker(w2, cwd, job="j1")  # round 2 of the same job: edited code must not run unasked
+    assert [p["verdict"] for p in res.permissions] == ["denied"]
+    res = _run_worker(w2, cwd, job="j2")  # a new job on the same worker and cwd starts clean
+    assert [p["verdict"] for p in res.permissions] == ["allow"]
+
+
+def _usage(amount):
+    return {"update": {"sessionUpdate": "usage_update", "cost": {"amount": amount, "currency": "USD"}}}
+
+
+def test_usage_cost_is_cumulative_and_invalid_values_are_ignored(tmp_path):
+    w, _ = _worker(tmp_path, {"prompt": [_usage(0.4), _usage(0.9), _usage(float("nan")), _usage(-3), _usage("x")]})
+    assert _run_worker(w, tmp_path).cost == 0.9  # cumulative: not the 1.3 sum
+    w, _ = _worker(tmp_path, {"prompt": [_usage(0.9), _usage(0.2)]})
+    assert _run_worker(w, tmp_path).cost == 0.9  # a falling report cannot erase spend
+    w, _ = _worker(tmp_path, {"prompt": [_usage(0.0)]})
+    assert _run_worker(w, tmp_path).cost == 0.0  # a reported zero is a reported cost
+
+
+def test_worker_setup_failures_are_failed_results(tmp_path, monkeypatch):
+    from services.agents import acp
+
+    monkeypatch.setattr(acp, "CALL_TIMEOUT_S", 0.5)
+    w, _ = _worker(tmp_path, {"initialize_delay": 3})
+    res = _run_worker(w, tmp_path)
+    assert res.status == "failed" and "TimeoutError" in res.detail
+    w, _ = _worker(tmp_path, {"omit_session_id": True})
+    res = _run_worker(w, tmp_path)
+    assert res.status == "failed" and "KeyError" in res.detail
+
+
 # ---------------------------------------------------------------- planner loop
 class StubWorker:
     name = "stub"
@@ -192,6 +277,43 @@ def _spawn(title="t", est=1.0, **kw):
 def _loop(tmp_path, planner, worker, **kw):
     kw.setdefault("approve", lambda k, d: True)
     return AgentLoop(Trail(tmp_path / "trail.ndjson"), planner, worker, model="cheap/a", cwd=str(tmp_path), **kw)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1e9, "abc", None, 0, True, False, 10**400])
+def test_bad_est_cost_cannot_defeat_the_budget(tmp_path, bad):
+    script = _planner([_spawn("t", bad) for _ in range(30)])
+    wk = StubWorker([WorkerResult("done", "r", "end_turn", None) for _ in range(30)])
+    out = _loop(tmp_path, script, wk, budget=3.0, max_rounds=30).run("g", job="jb")
+    assert out.status == "budget_exhausted" and out.spent == 3.0  # unusable est charges the 1.0 default
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -5.0, True, False, 10**400])
+def test_bad_reported_cost_charges_the_estimate(tmp_path, bad):
+    script = _planner([_spawn("t", 2.0) for _ in range(5)])
+    wk = StubWorker([WorkerResult("done", "r", "end_turn", bad) for _ in range(5)])
+    out = _loop(tmp_path, script, wk, budget=5.0, max_rounds=5).run("g", job="jc")
+    assert out.status == "budget_exhausted" and out.spent == 4.0
+
+
+def test_loop_scopes_the_worker_task_to_the_job(tmp_path):
+    wk = StubWorker([WorkerResult("done", "r", "end_turn", 0.1)])
+    _loop(tmp_path, _planner([_spawn("t"), {"action": "finish", "summary": "ok"}]), wk).run("g", job="jj")
+    assert [t.job for t in wk.tasks] == ["jj"]
+
+
+def _end_row(tmp_path, job):
+    return [r for r in Trail(tmp_path / "trail.ndjson").rows(job) if r["event"] == "job_end"]
+
+
+def test_planner_or_worker_exceptions_still_write_job_end(tmp_path):
+    def boom(state):
+        raise RuntimeError("planner down")
+
+    out = _loop(tmp_path, boom, StubWorker([])).run("g", job="jp")
+    assert out.status == "failed" and "RuntimeError" in out.summary and len(_end_row(tmp_path, "jp")) == 1
+    wk = StubWorker([KeyError("sessionId")] * 3)
+    out = _loop(tmp_path, _planner([_spawn("t") for _ in range(3)]), wk).run("g", job="jw")
+    assert out.status == "stalled" and len(_end_row(tmp_path, "jw")) == 1  # worker bug = failed rounds
 
 
 def test_loop_plans_spawns_replans_and_finishes(tmp_path):
