@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from oc.obs import bind, get_logger
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
-from services.opsview import automations, capabilities, devices, goalruns
+from services.opsview import agentjobs, automations, capabilities, devices, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -280,6 +280,8 @@ GET_ROUTES = [
     (r"/api/session", "g_api_session"),
     (r"/api/runs", "g_api_runs"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
+    (r"/api/agent-jobs", "g_api_agent_jobs"),
+    (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
     (r"/work", "g_work"),
     (r"/overview", "g_overview"),
     (r"/sandboxes", "g_sandboxes"),
@@ -579,6 +581,15 @@ class Handler(BaseHTTPRequestHandler):
         if r is None:
             return self._json(404, {"error": "no such run"})
         self._json(200, r)
+
+    def g_api_agent_jobs(self, qs):
+        self._json(200, {"jobs": agentjobs.list_jobs()})
+
+    def g_api_agent_job(self, qs, id):
+        j = agentjobs.get_job(id)
+        if j is None:
+            return self._json(404, {"error": "no such job"})
+        self._json(200, j)
 
     def p_transcribe(self, who, body):
         """Voice → text on Groq LPU (whisper-large-v3-turbo). The browser posts

@@ -41,7 +41,9 @@ export interface SubTask {
   error_kind?: string;
   hint?: string;
   ts: number;
+  started_ts?: number; // when a worker claimed it; absent for steps that never ran
   finished_ts?: number;
+  thinking?: string; // reasoning text the step's model calls returned
 }
 
 export interface RunDetail {
@@ -54,6 +56,7 @@ export interface RunDetail {
   worker_failures: unknown[];
   started?: number;
   ended?: number;
+  plan_thinking?: string;
   error?: string;
   error_kind?: string;
   hint?: string;

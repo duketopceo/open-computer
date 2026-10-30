@@ -154,7 +154,23 @@ def place(
             egress_hosts=effective,
         )
 
-    # 2. Latency-critical work never waits on a network round trip — but a
+    # 2. Work that must execute lands in a sandboxed worker — capability
+    #    beats latency: a chat endpoint cannot run code. The spend cap
+    #    still binds, but with no executable fallback its failure mode is
+    #    `blocked`, never a demotion to a surface that cannot run it.
+    if subtask.get("needs_sandbox"):
+        if headroom is not None and est_cost > 0 and est_cost > headroom:
+            return Placement(
+                "blocked",
+                f"over-budget (est {est_cost} > headroom {headroom:.4f}) and only a sandbox can run this step — raise the cap",
+            )
+        return Placement(
+            "cloud-sandbox",
+            "needs_sandbox - execution-capable worker",
+            gate_required=pii_flagged,
+        )
+
+    # 3. Latency-critical work never waits on a network round trip — but a
     #    dead local surface demotes to cloud rather than fail the run.
     if latency == "crit":
         if not local_up:
@@ -164,7 +180,7 @@ def place(
             )
         return Placement("local-llamacpp", "latency=crit - GPU local, no network RTT")
 
-    # 3. Spend headroom: if it cannot cover the estimate, local. With local
+    # 4. Spend headroom: if it cannot cover the estimate, local. With local
     #    dead the over-budget step has no legal home — block with the budget
     #    reason so the run fails on words, not a connection error.
     if headroom is not None and est_cost > 0 and est_cost > headroom:
@@ -176,14 +192,6 @@ def place(
         return Placement(
             "local-ollama",
             f"over-budget - est {est_cost} > headroom {headroom:.4f}",
-        )
-
-    # 4. Work that must execute lands in a sandboxed worker.
-    if subtask.get("needs_sandbox"):
-        return Placement(
-            "cloud-sandbox",
-            "needs_sandbox - execution-capable worker",
-            gate_required=pii_flagged,
         )
 
     # 5. Frontier-required tasks must go cloud, and the call records through the gate (R5).

@@ -96,9 +96,20 @@ class _SpaceSandbox:
         try:
             r = self._dp.commands.run(cmd)
         except Exception as e:
-            log.error("sandbox exec error", backend="space", cmd_chars=len(cmd), error=type(e).__name__,
-                      ms=round((time.monotonic() - t0) * 1000, 1))
-            raise
+            # e2b raises CommandExitException on nonzero exits — a nonzero
+            # exit is a RESULT, not an error: callers branch on returncode.
+            exit_code = getattr(e, "exit_code", None)
+            if exit_code is None:
+                log.error("sandbox exec error", backend="space", cmd_chars=len(cmd), error=type(e).__name__,
+                          ms=round((time.monotonic() - t0) * 1000, 1))
+                raise
+            log.info("sandbox exec", backend="space", cmd_chars=len(cmd), returncode=int(exit_code),
+                     ms=round((time.monotonic() - t0) * 1000, 1))
+            return ExecResult(
+                returncode=int(exit_code),
+                stdout=getattr(e, "stdout", "") or "",
+                stderr=getattr(e, "stderr", "") or getattr(e, "error", "") or "",
+            )
         log.info("sandbox exec", backend="space", cmd_chars=len(cmd), returncode=int(r.exit_code or 0),
                  ms=round((time.monotonic() - t0) * 1000, 1))
         return ExecResult(returncode=int(r.exit_code or 0), stdout=r.stdout, stderr=r.stderr)

@@ -16,10 +16,13 @@ the user decides when local is proven (U12 eval gate).
 
 from __future__ import annotations
 
+import atexit
 import base64
 import json
 import os
 import re
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -70,11 +73,107 @@ def _plane():
 
 
 _SCRIPT_PROMPT = (
-    "You are executing a task inside an isolated Linux microVM with no network access. "
+    "You are executing a task inside an isolated Linux microVM; outbound network is denied "
+    "except hosts the task explicitly allows. "
     "Write ONE self-contained bash script that performs the task and prints the result to stdout. "
     "Rules: output ONLY the script (no markdown fences, no commentary); coreutils and python3 are available; "
-    "keep stdout under 4000 characters; exit nonzero on failure.\nTask: "
+    "write files ONLY inside the current working directory (use relative paths — system paths "
+    "outside the workdir are read-only); keep stdout under 4000 characters; exit nonzero on failure.\nTask: "
 )
+
+
+_RUN_SANDBOX_IDLE_S = 900.0
+_RUN_SANDBOX_TTL_S = 1800
+# A run's cloud-sandbox steps share one microVM — the run workspace. Steps
+# build on earlier artifacts (files, installs), and every step's approved
+# egress hosts merge into the same human-granted policy on that VM.
+_RUN_SANDBOXES: dict[str, dict] = {}
+# One lock guards the registry: lookup/create/store, busy counts and the
+# reaper's check-and-close (per process; workers keep separate registries).
+_RUN_LOCK = threading.RLock()
+_reap_timer: threading.Timer | None = None
+
+
+def _close_quiet(sb) -> None:
+    try:
+        sb.close()
+    except Exception:
+        pass
+
+
+def _reap_run_sandboxes(now: float | None = None) -> None:
+    """Close idle run VMs; never one with a command in flight (busy > 0)."""
+    now = time.time() if now is None else now
+    with _RUN_LOCK:
+        for rid, ent in list(_RUN_SANDBOXES.items()):
+            if ent.get("busy", 0) == 0 and now - ent["last"] > _RUN_SANDBOX_IDLE_S:
+                _close_quiet(ent["sb"])
+                del _RUN_SANDBOXES[rid]
+
+
+def _reap_tick() -> None:
+    global _reap_timer
+    with _RUN_LOCK:
+        _reap_timer = None
+        _reap_run_sandboxes()
+        _schedule_reap()
+
+
+def _schedule_reap() -> None:
+    """Arm a daemon timer so an idle VM is reclaimed without a new request."""
+    global _reap_timer
+    with _RUN_LOCK:
+        if _reap_timer is None and _RUN_SANDBOXES:
+            _reap_timer = threading.Timer(_RUN_SANDBOX_IDLE_S / 3, _reap_tick)
+            _reap_timer.daemon = True
+            _reap_timer.start()
+
+
+def _close_all_run_sandboxes() -> None:
+    with _RUN_LOCK:
+        for e in list(_RUN_SANDBOXES.values()):
+            _close_quiet(e["sb"])
+        _RUN_SANDBOXES.clear()
+
+
+atexit.register(_close_all_run_sandboxes)
+
+
+def _acquire_run_sandbox(plane, run_id: str, hosts: set[str]) -> dict:
+    """Entry for `run_id` covering `hosts` with its busy count taken; reuse
+    while the grant covers the step, recreate on a widened host set (grant is
+    re-bound+audited). Caller MUST `_release_run_sandbox` in a finally."""
+    with _RUN_LOCK:
+        _reap_run_sandboxes()
+        ent = _RUN_SANDBOXES.get(run_id)
+        if ent is None or not hosts <= ent["allow"]:
+            allow = hosts | (ent["allow"] if ent else set())
+            if ent is not None:
+                if ent["busy"] > 0:
+                    ent["retired"] = True  # a step is mid-command on it: close when the last one releases
+                else:
+                    _close_quiet(ent["sb"])
+            sb = plane.make_sandbox(egress_allowlist=sorted(allow), timeout=_RUN_SANDBOX_TTL_S)
+            ent = _RUN_SANDBOXES[run_id] = {"sb": sb, "allow": allow, "last": time.time(), "busy": 0}
+        ent["busy"] += 1
+        ent["last"] = time.time()
+        _schedule_reap()
+        return ent
+
+
+def _release_run_sandbox(ent: dict) -> None:
+    with _RUN_LOCK:
+        ent["busy"] = max(0, ent["busy"] - 1)
+        ent["last"] = time.time()  # idle clock starts when the command ends
+        if ent.get("retired") and ent["busy"] == 0:  # replaced by a widened VM while this command ran
+            _close_quiet(ent["sb"])
+
+
+def _run_sandbox(plane, run_id: str, hosts: set[str]):
+    """Sandbox for `run_id` (no busy hold; prefer acquire/release)."""
+    ent = _acquire_run_sandbox(plane, run_id, hosts)
+    _release_run_sandbox(ent)
+    return ent["sb"]
 
 
 def sandbox_work(
@@ -83,9 +182,12 @@ def sandbox_work(
     api_key: str | None = None,
     plane=None,
 ) -> str:
-    """cloud-sandbox placement: model writes a single-shot script, a fresh
+    """cloud-sandbox placement: model writes a single-shot script, a
     microVM runs it under deny-all egress, stdout becomes the result.
-    Unavailable control plane and nonzero exits fail CLOSED — never faked."""
+    A step carrying a run id shares the run's workspace VM (S5 grants
+    still gate every boot); one-off steps get a fresh VM that is always
+    reclaimed. Unavailable control plane and nonzero exits fail CLOSED —
+    never faked."""
     plane = plane or _plane()
     if not plane.sandboxes_available():
         backend = os.environ.get("OC_EXECPLANE_BACKEND", "cube")
@@ -97,12 +199,21 @@ def sandbox_work(
         raise RuntimeError("script planner emitted empty output")
     # S5: only hosts a human approved ever reach the payload — dispatch
     # computes the effective set from the placement, empty = deny-all.
-    sb = plane.make_sandbox(egress_allowlist=list(task.get("egress_hosts") or []), timeout=300)
-    try:
-        b64 = base64.b64encode(script.encode()).decode()
-        res = sb.exec(f"echo {b64} | base64 -d | bash")
-    finally:
-        sb.close()
+    run_id = str(task.get("run") or "")
+    hosts = set(task.get("egress_hosts") or [])
+    b64 = base64.b64encode(script.encode()).decode()
+    if run_id:
+        ent = _acquire_run_sandbox(plane, run_id, hosts)
+        try:
+            res = ent["sb"].exec(f"echo {b64} | base64 -d | bash")
+        finally:
+            _release_run_sandbox(ent)
+    else:
+        sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)
+        try:
+            res = sb.exec(f"echo {b64} | base64 -d | bash")
+        finally:
+            sb.close()
     if res.returncode != 0:
         detail = (res.stderr or res.stdout or "").strip()[:400]
         raise RuntimeError(f"sandbox exec rc={res.returncode}: {detail}")

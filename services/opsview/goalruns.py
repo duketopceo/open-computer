@@ -19,6 +19,7 @@ from typing import Callable
 
 from oc.fsproto import adapter as fs_adapter
 from services.orchestrator import Orchestrator
+from services.orchestrator.thinking import PLAN, ThinkingLog, join_thoughts
 from services.placement import place_live
 
 try:  # temporalio is an optional dep — opsview runs without it
@@ -109,6 +110,12 @@ def get_run(run_id: str) -> dict | None:
     fails = [r for r in rows if r.get("event") == "worker_fail"]
     fails_by_task = {f.get("task"): f for f in fails}
     done_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_done"}
+    # A task can be claimed again after its lease expires; the latest claim is the attempt that finished.
+    start_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_start"}
+    thoughts: dict[str, list[str]] = {}
+    for t in sorted(ThinkingLog(d / "thinking.ndjson").rows(), key=lambda t: t.get("ts") or 0):
+        key = PLAN if t.get("subtask") == PLAN else t.get("task")
+        thoughts.setdefault(key, []).append(t["text"])
     subs = []
     for r in rows:
         if r.get("event") != "dispatch":
@@ -145,6 +152,10 @@ def get_run(run_id: str) -> dict | None:
         elif tid in done_ts:
             rec["finished_ts"] = done_ts[tid]
         rec["ts"] = r.get("ts")
+        if tid in start_ts:
+            rec["started_ts"] = start_ts[tid]
+        if tid in thoughts:
+            rec["thinking"] = join_thoughts(thoughts[tid])
         subs.append(rec)
     out = {
         "run": run_id,
@@ -157,6 +168,8 @@ def get_run(run_id: str) -> dict | None:
         "started": (submit or {}).get("ts"),
         "ended": rows[-1].get("ts") if rows else None,
     }
+    if PLAN in thoughts:
+        out["plan_thinking"] = join_thoughts(thoughts[PLAN])
     if failed is not None:
         out["error"] = failed.get("error", "")
         out["error_kind"] = failed.get("kind", "")

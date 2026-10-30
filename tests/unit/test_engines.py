@@ -89,6 +89,54 @@ def test_work_fn_routes_sandbox_placement(scripted, monkeypatch):
     )  # model output verbatim
 
 
+@pytest.fixture(autouse=True)
+def _clean_run_sandboxes():
+    engines._RUN_SANDBOXES.clear()
+    yield
+    engines._RUN_SANDBOXES.clear()
+
+
+def test_run_steps_share_one_sandbox(scripted):
+    plane = _FakePlane(out="shared\n")
+    engines.sandbox_work({"prompt": "a", "run": "r1", "egress_hosts": ["h1.example"]}, api_key="k", plane=plane)
+    engines.sandbox_work({"prompt": "b", "run": "r1"}, api_key="k", plane=plane)
+    assert len(plane.calls) == 1  # second step reused the run workspace
+    assert plane.calls[0] == {"egress_allowlist": ["h1.example"], "timeout": 1800}
+    assert not plane.sb.closed
+    assert len(plane.sb.seen) == 2
+
+
+def test_widened_hosts_recreates_with_union(scripted):
+    first = _FakeSandbox(ExecResult(0, "ok\n", ""))
+    second = _FakeSandbox(ExecResult(0, "ok\n", ""))
+    plane = _FakePlane()
+    plane.sb = first
+    made = [first, second]
+    plane.make_sandbox = lambda **kw: (plane.calls.append(kw), made.pop(0))[1]
+    engines.sandbox_work({"prompt": "a", "run": "r1", "egress_hosts": ["h1.example"]}, api_key="k", plane=plane)
+    engines.sandbox_work(
+        {"prompt": "b", "run": "r1", "egress_hosts": ["h2.example"]}, api_key="k", plane=plane
+    )
+    assert first.closed
+    assert plane.calls[1]["egress_allowlist"] == ["h1.example", "h2.example"]
+
+
+def test_distinct_runs_get_distinct_sandboxes(scripted):
+    plane = _FakePlane(out="ok\n")
+    engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=plane)
+    engines.sandbox_work({"prompt": "b", "run": "r2"}, api_key="k", plane=plane)
+    assert len(plane.calls) == 2
+
+
+def test_reaper_closes_idle_run_sandbox(scripted, monkeypatch):
+    plane = _FakePlane(out="ok\n")
+    engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=plane)
+    engines._RUN_SANDBOXES["r1"]["last"] -= engines._RUN_SANDBOX_IDLE_S + 1
+    engines._reap_run_sandboxes()
+    assert plane.sb.closed
+    assert "r1" not in engines._RUN_SANDBOXES
+
+
 def test_local_work_reports_every_attempt(monkeypatch):
     monkeypatch.setattr(engines, "_chat", lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
     monkeypatch.setattr(engines, "_post", lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
@@ -136,3 +184,49 @@ def test_unavailable_error_names_the_backend(scripted, monkeypatch):
     monkeypatch.setenv("OC_EXECPLANE_BACKEND", "space")
     with pytest.raises(engines.SandboxWorkerUnavailable, match="space"):
         engines.sandbox_work({"prompt": "x"}, api_key="k", plane=_FakePlane(available=False))
+
+
+def test_reaper_skips_busy_run_sandbox_and_release_restarts_idle_clock(scripted):
+    plane = _FakePlane(out="ok\n")
+    ent = engines._acquire_run_sandbox(plane, "r1", set())
+    ent["last"] -= engines._RUN_SANDBOX_IDLE_S + 1
+    engines._reap_run_sandboxes()
+    assert not plane.sb.closed and "r1" in engines._RUN_SANDBOXES  # command in flight
+    engines._release_run_sandbox(ent)
+    engines._reap_run_sandboxes()
+    assert not plane.sb.closed  # idle clock restarted at release
+
+
+def test_exec_failure_releases_busy_count(scripted):
+    plane = _FakePlane(out="ok\n")
+    plane.sb.exec = lambda cmd: (_ for _ in ()).throw(OSError("boom"))
+    with pytest.raises(OSError):
+        engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=plane)
+    assert engines._RUN_SANDBOXES["r1"]["busy"] == 0
+
+
+def test_concurrent_steps_of_one_run_create_one_sandbox(scripted):
+    import threading
+
+    plane = _FakePlane(out="ok\n")
+    ts = [
+        threading.Thread(target=engines.sandbox_work, args=({"prompt": "a", "run": "r1"},),
+                         kwargs={"api_key": "k", "plane": plane})
+        for _ in range(6)
+    ]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(plane.calls) == 1
+
+
+def test_widening_never_closes_a_vm_with_a_command_in_flight(scripted):
+    first = _FakeSandbox(ExecResult(0, "ok\n", ""))
+    second = _FakeSandbox(ExecResult(0, "ok\n", ""))
+    made = [first, second]
+    plane = _FakePlane()
+    plane.make_sandbox = lambda **kw: (plane.calls.append(kw), made.pop(0))[1]
+    busy = engines._acquire_run_sandbox(plane, "r1", {"h1.example"})
+    engines._acquire_run_sandbox(plane, "r1", {"h2.example"})  # widen while `busy` is mid-command
+    assert not first.closed  # its command must finish first
+    engines._release_run_sandbox(busy)
+    assert first.closed and not second.closed

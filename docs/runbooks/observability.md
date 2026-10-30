@@ -172,4 +172,4 @@ that tries to open a connection to the real OpenRouter. Other guard rails that r
   `tests/unit/test_obs_lint.py`), and every service must log through `oc.obs`;
 - no operator-specific hostnames, domains or paths in observability code or docs.
 
-Later stages (OTLP/Grafana export, Broadcast setup, console cost views) are in the plan.
+Later stages (an optional Postgres/Supabase sink for the call and cost data, Broadcast setup, console cost views) are in the plan.

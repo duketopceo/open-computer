@@ -8,6 +8,12 @@ next: docs/plans/2026-10-28-001-feat-observability-and-cost-telemetry-plan.md
 
 # Brainstorm: hefty dev/debug logging, and OpenRouter cost data we can trust
 
+> **Amendment 2026-10-28.** R6 and decision 1 are superseded. The maintainer does not use Grafana, BigQuery or
+> Datadog and wants the OpenRouter usage and cost data stored in Supabase. R6 now asks for an optional,
+> off-by-default Postgres sink that works on any Postgres or Supabase; OTLP and Prometheus export is deferred. See
+> Stage 3 of `docs/plans/2026-10-28-001-feat-observability-and-cost-telemetry-plan.md`. The original text is kept
+> below for history.
+
 Maintainer request, 2026-10-28: *"pretty hefty dev/debug log and build … high high attention to openrouter
 log/cost data … export log data to grafana and such from openrouter and maybe loop it back to see per chat and
 BI on it."*
@@ -75,7 +81,7 @@ actual dollars.
 **R5. Reconciliation.** A job re-fetches each generation from the stats API and marks the local row
 `reconciled`, `mismatch` (cost/tokens differ), or `missing`. A mismatch is a bug report, not a silent fix.
 
-**R6. Export to Grafana, vendor-neutral.** OTLP for traces and logs; Prometheus-format metrics for cost/token/
+**R6. Export to Grafana, vendor-neutral.** *(Superseded: see the amendment above. Now: an optional Postgres/Supabase sink, off by default, configured only with `OC_*` variables.)* OTLP for traces and logs; Prometheus-format metrics for cost/token/
 latency. A single `docker compose` stack (Grafana, Tempo, Loki, Prometheus, collector) works on the box; Grafana
 Cloud works by changing three env vars. No call-site changes between the two.
 
@@ -155,11 +161,11 @@ backend, where the `trace` keys are queryable attributes).
 
 ## Decisions for the operator (defaults chosen so nothing blocks)
 
-1. **Where Grafana runs.** Self-hosted sample stack (default, nothing sent anywhere), Grafana Cloud, or any OTLP
+1. **Where Grafana runs.** *(Superseded: the destination is any Postgres the operator configures.)* Self-hosted sample stack (default, nothing sent anywhere), Grafana Cloud, or any OTLP
    backend. *Default: sample compose stack, exporters off until `OTEL_EXPORTER_OTLP_ENDPOINT` is set.*
 2. **Broadcast destination** (optional). Self-hosted OTel Collector (needs an HTTPS endpoint reachable from the
    internet), Grafana Cloud (no inbound port), S3/S3-compatible bucket (cheap BI archive), Langfuse (prompt
-   debugging). *Recommendation: Grafana Cloud or a bucket first. Owner action in the OpenRouter dashboard.*
+   debugging). *Recommendation: a bucket or webhook first (Grafana Cloud is no longer a goal, see the amendment). Owner action in the OpenRouter dashboard.*
 3. **Prompt content retention.** Metadata-only everywhere (default), full content to local disk in debug mode
    only (`OC_OBS_CAPTURE_CONTENT=1`), or full content to a Broadcast destination with Privacy Mode off.
 4. **What is a "chat"?** There is no chat object today. Proposal: `chat_id` = console conversation/session if
