@@ -107,7 +107,12 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool,'
         '"needs_egress":bool,"egress_hosts":[domain,...]}. '
         "Set needs_egress when the step must reach the network (downloads, "
-        "APIs); name the exact domains it needs in egress_hosts.\n"
+        "APIs); name the exact domains it needs in egress_hosts. Sandbox steps "
+        "share one filesystem per run while the VM lives, but a step that adds "
+        "egress hosts gets a fresh VM and earlier files are lost — never depend on "
+        "files from a step with different egress_hosts; pass data between steps "
+        "through stdout (dependents see prior step outputs). Prompts must use "
+        "relative paths or $HOME (never absolute paths like /workspace or /data).\n"
         f"Goal: {goal}"
     )
     text = re.sub(r"^```(json)?\s*|\s*```$", "", raw.strip(), flags=re.M)

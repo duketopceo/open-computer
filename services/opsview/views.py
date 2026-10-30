@@ -677,6 +677,9 @@ def page_goal_detail(run: dict, now: float) -> str:
             meta.append("pii: " + e(", ".join(map(str, s["pii"]))))
         if s.get("cost") is not None:
             meta.append(money(s["cost"]))
+        took = _dur(s.get("started_ts"), s.get("finished_ts"))
+        if took:
+            meta.append(e(took))
         res = f'<pre class="mono result">{e(str(s["result"]))}</pre>' if s.get("result") else ""
         title = s.get("title") or str(s.get("subtask") or "")
         items.append(
@@ -801,16 +804,29 @@ def _thought_line(s: dict, now: float) -> str:
     place = str(s.get("placement") or "")
     reason = str(s.get("reason") or "")
     if st in ("LEASED", "RUNNING"):
-        return f"Working on {place}" if place else "Working"
+        head = f"Working on {place}" if place else "Working"
+        took = _dur(s.get("started_ts"), now)
+        return f"{head} · {took}" if took else head
     if st == "QUEUED":
         return "Queued"
     if st == "AWAITING-APPROVAL":
         return "Awaiting your approval"
+    dur = _dur(s.get("started_ts"), s.get("finished_ts"))
     if st == "FAILED":
-        return (f"{place} — failed" if place else "Failed") + (f": {s['error']}" if s.get("error") else "")
+        failed = (f"{place} — failed" if place else "Failed") + (f": {s['error']}" if s.get("error") else "")
+        return f"{failed} · {dur}" if dur else failed
     via = " → ".join(m for m in (str(s.get("engine") or ""), place) if m and m != "None")
-    dur = _dur(s.get("ts"), s.get("finished_ts"))
     return " · ".join(m for m in (via, reason, dur) if m)
+
+
+def _thinking(text) -> str:
+    """The model's own reasoning, collapsed — only when it returned some."""
+    if not text:
+        return ""
+    return (
+        '<details class="w-details w-thinking"><summary>Thinking</summary>'
+        f'<div class="w-doc w-thinking-t">{e(str(text))}</div></details>'
+    )
 
 
 def _preview(s: dict, limit: int = 160) -> str:
@@ -855,7 +871,7 @@ as it thinks — routed, placed, gated, worked. Nothing spends without your conf
         plan = (
             f'<div class="w-thought"><header>{icon("neutral")}'
             f"<span>Planned {n or len(subs)} step{'s' if (n or len(subs)) != 1 else ''}</span></header>"
-            f"<ol>{titles}</ol></div>"
+            f"<ol>{titles}</ol>{_thinking(run.get('plan_thinking'))}</div>"
         )
     steps = []
     for i, s in enumerate(subs):
@@ -919,7 +935,7 @@ def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> st
                 ("Engine", f'<span class="mono">{e(str(sub["engine"]))}</span>' if sub.get("engine") else ""),
                 ("Placement", f'<span class="mono">{e(str(sub["placement"]))}</span>' if sub.get("placement") else ""),
                 ("Why placed", e(str(sub["reason"])) if sub.get("reason") else ""),
-                ("Duration", e(_dur(sub.get("ts"), sub.get("finished_ts"))) if sub.get("finished_ts") else ""),
+                ("Duration", e(_dur(sub.get("started_ts"), sub.get("finished_ts")))),
                 ("Gate", "approval required" if sub.get("gate_required") else ""),
                 ("PII", e(", ".join(map(str, sub["pii"]))) if sub.get("pii") else ""),
                 ("Cost", money(sub["cost"]) if sub.get("cost") is not None else ""),
@@ -943,6 +959,7 @@ def work_inspect(run: dict | None, sel: str, pend: list[dict], now: float) -> st
         out.append(
             f'<h2>Subtask</h2><div class="w-card"><p class="w-card-t">{e(title)}</p>'
             f'<p class="w-card-sub muted caption">{_thought_line(sub, now)}</p>{err_t}{doc}'
+            f"{_thinking(sub.get('thinking'))}"
             f'<details class="w-details"><summary>Details</summary>'
             f'<table class="kv dense"><tbody>{rows}</tbody></table></details></div>'
         )
