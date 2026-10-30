@@ -105,7 +105,11 @@ def serve(d, cwd, argv):
             chunk = os.read(stream.fileno(), 65536)
             if not chunk:
                 return
-            _append(path, chunk)
+            try:
+                _append(path, chunk)
+            except OSError:  # disk full or the dir vanished: end the harness so the host fails fast, not at the timeout
+                kill_group()
+                return
 
     threads = [threading.Thread(target=pump_in, daemon=True),
                threading.Thread(target=pump_out, args=(proc.stdout, "out"), daemon=True),

@@ -172,7 +172,11 @@ class SandboxProc:
                         return
                 if st["err"]:
                     self._err_off += len(st["err"])
-                    if self._err_off <= ERR_CAP and not self._write(self._w_err, st["err"]):
+                    if self._err_off > ERR_CAP:
+                        self.note = "output flood (stderr)"
+                        self._finish(255)
+                        return
+                    if not self._write(self._w_err, st["err"]):
                         self.note = self.note or "reader gone"
                         self._finish(255)
                         return
@@ -252,15 +256,20 @@ class SandboxProc:
         if self._killed:
             return
         self._killed = True
-        try:  # bypasses _xlock (a wedged poll holds it) and has a deadline
-            _exec_with_deadline(self._sb, self._relay("close", self._dir), KILL_BUDGET_S)
-        except Exception:  # noqa: BLE001 - the VM close is the backstop
-            pass
+        # AcpConnection._fail calls this on the ACP reader thread: it must not block on a wedged exec, so the close
+        # exec runs on its own thread (bypassing _xlock, which a wedged poll holds) and the timer ends the stream.
+        threading.Thread(target=self._send_close, daemon=True, name="sandbox-kill").start()
         # Whatever happened to the close exec, the stream must end soon: a relay that never saw the marker would
         # otherwise leave the pump polling forever and the ACP reader (and so conn.close()) blocked.
         timer = threading.Timer(KILL_GRACE_S, self._finish, args=(255,))
         timer.daemon = True
         timer.start()
+
+    def _send_close(self) -> None:
+        try:
+            _exec_with_deadline(self._sb, self._relay("close", self._dir), KILL_BUDGET_S)
+        except Exception:  # noqa: BLE001 - the VM close is the backstop
+            pass
 
     def close(self) -> None:
         """Release the host side: end the stream and close the read ends (the VM close kills the relay)."""
@@ -393,7 +402,14 @@ class SandboxLauncher:
             raise SandboxError(f"sandbox refused: no execplane grant for host: {e}") from None
         except Exception as e:  # noqa: BLE001 - boot failure, SDK error...
             raise SandboxError(f"sandbox refused: {e}") from None
-        proc = SandboxProc(sb, self.relay_dir, poll_s=self.poll_s, idle_poll_s=self.idle_poll_s)
+        try:
+            proc = SandboxProc(sb, self.relay_dir, poll_s=self.poll_s, idle_poll_s=self.idle_poll_s)
+        except Exception as e:  # noqa: BLE001 - os.pipe() exhaustion: do not leave the VM allocated
+            try:
+                sb.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise SandboxError(f"sandbox setup failed: {type(e).__name__}: {e}") from None
         sess = SandboxSession(proc, self.vm_dir, wsp, sb, norm, seed_files, self.collect_budget_s)
         try:
             sess.base_sha = self._seed(sb, tar_b64)
@@ -413,28 +429,29 @@ class SandboxLauncher:
 
     def _seed(self, sb, tar_b64: str) -> str:
         w = shlex.quote(self.vm_dir)
-        pre = sb.exec("git --version >/dev/null && python3 -V >/dev/null && command -v ori >/dev/null")
-        if pre.returncode != 0:
-            raise SandboxError("sandbox template lacks git, python3 or the ori harness")
-        tmp = shlex.quote(self.relay_dir + ".seed.b64")
-        r = sb.exec(f"mkdir -p {w} && : > {tmp}")
-        if r.returncode != 0:
-            raise SandboxError("could not prepare the sandbox work dir")
         deadline = time.monotonic() + self.seed_budget_s
-        for i in range(0, len(tar_b64), SEND_CHUNK):
-            if time.monotonic() > deadline:
+
+        def run(cmd: str, fail: str):
+            """Every seed exec runs under the remaining seed budget; a hung one fails the open (VM closed)."""
+            left = deadline - time.monotonic()
+            r = _exec_with_deadline(sb, cmd, left) if left > 0 else None
+            if r is None:
                 raise SandboxError("seeding the sandbox exceeded its time budget")
-            r = sb.exec(f"printf %s {shlex.quote(tar_b64[i:i + SEND_CHUNK])} >> {tmp}")
             if r.returncode != 0:
-                raise SandboxError("seeding the sandbox failed")
-        r = sb.exec(
-            f"base64 -d {tmp} | tar -xz -C {w} && rm -f {tmp} && cd {w} && git init -q && git add -A && "
-            f"git -c user.name=oc -c user.email=oc@localhost commit -q --allow-empty -m base"
-        )
-        if r.returncode != 0:
-            raise SandboxError(f"seeding the sandbox failed: {(r.stderr or '')[:200]}")
-        r = sb.exec(f"cd {w} && git rev-parse HEAD")
-        sha = (r.stdout or "").strip()
-        if r.returncode != 0 or len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+                raise SandboxError(fail if not (r.stderr or "").strip() else f"{fail}: {(r.stderr or '')[:200]}")
+            return r
+
+        run("git --version >/dev/null && python3 -V >/dev/null && command -v ori >/dev/null",
+            "sandbox template lacks git, python3 or the ori harness")
+        tmp = shlex.quote(self.relay_dir + ".seed.b64")
+        run(f"mkdir -p {w} && : > {tmp}", "could not prepare the sandbox work dir")
+        for i in range(0, len(tar_b64), SEND_CHUNK):
+            run(f"printf %s {shlex.quote(tar_b64[i:i + SEND_CHUNK])} >> {tmp}", "seeding the sandbox failed")
+        # -f: files the owner tracks but .gitignore now matches are seeded, so their edits must reach the diff
+        run(f"base64 -d {tmp} | tar -xz -C {w} && rm -f {tmp} && cd {w} && git init -q && git add -f -A && "
+            f"git -c user.name=oc -c user.email=oc@localhost commit -q --allow-empty -m base",
+            "seeding the sandbox failed")
+        sha = (run(f"cd {w} && git rev-parse HEAD", "could not record the sandbox base commit").stdout or "").strip()
+        if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
             raise SandboxError("could not record the sandbox base commit")
         return sha

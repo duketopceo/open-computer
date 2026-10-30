@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -453,10 +454,8 @@ def _alive(pid):
         return False
     except PermissionError:
         return True
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"  # a zombie is dead
-    except OSError:
-        return False
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(out) and not out.startswith("Z")  # a zombie is dead; `ps` works on Linux and macOS
 
 
 @pytest.mark.parametrize("steps,timeout", [([{"spawn_grandchild": True}, {"wait_cancel": True}], 0.6),

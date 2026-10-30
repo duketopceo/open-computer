@@ -22,7 +22,7 @@ from pathlib import Path
 
 SEED_CAP_BYTES = 25 * 1024 * 1024
 PATCH_CAP_BYTES = 4 * 1024 * 1024
-WORKSPACE_CAP_BYTES = 2 * SEED_CAP_BYTES  # a deflated binary hunk must not inflate past this on disk
+WORKSPACE_CAP_BYTES = SEED_CAP_BYTES  # a workspace never grows past what can be seeded (also caps binary inflation)
 _JOB_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 # Matched case-insensitively against EVERY component of a relative path.
 CREDENTIAL_PATTERNS = (
@@ -36,8 +36,42 @@ _GIT_ONLY = (".git", ".gitattributes", ".gitmodules")  # never seeded, never acc
 _GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
 
 
+# Credential material in file CONTENT (path names alone miss a token pasted into a README). Matches are reported by
+# path only, never by content. Deliberately narrow: private-key headers and well-known token shapes.
+_SECRET_PATTERNS = tuple(re.compile(p) for p in (
+    rb"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----", rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
+    rb"\bgh[pousr]_[A-Za-z0-9]{30,}", rb"\bgithub_pat_[A-Za-z0-9_]{30,}", rb"\bsk-[A-Za-z0-9_-]{20,}",
+    rb"\bxox[abprs]-[A-Za-z0-9-]{10,}", rb"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}",
+))
+
+
 class WorkspaceError(Exception):
     pass
+
+
+def _read_nofollow(root: Path, rel: str) -> tuple[bytes, int]:
+    """Read a file by walking `rel` from `root` with directory descriptors and no symlink following, so a path
+    swapped for a link after the listing cannot disclose anything outside the checkout. -> (content, mode)."""
+    fds = []
+    try:
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        fds.append(fd)
+        parts = Path(rel).parts
+        for part in parts[:-1]:
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            fds.append(fd)
+        ffd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+        fds.append(ffd)
+        st = os.fstat(ffd)
+        if not stat.S_ISREG(st.st_mode):
+            raise WorkspaceError(f"not a regular file when seeding: {rel}")
+        with os.fdopen(os.dup(ffd), "rb") as f:
+            return f.read(), st.st_mode & 0o777
+    except OSError as e:
+        raise WorkspaceError(f"cannot read {rel} safely while seeding: {e.strerror or type(e).__name__}") from None
+    finally:
+        for f in fds:
+            os.close(f)
 
 
 def denied(rel: str) -> bool:
@@ -105,20 +139,27 @@ class Workspace:
 
     def init(self, src: Path | str) -> None:
         """Copy the repo into the workspace once; later rounds reuse what earlier rounds produced."""
-        if (self.path / ".oc-workspace").exists():
-            return
         src = Path(src).resolve()
+        marker = self.path / ".oc-workspace"
+        if marker.exists():
+            if marker.read_text() != str(src):  # a reused job id must not seed another repo's files
+                raise WorkspaceError("this job's workspace was created from a different source checkout")
+            return
         files = file_list(src)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(self.path.parent, 0o700)
         self.path.mkdir(mode=0o700, exist_ok=True)
         for rel in files:
+            data, mode = _read_nofollow(src, rel)
+            if any(p.search(data) for p in _SECRET_PATTERNS):
+                shutil.rmtree(self.path, ignore_errors=True)
+                raise WorkspaceError(f"possible credential material in {rel}; refusing to seed a sandbox with it")
             dst = self.path / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src / rel, dst, follow_symlinks=False)
-            os.chmod(dst, os.stat(src / rel).st_mode & 0o777)
+            dst.write_bytes(data)
+            os.chmod(dst, mode)
         _git(["init", "-q"], self.path)  # own toplevel: `git apply` never reaches an enclosing repo
-        (self.path / ".oc-workspace").write_text("1")
+        marker.write_text(str(src))
 
     def files(self) -> list[str]:
         out = []
@@ -133,9 +174,12 @@ class Workspace:
         return sorted(out)
 
     def tar_b64(self, files: list[str] | None = None) -> str:
+        names = self.files() if files is None else files
+        if sum(os.lstat(self.path / rel).st_size for rel in names) > SEED_CAP_BYTES:
+            raise WorkspaceError(f"workspace is over {SEED_CAP_BYTES // (1024 * 1024)} MB; refusing to seed a sandbox")
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-            for rel in self.files() if files is None else files:
+            for rel in names:
                 tf.add(self.path / rel, arcname=rel, recursive=False)
         return base64.b64encode(buf.getvalue()).decode()
 

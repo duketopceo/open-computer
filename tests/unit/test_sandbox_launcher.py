@@ -465,13 +465,14 @@ def test_denied_egress_host_stalls_the_job_with_no_spawn(tmp_path):
     assert out.status == "stalled" and "api.example.com" in out.summary and not w.tasks
 
 
-def test_invalid_hosts_are_dropped_and_never_asked(tmp_path):
+def test_an_invalid_host_stalls_the_job_before_any_ask_or_spawn(tmp_path):
     asked, w = [], Recorder()
     approve = lambda k, d: asked.append(k) or True  # noqa: E731
-    _loop(tmp_path, _scripted(_sp(egress=["*.x.com", "10.0.0.1", 5, "ok.example.com"])), w, approve).run("g", job="j")
-    assert w.tasks[0].egress_hosts == ("ok.example.com",) and asked.count("egress") == 1
+    out = _loop(tmp_path, _scripted(_sp(egress=["ok.example.com", "10.0.0.1"])), w, approve).run("g", job="j")
+    assert out.status == "stalled" and "10.0.0.1" in out.summary
+    assert not w.tasks and "egress" not in asked
     rows = [r for r in Trail(tmp_path / "trail.ndjson").rows("j") if r["event"] == "egress_rejected"]
-    assert len(rows) == 3
+    assert len(rows) == 1
 
 
 def test_local_placement_ignores_egress_and_malformed_egress_is_ignored(tmp_path):
@@ -740,3 +741,104 @@ def test_a_failed_open_releases_the_pipe_fds(tmp_path, repo):
         with pytest.raises(WorkerUnavailable):
             e.run(repo)
     assert len(os.listdir("/proc/self/fd")) <= before + 1
+
+
+# ------------------------------------------------------------------ PR feedback (CodeRabbit) fixes
+def test_stderr_flood_ends_the_step(tmp_path, repo, monkeypatch):
+    monkeypatch.setattr(sbx, "ERR_CAP", 2000)
+    e = Env(tmp_path, {"prompt": [{"stderr_text": "e" * 50_000}, {"wait_cancel": True}]})
+    res, _ = e.run(repo, timeout_s=30.0)
+    assert res.status == "failed" and "output flood (stderr)" in res.detail
+
+
+def test_relay_ends_the_harness_when_it_cannot_write_output(tmp_path):
+    bindir = make_bindir(tmp_path)
+    vm = tmp_path / "vm"
+    relay_dir = vm / "relay"
+    (relay_dir / "out").mkdir(parents=True)  # appending to `out` now fails
+    sb = FakePlane(bindir, str(relay_dir)).make_sandbox([])
+    proc = SandboxProc(sb, str(relay_dir), poll_s=0.02, idle_poll_s=0.05)
+    proc.start(["sh", "-c", "echo hi; sleep 100"], {"PATH": f"{bindir}:/usr/bin:/bin"}, str(vm))
+    t0 = time.time()
+    assert proc.wait(15) != 0 and time.time() - t0 < 10  # fails fast, not at the step timeout
+    sb.close()
+
+
+def test_a_tracked_file_that_gitignore_now_matches_still_reaches_the_diff(tmp_path, repo):
+    (repo / "gen.txt").write_text("v1\n")
+    git(repo, "add", "gen.txt")
+    (repo / ".gitignore").write_text("gen.txt\n")
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-qm", "ignore after tracking")
+    e = Env(tmp_path, {"prompt": [{"write": {"path": "gen.txt", "text": "v2\n"}}]})
+    res, _ = e.run(repo)
+    assert res.changed == ["gen.txt"] and (Path(res.workspace) / "gen.txt").read_text() == "v2\n"
+
+
+def test_a_reused_job_id_cannot_seed_another_checkout(tmp_path, repo):
+    _ws(tmp_path, repo)
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q")
+    (other / "x.py").write_text("x\n")
+    git(other, "add", "-A")
+    with pytest.raises(wsm.WorkspaceError, match="different source"):
+        wsm.Workspace(tmp_path / "orch", "j1").init(other)
+
+
+def test_credential_content_blocks_the_seed_and_names_only_the_path(tmp_path, repo):
+    (repo / "NOTES.md").write_text("see token " + KEY + " for the demo\n")
+    git(repo, "add", "NOTES.md")
+    w = wsm.Workspace(tmp_path / "orch", "jc")
+    with pytest.raises(wsm.WorkspaceError, match="NOTES.md") as exc:
+        w.init(repo)
+    assert KEY not in str(exc.value) and not w.path.exists()
+    (repo / "NOTES.md").write_text("-----BEGIN RSA PRIVATE KEY-----\n")
+    with pytest.raises(wsm.WorkspaceError, match="NOTES.md"):
+        wsm.Workspace(tmp_path / "orch", "jd").init(repo)
+
+
+def test_seeding_never_follows_a_swapped_symlink(tmp_path, repo):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside\n")
+    (repo / "sub").mkdir()
+    (repo / "sub" / "f.txt").write_text("ok\n")
+    assert wsm._read_nofollow(repo, "sub/f.txt")[0] == b"ok\n"
+    (repo / "sub" / "f.txt").unlink()
+    (repo / "sub").rmdir()
+    (repo / "sub").symlink_to(outside)  # an ancestor directory swapped for a link after the listing
+    (outside / "f.txt").write_text("leaked\n")
+    with pytest.raises(wsm.WorkspaceError):
+        wsm._read_nofollow(repo, "sub/f.txt")
+    (repo / "app.py").unlink()
+    (repo / "app.py").symlink_to(outside / "secret.txt")  # the final component swapped for a link
+    with pytest.raises(wsm.WorkspaceError):
+        wsm._read_nofollow(repo, "app.py")
+
+
+def test_every_round_enforces_the_seed_cap(tmp_path, repo, monkeypatch):
+    w = _ws(tmp_path, repo)
+    monkeypatch.setattr(wsm, "SEED_CAP_BYTES", 5)
+    with pytest.raises(wsm.WorkspaceError, match="refusing to seed"):
+        w.tar_b64()
+
+
+def test_each_seed_exec_runs_under_the_seed_budget(tmp_path, repo, monkeypatch):
+    e = Env(tmp_path, {"prompt": [_msg("x")]}, hang_when=lambda c: "tar -xz" in c)
+    e.launcher.seed_budget_s = 0.5
+    with pytest.raises(WorkerUnavailable, match="time budget"):
+        e.run(repo)
+    assert e.plane.sandboxes[0].closed
+
+
+def test_the_vm_is_closed_when_the_pipe_setup_fails(tmp_path, repo, monkeypatch):
+    e = Env(tmp_path, {"prompt": [_msg("x")]})
+
+    def boom(self, *a, **kw):
+        raise OSError("too many open files")
+
+    monkeypatch.setattr(sbx.SandboxProc, "__init__", boom)
+    with pytest.raises(WorkerUnavailable, match="setup failed"):
+        e.run(repo)
+    assert e.plane.sandboxes[0].closed

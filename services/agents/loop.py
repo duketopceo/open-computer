@@ -130,11 +130,14 @@ class AgentLoop:
                 if sandboxed:
                     proposed = list(dec["egress"]) if isinstance(dec.get("egress"), list) else []
                     proposed += [str(r).removeprefix("egress:") for r in dec.get("risky") or [] if str(r).startswith("egress:")]
-                    for raw in proposed:
+                    checked = []
+                    for raw in proposed:  # validate ALL first: the owner is never asked about a step that cannot run
                         host = valid_host(raw)
                         if host is None:
                             t.append(job, "egress_rejected", round=rnd, host=str(raw)[:100])
-                            continue  # fail closed: fewer hosts, never a sloppy one
+                            return end("stalled", f"planner proposed an invalid egress host: {str(raw)[:80]!r}", rnd - 1)
+                        checked.append(host)
+                    for host in checked:
                         if host not in granted:
                             if not self._ask(job, "egress", {"host": host, "title": dec.get("title"),
                                                              "placement": place_to}):
