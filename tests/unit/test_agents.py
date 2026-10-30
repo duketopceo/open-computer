@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -441,3 +442,31 @@ def test_trail_redacts_credentials_and_caps_big_strings(tmp_path):
     assert "abcdef123456789" not in raw and "plain-value" not in raw and "sk-or-v1-abcdef" not in raw
     assert len(raw) < 6000
     assert [r["seq"] for r in t.rows("j1")] == [1, 2]
+
+
+# ---------------------------------------------------------------- slice 2: process group kill
+def _alive(pid):
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(out) and not out.startswith("Z")  # a zombie is dead; `ps` works on Linux and macOS
+
+
+@pytest.mark.parametrize("steps,timeout", [([{"spawn_grandchild": True}, {"wait_cancel": True}], 0.6),
+                                           ([{"spawn_grandchild": True}], 30.0)])
+def test_grandchild_dies_with_the_worker(tmp_path, steps, timeout):
+    import time
+
+    w, log = _worker(tmp_path, {"prompt": steps})
+    _run_worker(w, tmp_path, timeout_s=timeout)
+    pid = next(r["pid"] for r in _rows(log) if r.get("kind") == "grandchild")
+    deadline = time.time() + 3
+    while _alive(pid) and time.time() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)

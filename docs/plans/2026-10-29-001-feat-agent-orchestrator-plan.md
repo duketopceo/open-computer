@@ -51,7 +51,7 @@ Deferred: pentest, open-ended jobs, browser/computer-use workers, Codex/Claude C
 
 ## Roadmap (not in this PR)
 
-1. **Sandbox launcher** (D4): run `ori opencode acp` inside an e2b/SPACE microVM with a stdio bridge (execplane `exec` is request/response today, so this needs a streaming exec or an in-VM relay). Until then, sandbox-placed steps fail closed. Egress hosts a worker needs go through the existing S5 grant flow as a `risky` approval.
+1. **Sandbox launcher** (D4) - DONE in slice 2, see `docs/plans/2026-10-30-002-feat-orchestrator-sandbox-launcher-plan.md` (relay over request/response exec, not a streaming exec; fake-only, live check pending). Original note: run `ori opencode acp` inside an e2b/SPACE microVM with a stdio bridge (execplane `exec` is request/response today, so this needs a streaming exec or an in-VM relay). Until then, sandbox-placed steps fail closed. Egress hosts a worker needs go through the existing S5 grant flow as a `risky` approval.
 2. **Wire the production planner**: `model_planner` over `services.openrouter` with the cheap tier and the `orch` key; per-step est_cost from the router; real `services/placement` instead of the `place` stub; ledger cap `check` before each spawn.
 3. **Job lifecycle**: persist plan/state so a restarted process resumes (the trail is the audit; add a state row per round); POST routes in the console for submit/approve/deny with CSRF; React run view of the trail and approval queue.
 4. **Finish in a PR**: a git/gh tool surface for the worker (branch, commit, push as an owner-approved `risky` action, `gh pr create`), CI watch.

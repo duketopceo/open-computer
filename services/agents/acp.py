@@ -11,6 +11,8 @@ Provenance: adapted from duketopceo/wisp PR #241 (wisp/acp.py), same author.
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import threading
 
@@ -76,7 +78,7 @@ class PromptHandle:
 class AcpConnection:
     def __init__(self, argv, env=None, cwd=None, on_update=None,
                  on_permission=None, max_line=MAX_LINE,
-                 start_new_session=False):
+                 start_new_session=True, proc=None):
         self.on_update = on_update
         self.on_permission = on_permission
         self.max_line = max_line
@@ -88,7 +90,10 @@ class AcpConnection:
         self._next_id = 0
         self._pending: dict = {}
         self._perms: dict = {}  # rpc id -> (session_id, reply fn)
-        self._proc = subprocess.Popen(
+        # `proc` is any Popen-shaped transport (see services/agents/sandbox.py SandboxProc). A real child runs
+        # in its own session so close() can kill the whole group: harness grandchildren must not outlive it.
+        self._own_group = proc is None and start_new_session
+        self._proc = proc if proc is not None else subprocess.Popen(
             argv, env=env, cwd=cwd, stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=start_new_session)
@@ -118,9 +123,15 @@ class AcpConnection:
             pending, self._pending = self._pending, {}
         for fut in pending.values():
             fut.set(error=self.dead)
+        self._kill()
+
+    def _kill(self):
         try:
-            self._proc.kill()
-        except OSError:
+            if self._own_group:
+                os.killpg(self._proc.pid, signal.SIGKILL)
+            else:
+                self._proc.kill()
+        except (OSError, ValueError):
             pass
 
     def _drain_stderr(self):
@@ -299,8 +310,13 @@ class AcpConnection:
         try:
             self._proc.wait(5)
         except subprocess.TimeoutExpired:
-            self._proc.kill()
-            self._proc.wait()
+            self._kill()
+            try:
+                self._proc.wait(10)  # bounded: a transport that cannot die must not hang the worker thread
+            except subprocess.TimeoutExpired:
+                pass
+        if self._own_group:
+            self._kill()  # the direct child may be gone while a grandchild still holds the group
         for t in self._threads:
             t.join(5)
         for f in (self._proc.stdout, self._proc.stderr):
