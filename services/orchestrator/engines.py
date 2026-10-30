@@ -84,13 +84,19 @@ _SCRIPT_PROMPT = (
 
 _RUN_SANDBOX_IDLE_S = 900.0
 _RUN_SANDBOX_TTL_S = 1800
+# Replace a run VM this long before the backend kills it (fixed from creation;
+# commands do not extend it), so a step never lands on an expired VM.
+_RUN_SANDBOX_TTL_MARGIN_S = 120.0
 # A run's cloud-sandbox steps share one microVM — the run workspace. Steps
 # build on earlier artifacts (files, installs), and every step's approved
 # egress hosts merge into the same human-granted policy on that VM.
 _RUN_SANDBOXES: dict[str, dict] = {}
-# One lock guards the registry: lookup/create/store, busy counts and the
-# reaper's check-and-close (per process; workers keep separate registries).
+# `_RUN_LOCK` guards only the registry's in-memory bookkeeping (lookup/store,
+# busy counts, victim selection) and is never held across a backend create or
+# close, so one hung call cannot stall other runs. `_RUN_GUARDS` serializes
+# creation per run_id (per process; workers keep separate registries).
 _RUN_LOCK = threading.RLock()
+_RUN_GUARDS: dict[str, threading.Lock] = {}
 _reap_timer: threading.Timer | None = None
 
 
@@ -101,22 +107,30 @@ def _close_quiet(sb) -> None:
         pass
 
 
+def _pop_idle_locked(now: float) -> list[dict]:
+    """Remove idle run VMs from the registry (caller holds `_RUN_LOCK`); never one with a command in flight."""
+    gone = []
+    for rid, ent in list(_RUN_SANDBOXES.items()):
+        if ent.get("busy", 0) == 0 and now - ent["last"] > _RUN_SANDBOX_IDLE_S:
+            gone.append(_RUN_SANDBOXES.pop(rid))
+    return gone
+
+
 def _reap_run_sandboxes(now: float | None = None) -> None:
     """Close idle run VMs; never one with a command in flight (busy > 0)."""
     now = time.time() if now is None else now
     with _RUN_LOCK:
-        for rid, ent in list(_RUN_SANDBOXES.items()):
-            if ent.get("busy", 0) == 0 and now - ent["last"] > _RUN_SANDBOX_IDLE_S:
-                _close_quiet(ent["sb"])
-                del _RUN_SANDBOXES[rid]
+        gone = _pop_idle_locked(now)
+    for ent in gone:  # backend close happens outside the registry lock
+        _close_quiet(ent["sb"])
 
 
 def _reap_tick() -> None:
     global _reap_timer
     with _RUN_LOCK:
         _reap_timer = None
-        _reap_run_sandboxes()
-        _schedule_reap()
+    _reap_run_sandboxes()
+    _schedule_reap()
 
 
 def _schedule_reap() -> None:
@@ -131,9 +145,10 @@ def _schedule_reap() -> None:
 
 def _close_all_run_sandboxes() -> None:
     with _RUN_LOCK:
-        for e in list(_RUN_SANDBOXES.values()):
-            _close_quiet(e["sb"])
+        ents = list(_RUN_SANDBOXES.values())
         _RUN_SANDBOXES.clear()
+    for e in ents:
+        _close_quiet(e["sb"])
 
 
 atexit.register(_close_all_run_sandboxes)
@@ -141,32 +156,66 @@ atexit.register(_close_all_run_sandboxes)
 
 def _acquire_run_sandbox(plane, run_id: str, hosts: set[str]) -> dict:
     """Entry for `run_id` covering `hosts` with its busy count taken; reuse
-    while the grant covers the step, recreate on a widened host set (grant is
-    re-bound+audited). Caller MUST `_release_run_sandbox` in a finally."""
+    while the grant covers the step and the VM is not near its backend
+    lifetime, recreate on a widened host set (grant is re-bound+audited) or an
+    expiring VM. A replaced entry leaves the registry BEFORE the new create, so
+    a failed create never leaves a closed handle behind; a replaced VM with a
+    command in flight is retired and closed when its last command releases.
+    Caller MUST `_release_run_sandbox` in a finally."""
     with _RUN_LOCK:
-        _reap_run_sandboxes()
-        ent = _RUN_SANDBOXES.get(run_id)
-        if ent is None or not hosts <= ent["allow"]:
-            allow = hosts | (ent["allow"] if ent else set())
-            if ent is not None:
-                if ent["busy"] > 0:
-                    ent["retired"] = True  # a step is mid-command on it: close when the last one releases
-                else:
-                    _close_quiet(ent["sb"])
-            sb = plane.make_sandbox(egress_allowlist=sorted(allow), timeout=_RUN_SANDBOX_TTL_S)
-            ent = _RUN_SANDBOXES[run_id] = {"sb": sb, "allow": allow, "last": time.time(), "busy": 0}
-        ent["busy"] += 1
-        ent["last"] = time.time()
+        guard = _RUN_GUARDS.setdefault(run_id, threading.Lock())
+    with guard:  # serializes this run's create; other runs are unaffected
+        now = time.time()
+        with _RUN_LOCK:
+            gone = _pop_idle_locked(now)
+            ent = _RUN_SANDBOXES.get(run_id)
+            expiring = ent is not None and ent["busy"] == 0 and now - ent["born"] > _RUN_SANDBOX_TTL_S - _RUN_SANDBOX_TTL_MARGIN_S
+            if ent is not None and hosts <= ent["allow"] and not expiring:
+                ent["busy"] += 1
+                ent["last"] = now
+                reuse, allow, old_close = ent, None, False
+            else:
+                reuse = None
+                allow = hosts | (ent["allow"] if ent else set())
+                old_close = False
+                if ent is not None:
+                    del _RUN_SANDBOXES[run_id]
+                    if ent["busy"] > 0:
+                        ent["retired"] = True  # a step is mid-command on it: close when the last one releases
+                    else:
+                        old_close = True
+        for g in gone:
+            _close_quiet(g["sb"])
+        if reuse is not None:
+            _schedule_reap()
+            return reuse
+        if old_close:
+            _close_quiet(ent["sb"])
+        sb = plane.make_sandbox(egress_allowlist=sorted(allow), timeout=_RUN_SANDBOX_TTL_S)
+        t = time.time()
+        new = {"sb": sb, "allow": allow, "born": t, "last": t, "busy": 1}
+        with _RUN_LOCK:
+            _RUN_SANDBOXES[run_id] = new
         _schedule_reap()
-        return ent
+        return new
 
 
 def _release_run_sandbox(ent: dict) -> None:
     with _RUN_LOCK:
         ent["busy"] = max(0, ent["busy"] - 1)
         ent["last"] = time.time()  # idle clock starts when the command ends
-        if ent.get("retired") and ent["busy"] == 0:  # replaced by a widened VM while this command ran
-            _close_quiet(ent["sb"])
+        close = bool(ent.get("retired")) and ent["busy"] == 0
+    if close:  # replaced/evicted while a command ran
+        _close_quiet(ent["sb"])
+
+
+def _invalidate_run_sandbox(run_id: str, ent: dict) -> None:
+    """The VM itself failed (exec raised): drop it so the next step boots a
+    fresh one. Closed by the last `_release_run_sandbox` if still busy."""
+    with _RUN_LOCK:
+        if _RUN_SANDBOXES.get(run_id) is ent:
+            del _RUN_SANDBOXES[run_id]
+        ent["retired"] = True
 
 
 def _run_sandbox(plane, run_id: str, hosts: set[str]):
@@ -206,6 +255,9 @@ def sandbox_work(
         ent = _acquire_run_sandbox(plane, run_id, hosts)
         try:
             res = ent["sb"].exec(f"echo {b64} | base64 -d | bash")
+        except Exception:
+            _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
+            raise
         finally:
             _release_run_sandbox(ent)
     else:

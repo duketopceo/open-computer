@@ -15,6 +15,9 @@ import json as _json  # keep import surface obvious for the schema check
 
 from services.placement import DEVICE_NEEDS
 
+# A dependent sees at most this many characters of each prior step's stdout.
+DEP_OUTPUT_CAP = 1500
+
 
 class DecomposeError(ValueError):
     """Engine output failed schema or topology validation."""
@@ -111,7 +114,8 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         "share one filesystem per run while the VM lives, but a step that adds "
         "egress hosts gets a fresh VM and earlier files are lost — never depend on "
         "files from a step with different egress_hosts; pass data between steps "
-        "through stdout (dependents see prior step outputs). Prompts must use "
+        f"through stdout, keeping each step's output under {DEP_OUTPUT_CAP} characters "
+        f"(dependents receive only the first {DEP_OUTPUT_CAP}). Prompts must use "
         "relative paths or $HOME (never absolute paths like /workspace or /data).\n"
         f"Goal: {goal}"
     )
