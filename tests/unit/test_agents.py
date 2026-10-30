@@ -279,15 +279,15 @@ def _loop(tmp_path, planner, worker, **kw):
     return AgentLoop(Trail(tmp_path / "trail.ndjson"), planner, worker, model="cheap/a", cwd=str(tmp_path), **kw)
 
 
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1e9, "abc", None, 0])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1e9, "abc", None, 0, True, False, 10**400])
 def test_bad_est_cost_cannot_defeat_the_budget(tmp_path, bad):
     script = _planner([_spawn("t", bad) for _ in range(30)])
     wk = StubWorker([WorkerResult("done", "r", "end_turn", None) for _ in range(30)])
     out = _loop(tmp_path, script, wk, budget=3.0, max_rounds=30).run("g", job="jb")
-    assert out.status == "budget_exhausted" and out.spent <= 3.0  # unusable est charges the 1.0 default
+    assert out.status == "budget_exhausted" and out.spent == 3.0  # unusable est charges the 1.0 default
 
 
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -5.0])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -5.0, True, False, 10**400])
 def test_bad_reported_cost_charges_the_estimate(tmp_path, bad):
     script = _planner([_spawn("t", 2.0) for _ in range(5)])
     wk = StubWorker([WorkerResult("done", "r", "end_turn", bad) for _ in range(5)])

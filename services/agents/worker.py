@@ -62,9 +62,11 @@ class AgentWorker(Protocol):
 
 def money(value, default=None):
     """A cost-like number: finite and >= 0, else `default`. NaN/inf/negative/non-numeric never reach a budget."""
+    if isinstance(value, bool):  # JSON true/false are not amounts
+        return default
     try:
         x = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: an int beyond float range
         return default
     return x if math.isfinite(x) and x >= 0 else default
 
