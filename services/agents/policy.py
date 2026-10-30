@@ -36,9 +36,13 @@ _BUILD_CMDS = {
 }
 # Flags that make an otherwise-read/build command run code or write elsewhere. Matched in every spelling:
 # `--pre=CMD`, an abbreviated long (`--out`), and a short flag with its value attached (`-pPLUGIN`).
-_RISKY_LONG = ("--rootdir", "--confcutdir", "--import-mode", "--override-ini", "--pre", "--output")
-_RISKY_SHORT = "pco"
-_DOC_SUFFIXES = (".md", ".rst", ".txt")
+_RISKY_LONG = (
+    "--rootdir", "--confcutdir", "--import-mode", "--override-ini", "--pre", "--output", "--output-file",
+    "--config", "--junitxml", "--junit-xml", "--outFile", "--plugins", "--rulesdir", "--parser", "--exec",
+)
+_RISKY_SHORT = "pco"  # a letter anywhere in a short-flag cluster (`-qpfoo`) counts
+_RISKY_SINGLE_DASH_LONG = ("-exec", "-toolexec", "-vettool")  # go's single-dash long flags
+_DOC_SUFFIXES = (".md",)  # .txt/.rst can hold pytest doctests (test*.txt), so only markdown is inert
 EDIT_KINDS = {"edit", "delete", "move"}
 
 
@@ -48,7 +52,8 @@ def _risky_flag(arg: str) -> bool:
     if arg.startswith("--"):
         head = arg.split("=", 1)[0]  # `--out` abbreviates `--output`; a bare `--` must not match every flag
         return len(head) > 2 and any(r.startswith(head) for r in _RISKY_LONG)
-    return arg[1] in _RISKY_SHORT
+    head = arg.split("=", 1)[0]
+    return head in _RISKY_SINGLE_DASH_LONG or any(ch in _RISKY_SHORT for ch in arg[1:] if ch.isalpha())
 
 
 def _under(path: str, root: str) -> bool:
@@ -143,7 +148,7 @@ def _in_git_dir(path: str) -> bool:
 
 
 def touches_build_file(tool_call: dict) -> bool:
-    """True unless the edit targets plain documentation (.md/.rst/.txt); anything under .git/ always counts."""
+    """True unless the edit targets a markdown file (.txt/.rst can hold doctests); anything under .git/ always counts."""
     return any(
         _in_git_dir(p) or not p.lower().endswith(_DOC_SUFFIXES)
         for p in _paths(tool_call or {})

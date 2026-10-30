@@ -59,13 +59,21 @@ def test_policy_table(tc, want):
         "pytest --rootdir=/",
         "pytest -c other.ini",
         "grep -o x f",
+        "pytest -qpfoo",
+        "pytest -vvc other.ini",
+        "go test -exec 'sh -c id' ./...",
+        "go build -toolexec x ./...",
+        "ruff check --output-file=conftest.py",
+        "cargo test --config x",
+        "rg --ignore-file=/etc/passwd x",
+        "rg --ignore-file=../x x",
     ],
 )
 def test_risky_flags_ask_in_every_spelling(cmd):
     assert policy.classify({"kind": "execute", "rawInput": {"command": cmd}}, CWD) == "ask"
 
 
-@pytest.mark.parametrize("cmd", ["git log --pretty=oneline", "pytest -q tests", "rg -n foo src", "git diff --stat"])
+@pytest.mark.parametrize("cmd", ["git log --pretty=oneline", "pytest -q tests", "rg -n foo src", "git diff --stat", "rg --ignore-file=sub/x x"])
 def test_benign_flags_stay_allowed(cmd):
     assert policy.classify({"kind": "execute", "rawInput": {"command": cmd}}, CWD) == "allow"
 
@@ -75,6 +83,7 @@ def test_edits_under_dot_git_ask_and_docs_do_not_taint():
     assert policy.touches_build_file({"locations": [{"path": "/work/proj/tests/test_x.py"}]})
     assert policy.touches_build_file({"locations": [{"path": "/work/proj/setup.cfg"}]})
     assert not policy.touches_build_file({"locations": [{"path": "/work/proj/README.md"}]})
+    assert policy.touches_build_file({"locations": [{"path": "/work/proj/tests/test_notes.txt"}]})  # doctest-able
 
 
 def test_build_commands_demoted_after_build_file_edit():
@@ -214,7 +223,9 @@ def _usage(amount):
 
 def test_usage_cost_is_cumulative_and_invalid_values_are_ignored(tmp_path):
     w, _ = _worker(tmp_path, {"prompt": [_usage(0.4), _usage(0.9), _usage(float("nan")), _usage(-3), _usage("x")]})
-    assert _run_worker(w, tmp_path).cost == 0.9  # latest valid, not the 1.3 sum
+    assert _run_worker(w, tmp_path).cost == 0.9  # cumulative: not the 1.3 sum
+    w, _ = _worker(tmp_path, {"prompt": [_usage(0.9), _usage(0.2)]})
+    assert _run_worker(w, tmp_path).cost == 0.9  # a falling report cannot erase spend
     w, _ = _worker(tmp_path, {"prompt": [_usage(0.0)]})
     assert _run_worker(w, tmp_path).cost == 0.0  # a reported zero is a reported cost
 
@@ -282,6 +293,12 @@ def test_bad_reported_cost_charges_the_estimate(tmp_path, bad):
     wk = StubWorker([WorkerResult("done", "r", "end_turn", bad) for _ in range(5)])
     out = _loop(tmp_path, script, wk, budget=5.0, max_rounds=5).run("g", job="jc")
     assert out.status == "budget_exhausted" and out.spent == 4.0
+
+
+def test_loop_scopes_the_worker_task_to_the_job(tmp_path):
+    wk = StubWorker([WorkerResult("done", "r", "end_turn", 0.1)])
+    _loop(tmp_path, _planner([_spawn("t"), {"action": "finish", "summary": "ok"}]), wk).run("g", job="jj")
+    assert [t.job for t in wk.tasks] == ["jj"]
 
 
 def _end_row(tmp_path, job):

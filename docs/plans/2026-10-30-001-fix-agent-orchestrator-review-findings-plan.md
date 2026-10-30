@@ -20,10 +20,10 @@ origin: ce-code-review run 20261030-001310-b4e59767 (PR #77 merged without revie
 ### Requirements
 
 - R1. A planner `est_cost` or worker-reported cost that is NaN, infinite, negative, or non-numeric can never defeat the budget cap or the 80% owner gate, and never crashes the job (finding 1).
-- R2. After a worker has edited anything other than plain documentation (suffix `.md`, `.rst`, `.txt`, outside `.git/`) in a cwd, build and test commands (pytest, ruff, mypy, tsc, eslint, make, npm/pnpm, cargo, go) are never auto-allowed for the rest of that job; the taint survives across rounds (finding 2).
+- R2. After a worker has edited anything other than a markdown file (suffix `.md`, outside `.git/`; `.txt`/`.rst` can hold pytest doctests) in a cwd, build and test commands (pytest, ruff, mypy, tsc, eslint, make, npm/pnpm, cargo, go) are never auto-allowed for the rest of that job; the taint survives across rounds (finding 2).
 - R3. Risky flags (`-p`, `-c`, `-o`, `--pre`, `--output`, `--rootdir`, `--override-ini`, ...) are recognised in `--flag=value`, attached-short (`-pPLUGIN`) and abbreviated-long forms, and path values after `=` stay inside cwd (finding 3).
 - R4. Edits that touch `.git/` are never auto-allowed (supports R2: `.git/config` can execute code through allowed git verbs).
-- R5. Reported agent cost is treated as a cumulative session total: the latest valid value wins, a reported 0.0 is a reported cost, and invalid values are ignored (finding 4).
+- R5. Reported agent cost is treated as a cumulative session total: the largest valid value wins (a later smaller report never erases spend), a reported 0.0 is a reported cost, and invalid values are ignored (finding 4).
 - R6. Every job that writes `job_start` and is not killed by a process interrupt ends with a `job_end` row. A planner exception ends the job `failed`; an unexpected worker exception (TimeoutError from initialize, KeyError on a session reply, ValueError) becomes a `failed` WorkerResult and counts toward `max_failures` (finding 5).
 - R7. The console never interpolates the step narrative unescaped (`work_inspect`, pre-existing XSS).
 

@@ -104,8 +104,8 @@ class AcpWorker:
                 emit("tool", {"title": upd.get("title"), "status": upd.get("status"), "kind": upd.get("kind")})
             elif kind == "usage_update" and isinstance(upd.get("cost"), dict):
                 latest = money(upd["cost"].get("amount"))
-                if latest is not None:
-                    cost[0] = latest
+                if latest is not None:  # cumulative total: never let a later, smaller report erase spend
+                    cost[0] = latest if cost[0] is None else max(cost[0], latest)
 
         def on_permission(_sid, tool_call, options, reply):
             title = tool_call.get("title")
