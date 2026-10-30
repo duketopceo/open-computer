@@ -14,7 +14,7 @@ Script keys (all optional):
   omit_session_id  true: ``session/new`` replies without a sessionId
   prompts          list of step lists, one per ``session/prompt`` call
                    (the last list repeats); ``prompt`` is the one-list form
-Steps: {"update": {...}} | {"permission": {"toolCall":.., "options":..}}
+Steps: {"write": {"path", "text"}} | {"spawn_grandchild": true} | {"update": {...}} | {"permission": {"toolCall":.., "options":..}}
 | {"delay": s} | {"wait_cancel": true} | {"stderr": n} | {"huge_line": n}
 | {"crash": code} | {"stop": reason}. A cancel (or a cancelled permission
 outcome) ends the prompt with stopReason "cancelled".
@@ -152,6 +152,15 @@ class Agent:
             elif "huge_line" in st:
                 sys.stdout.write("x" * st["huge_line"] + "\n")
                 sys.stdout.flush()
+            elif "write" in st:  # {"write": {"path": rel-to-cwd, "text": ...}}: a file edit by the agent
+                w = st["write"]
+                target = pathlib.Path(w["path"])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(w.get("text", ""))
+            elif "spawn_grandchild" in st:  # a child that outlives the agent unless the group is killed
+                import subprocess
+                gc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+                self.log("grandchild", pid=gc.pid)
             elif "crash" in st:
                 os._exit(st["crash"])
             elif "stop" in st:
