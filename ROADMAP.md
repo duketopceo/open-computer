@@ -133,20 +133,23 @@ the table rows keep their last verified state. Read [docs/FEATURES.md](docs/FEAT
 | Console | React front door modeled on Perplexity Computer, with voice | #62 |
 | Telemetry | Optional fields omitted rather than sent as null | #65 |
 | Observability | Stage 0: brainstorm and staged plan (#70). Stage 1: structured logging foundation, OpenRouter attribution and cost capture, real spend into the cost ledger (#72). Stage 2: structured logging in every service and the `python -m oc.obs tail` trace timeline (#73). Guide: [docs/runbooks/observability.md](docs/runbooks/observability.md) | #70, #72, #73 |
+| Observability, Stage 3 plan | Replan around an optional Postgres or Supabase sink (off unless `OC_OBS_SINK_POSTGRES_URL` is set), shipped from the local NDJSON files so the database never affects a run. Docs only; the sink itself is not built | #74 |
+| Orchestrator | Live goal run fixes: one shared sandbox per run, dependency outputs in step prompts, nonzero exit reported as a real failure, code-running steps no longer demoted to a chat endpoint | #75 |
+| Console | Per-step run times and, when the model returns it, a collapsible Thinking view | #76 |
+| Agents | Long-horizon agent orchestrator, slice 1: planner loop with a budget and approvals, ACP worker (OpenCode first), read-only job trail API. Job trail rows are redacted and size-capped before the console serves them (#79) | #77, #79 |
 
 ## Open work
 
-Open pull requests as of 2026-10-29. None are on `main` yet; #75 to #77 are stacked in that order.
+As of 2026-10-30 none of the pull requests listed above are open; the only open PR is [#80](https://github.com/duketopceo/open-computer/pull/80), review fixes for the run sandbox lifecycle and dependency outputs. #75, #76 and #77 landed on `main` together as
+one squash commit (`4356ff5`). What is still to do:
 
-| PR | What | State |
-|---|---|---|
-| [#74](https://github.com/duketopceo/open-computer/pull/74) | Observability Stage 3 plan: an optional Postgres or Supabase sink (off unless `OC_OBS_SINK_POSTGRES_URL` is set), shipped from the local NDJSON files so the database never affects a run. Docs only; plan, no code | Waiting for maintainer review and answers to its open questions |
-| [#75](https://github.com/duketopceo/open-computer/pull/75) | Orchestrator fix for live goal runs: one shared sandbox per run, dependency outputs in step prompts, nonzero exit reported as a real failure, code-running steps no longer demoted to a chat endpoint | Open, checks passing |
-| [#76](https://github.com/duketopceo/open-computer/pull/76) | Console shows per-step run times and, when the model returns it, a collapsible Thinking view | Open, stacked on #75 |
-| [#77](https://github.com/duketopceo/open-computer/pull/77) | Long-horizon agent orchestrator, slice 1: planner loop with a budget and approvals, ACP worker (OpenCode first), job trail API. Sandbox launcher, resume and console UI are later slices; see `docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md` on its branch | Open, stacked on #76 |
-
-Observability next steps after Stage 3 (see the [plan](docs/plans/2026-10-28-001-feat-observability-and-cost-telemetry-plan.md)):
-vendor-neutral export recipes, and console cost views read from the store.
+- **Observability Stage 3:** build the optional Postgres or Supabase sink from the merged plan. Open questions are
+  in the plan's "Needs the maintainer" section. Later stages: vendor-neutral export recipes and console cost
+  views read from the store (see the [plan](docs/plans/2026-10-28-001-feat-observability-and-cost-telemetry-plan.md)).
+- **Agent orchestrator, later slices:** sandbox launcher (sandbox-placed steps fail closed today), job resume,
+  console submit and approve view and a React trail view, production planner wiring, and a live acceptance run.
+  See [docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md](docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md).
+- **Goal runs end to end:** the fixes in #75 have not yet been confirmed by a real live run.
 
 ## Product direction (owner, 2026-10-11)
 

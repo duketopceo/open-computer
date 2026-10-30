@@ -15,8 +15,8 @@
 > SPACE backend), a device plane for running steps on your own machines, and a passkey-gated operator console.
 > The orchestrator can decompose a goal and run its steps, and structured logging and OpenRouter cost records
 > now cover every service. **It cannot yet reliably turn a goal into an artifact:** there is no `oc` CLI and no
-> golden-task run, and the credential boundary is only partly done. Fixes that aim at live goal runs are in
-> open PRs (see [In flight](#in-flight)). Per-feature status with verified gaps:
+> golden-task run, and the credential boundary is only partly done. Fixes aimed at live goal runs have just
+> landed (see [Recently merged](#recently-merged-orchestrator-and-console)) but have not been proven end to end. Per-feature status with verified gaps:
 > [docs/FEATURES.md](./docs/FEATURES.md) (written 2026-10-14, so parts are behind the code). Unit board:
 > [ROADMAP.md](./ROADMAP.md).
 
@@ -71,23 +71,27 @@ environment variables, stays on your own disk, and nothing is sent anywhere unle
   events into one timeline; `python -m services.openrouter report --by run` summarizes spend.
 
 Full guide: [docs/runbooks/observability.md](./docs/runbooks/observability.md). Stage 3 (an optional
-Postgres or Supabase sink for the same data, off unless you set `OC_OBS_SINK_POSTGRES_URL`) is a plan only, in
-open PR [#74](https://github.com/duketopceo/open-computer/pull/74). It is waiting for maintainer review and
-no code has changed.
+Postgres or Supabase sink for the same data, off unless you set `OC_OBS_SINK_POSTGRES_URL`) has its plan merged
+in [#74](https://github.com/duketopceo/open-computer/pull/74) but is not built yet: no code has changed for it.
 
-## In flight
+## Recently merged: orchestrator and console
 
-These are open pull requests, not part of `main` yet. They are stacked, so they land in this order:
+- [#75](https://github.com/duketopceo/open-computer/pull/75): an orchestrator fix for live goal runs. Steps of
+  a run share one sandbox, a step's prompt includes the output of the steps it depends on, a nonzero exit
+  shows up as a real failure with its stderr, and steps that must run code are no longer demoted to a chat
+  endpoint.
+- [#76](https://github.com/duketopceo/open-computer/pull/76): the console shows how long each step took and,
+  when the model returns it, a collapsible "Thinking" view.
+- [#77](https://github.com/duketopceo/open-computer/pull/77): first slice of a long-horizon agent
+  orchestrator in `services/agents`: a planner loop with a budget and approvals, plus a worker that drives an ACP
+  agent such as OpenCode, and a read-only job trail at `/api/agent-jobs`. Sandbox-placed steps in this slice
+  fail closed rather than run on the host.
+- [#79](https://github.com/duketopceo/open-computer/pull/79): job trail rows are redacted and size-capped before
+  the console serves them.
 
-1. [#75](https://github.com/duketopceo/open-computer/pull/75): an orchestrator fix for live goal runs. Steps of
-   a run share one sandbox, a step's prompt includes the output of the steps it depends on, a nonzero exit
-   shows up as a real failure with its stderr, and steps that must run code are no longer demoted to a chat
-   endpoint.
-2. [#76](https://github.com/duketopceo/open-computer/pull/76): the console shows how long each step took and,
-   when the model returns it, a collapsible "Thinking" view.
-3. [#77](https://github.com/duketopceo/open-computer/pull/77): first slice of a long-horizon agent
-   orchestrator: a planner loop with a budget and approvals, plus a worker that drives an ACP agent such as
-   OpenCode. Sandbox-placed steps in this slice fail closed rather than run on the host.
+#75 to #77 landed on `main` together as one squash commit (`4356ff5`). Review fixes for the run sandbox lifecycle are in open PR [#80](https://github.com/duketopceo/open-computer/pull/80). Later slices (sandbox launcher, job resume,
+a console submit and approve view, a live acceptance run) are listed in
+`docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md`.
 
 ## Install and quick start
 
