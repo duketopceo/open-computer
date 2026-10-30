@@ -4,6 +4,7 @@ import {
   decideApproval,
   errorMessage,
   getAgentJob,
+  pollMs,
   submitAgentJob,
   type AgentJobDetail,
   type AgentJobSummary,
@@ -84,7 +85,7 @@ export function AgentJobs({
   const live = !!jobs?.some((j) => j.status === "running" || j.awaiting_approval);
   useEffect(() => {
     if (link === "auth" || !selected) return;
-    const ms = link === "offline" ? 10000 : live ? 2500 : 8000;
+    const ms = pollMs(link, live);
     const id = setInterval(() => fetchJob(selected), ms);
     return () => clearInterval(id);
   }, [selected, live, link, fetchJob]);

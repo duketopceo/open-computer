@@ -5,6 +5,7 @@ import {
   getRun,
   listAgentJobs,
   listRuns,
+  pollMs,
   session,
   submitGoal,
   type AgentJobSummary,
@@ -91,7 +92,7 @@ export default function App() {
   const jobsActive = !!jobs?.some((j) => j.status === "running" || j.awaiting_approval);
   useEffect(() => {
     if (link === "auth") return;
-    const ms = link === "offline" ? 10000 : jobsActive ? 2500 : 8000;
+    const ms = pollMs(link, jobsActive);
     const id = setInterval(refreshJobs, ms);
     return () => clearInterval(id);
   }, [link, jobsActive, refreshJobs]);
@@ -139,7 +140,7 @@ export default function App() {
   const active = !!run?.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED" || s.state === "QUEUED");
   useEffect(() => {
     if (link === "auth") return;
-    const ms = link === "offline" ? 10000 : active ? 2500 : 8000;
+    const ms = pollMs(link, active);
     const id = setInterval(() => {
       refreshRuns().catch(noteFailure);
       if (selected) fetchRun(selected);

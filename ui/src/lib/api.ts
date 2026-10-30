@@ -151,6 +151,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   });
 }
 
+// Poll cadence shared by every live view: fast while something is running, slow when idle or offline.
+export function pollMs(link: string, active: boolean): number {
+  return link === "offline" ? 10000 : active ? 2500 : 8000;
+}
+
 export async function submitGoal(
   goal: string,
   confirm: boolean,
@@ -271,6 +276,8 @@ export const getAudit = (f: AuditFilter, q: string) => json<AuditPayload>(`/api/
 
 export function testRoute(q: string, confirm: boolean): Promise<RouteTestResponse> {
   return postJson("/api/router/test", { q, confirm: confirm ? "1" : undefined });
+}
+
 // ---- Agent jobs (orchestrator console) ----
 
 export type AgentStatus =
@@ -336,12 +343,7 @@ export async function submitAgentJob(
   budget: number | undefined,
   confirm: boolean,
 ): Promise<{ needs_confirm?: boolean; budget?: number; model?: string; job?: string }> {
-  const token = await csrf();
-  return json("/api/agent-jobs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-    body: JSON.stringify({ goal, budget, confirm: confirm ? "1" : undefined }),
-  });
+  return postJson("/api/agent-jobs", { goal, budget, confirm: confirm ? "1" : undefined });
 }
 
 export async function decideApproval(
@@ -351,10 +353,8 @@ export async function decideApproval(
   hash: string,
   note?: string,
 ): Promise<{ ok: boolean }> {
-  const token = await csrf();
-  return json(`/api/agent-jobs/${encodeURIComponent(job)}/approvals/${encodeURIComponent(id)}/${verb}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-    body: JSON.stringify({ hash, note }),
+  return postJson(`/api/agent-jobs/${encodeURIComponent(job)}/approvals/${encodeURIComponent(id)}/${verb}`, {
+    hash,
+    note,
   });
 }

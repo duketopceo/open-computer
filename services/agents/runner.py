@@ -95,16 +95,18 @@ class JobRunner:
             with lease(self._lease_path(job)) as held:
                 if not held:
                     return  # another process drives this job
-                st = replay(self.trail.rows(job))
+                rows = self.trail.rows(job)
+                st = replay(rows)
                 if st.outcome is not None or not st.started:
                     return
-                parts = dict(self.factory(job, st.goal, st.budget or DEFAULT_BUDGET,
-                                          st.model or DEFAULT_ORCHESTRATOR_MODEL))
+                budget = st.budget or DEFAULT_BUDGET
+                model = st.model or DEFAULT_ORCHESTRATOR_MODEL
+                parts = dict(self.factory(job, st.goal, budget, model))
                 loop = AgentLoop(self.trail, parts.pop("planner"), parts.pop("worker"),
-                                 model=st.model or DEFAULT_ORCHESTRATOR_MODEL, cwd=parts.pop("cwd"),
+                                 model=model, cwd=parts.pop("cwd"),
                                  approve=ConsoleApprover(self.store, job, poll_s=self.poll_s),
-                                 budget=st.budget or DEFAULT_BUDGET, **parts)
-                if any(r.get("event") == "job_start" for r in self.trail.rows(job)):
+                                 budget=budget, **parts)
+                if any(r.get("event") == "job_start" for r in rows):
                     # the resumed planner regenerates every round-level ask; only the plan approval is re-attached
                     self.store.void_unresolved(job)
                     loop.resume(job)
@@ -118,8 +120,10 @@ class JobRunner:
         if self.factory is None:
             return 0
         now, max_age, n = self.clock(), resume_max_age_s(), 0
-        for job in self.trail.jobs():
-            rows = self.trail.rows(job)
+        by_job: dict[str, list[dict]] = {}
+        for r in self.trail.rows():
+            by_job.setdefault(r["job"], []).append(r)
+        for job, rows in by_job.items():
             st = replay(rows)
             if st.outcome is not None or not st.started:
                 continue

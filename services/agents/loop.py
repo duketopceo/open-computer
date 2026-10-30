@@ -20,14 +20,13 @@ from typing import Callable
 from oc.obs import redact_str
 from services.cost import Usage
 
-from .replay import HISTORY_TAIL, INTERRUPTED_RESULT, ReplayState, replay
+from .replay import HISTORY_TAIL, INTERRUPTED_RESULT, RESULT_CAP, ReplayState, replay
 from .trail import Trail
 from .worker import AgentWorker, WorkerResult, WorkerTask, WorkerUnavailable, money, valid_host
 
 DEFAULT_BUDGET = 25.0
 DEFAULT_ORCHESTRATOR_MODEL = "deepseek/deepseek-v4-pro"  # non-premium by rule: tests/unit/test_spend_rule.py
 WARN_FRACTION = 0.8
-RESULT_CAP = 2000
 Planner = Callable[[dict], dict]
 Approve = Callable[[str, dict], bool]
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from .worker import money
 
 HISTORY_TAIL = 8
-RESULT_CAP = 2000
+RESULT_CAP = 2000  # shared with the loop: replayed history must match what the live loop wrote
 DEFAULT_EST = 1.0  # the loop's estimate when a spawn row (older trails) carries none
 INTERRUPTED_RESULT = "interrupted: the process stopped mid-round; charged its estimate"
 
@@ -26,7 +26,6 @@ class ReplayState:
     budget: float | None = None
     model: str = ""
     plan_steps: list | None = None  # None: no `plan` row yet
-    plan_thinking: str | None = None
     plan_approved: bool | None = None  # None: unresolved; only the approval row after the plan row counts
     spent: float = 0.0
     failures: int = 0
@@ -54,7 +53,6 @@ def replay(rows: list[dict]) -> ReplayState:
             meta = meta if meta is not None and meta.get("event") == "job_submit" else r
         elif ev == "plan":
             st.plan_steps = list(r.get("steps") or [])
-            st.plan_thinking = r.get("thinking")
             st.plan_approved = None  # a new plan row opens a new approval
         elif ev == "approval_request":
             pending[str(r.get("kind"))] = r.get("detail") or {}
