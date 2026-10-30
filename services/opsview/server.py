@@ -182,7 +182,7 @@ def fleet_state() -> dict:
     _, body = _get(f"{api}/sandboxes", key)
     try:
         data = json.loads(body)
-        st["sandboxes"] = data if isinstance(data, list) else []
+        st["sandboxes"] = [s for s in data if isinstance(s, dict)] if isinstance(data, list) else []
     except ValueError:
         pass
     return st

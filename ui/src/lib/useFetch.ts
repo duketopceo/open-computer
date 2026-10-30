@@ -15,10 +15,18 @@ export function useFetch<T>(fn: () => Promise<T>, deps: unknown[]) {
   const seq = useRef(0);
   const run = useRef(fn);
   run.current = fn;
+  const lastKey = useRef(JSON.stringify(deps));
 
   useEffect(() => {
     const id = ++seq.current;
-    setState((s) => (s.loading && !s.error ? s : { ...s, error: "", loading: true }));
+    // New inputs (e.g. another audit filter): never show the previous inputs' data while loading.
+    // A plain reload() keeps its data on screen until the fresh response lands.
+    const key = JSON.stringify(deps);
+    const inputsChanged = key !== lastKey.current;
+    lastKey.current = key;
+    setState((s) =>
+      inputsChanged ? { data: null, error: "", loading: true } : s.loading && !s.error ? s : { ...s, error: "", loading: true },
+    );
     run
       .current()
       .then((data) => {

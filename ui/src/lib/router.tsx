@@ -53,6 +53,8 @@ interface Loc {
 }
 
 interface RouterValue extends Loc {
+  /** How many client-side navigations (links, back/forward) happened in this document. */
+  navs: number;
   navigate: (to: string, opts?: { replace?: boolean }) => void;
 }
 
@@ -64,17 +66,24 @@ function here(): Loc {
 
 export function RouterProvider({ children }: { children: ReactNode }) {
   const [loc, setLoc] = useState<Loc>(here);
+  const [navs, setNavs] = useState(0);
   useEffect(() => {
-    const onPop = () => setLoc(here());
+    const onPop = () => {
+      setLoc(here());
+      setNavs((n) => n + 1);
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   const navigate = useCallback((to: string, opts?: { replace?: boolean }) => {
+    // Going to where we already are would stack a duplicate history entry.
+    if (new URL(to, window.location.href).href === window.location.href) return;
     if (opts?.replace) window.history.replaceState(null, "", to);
     else window.history.pushState(null, "", to);
     setLoc(here());
+    setNavs((n) => n + 1);
   }, []);
-  const value = useMemo(() => ({ ...loc, navigate }), [loc, navigate]);
+  const value = useMemo(() => ({ ...loc, navs, navigate }), [loc, navs, navigate]);
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;
 }
 

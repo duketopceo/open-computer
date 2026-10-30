@@ -17,12 +17,9 @@ export function Brand() {
   );
 }
 
-// True after the first page render of this document: later renders are client-side navigations.
-let booted = false;
-
 /** Chrome for every SPA page except `/` (which keeps its own run-focused layout). */
 export function PageShell({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
-  const { path, search } = useRouter();
+  const { path, search, navs } = useRouter();
   const [identity, setIdentity] = useState("");
   const [open, setOpen] = useState(false);
   const main = useRef<HTMLElement>(null);
@@ -33,17 +30,19 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
       .catch(() => {});
   }, []);
 
-  // Client-side navigation moves focus to the page and retitles it; the first
-  // render is a real page load, where the browser already did both.
   useEffect(() => {
     document.title = `${title} · open-computer`;
-    setOpen(false);
-    if (!booted) {
-      booted = true;
-      return;
-    }
-    main.current?.focus();
-  }, [path, search, title]);
+  }, [title]);
+
+  // A client-side navigation (a link or back/forward, counted by the router) to a page moves focus to it;
+  // the first render of a document is a real page load, where the browser already did. Only a page
+  // change counts: a query-string change on the same page (the audit filter) must not steal focus.
+  useEffect(() => {
+    if (navs > 0) main.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
+
+  useEffect(() => setOpen(false), [path, search]);
 
   return (
     <div className="flex h-full flex-col md:flex-row">

@@ -12,8 +12,9 @@ export function NavList({ items, label = "Console" }: { items: NavItem[]; label?
       <ul>
         {items.map((it) => {
           // sandbox detail (/sandboxes/<id>) keeps its section highlighted
-          const active =
-            it.spa && (here === it.href || (it.href !== "/" && here.startsWith(it.href + "/"))) ? "page" : undefined;
+          // only one segment below the section (/sandboxes/<id>); deeper paths are not a declared route
+          const below = it.href !== "/" && here.startsWith(it.href + "/") && !here.slice(it.href.length + 1).includes("/");
+          const active = it.spa && (here === it.href || below) ? "page" : undefined;
           const cls = cn(ITEM, active ? "bg-teal-soft font-medium text-teal" : "text-muted hover:bg-black/5 hover:text-ink");
           return (
             <li key={it.href}>

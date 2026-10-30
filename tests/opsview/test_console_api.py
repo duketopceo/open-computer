@@ -170,3 +170,10 @@ def test_audit_payload_returns_raw_values_escaping_is_the_clients_job(console):
 def test_router_tester_is_a_post_only_api_route():
     assert ("/api/router/test", "p_api_router_test") in server.POST_ROUTES
     assert "/api/router/test" not in {p for p, _ in server.GET_ROUTES}
+
+
+def test_sandbox_list_drops_non_object_entries(console, monkeypatch):
+    """A null/str entry from the control plane must not reach the SPA, whose rows read fields off each entry."""
+    monkeypatch.setattr(server, "_get", lambda url, key, timeout=3.0: (200, '[null, "x", 7, {"sandboxID": "sbx-1"}]'))
+    _, data = j(console, "/api/sandboxes")
+    assert data["sandboxes"] == [{"sandboxID": "sbx-1"}]

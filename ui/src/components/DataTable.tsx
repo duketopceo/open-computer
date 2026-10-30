@@ -34,6 +34,7 @@ export function Td({ children, className, mono }: { children: ReactNode; classNa
 export function Time({ ts }: { ts: number }) {
   if (!ts) return <span className="text-muted">never</span>;
   const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return <span className="text-muted">invalid time</span>;
   return (
     <time dateTime={d.toISOString()} title={d.toLocaleString()} className="whitespace-nowrap">
       {rel(ts)}

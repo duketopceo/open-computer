@@ -324,8 +324,12 @@ test("sandboxes: ids with markup or slashes are encoded in links and rendered as
   const payload = { configured: true, up: true, api_host: "cube.test", sandboxes: [{ sandboxID: evil, templateID: "t", status: "running", note: { n: "<script>window.__xss=1</script>" } }] };
   const { ctx, page } = await openAt("/sandboxes", { routes: { "**/api/sandboxes": (r) => r.fulfill(json(200, payload)) } });
   const link = page.getByRole("link", { name: evil });
-  assert.equal(await link.getAttribute("href"), "/sandboxes/" + encodeURIComponent(evil));
+  const href = await link.getAttribute("href");
+  assert.equal(href, "/sandboxes/" + encodeURIComponent(evil));
   await link.click();
+  await page.getByRole("table", { name: "Sandbox " + evil }).waitFor();
+  // loading the encoded detail URL directly (a hard load, not a client navigation) works too
+  await page.goto(new URL(href, page.url()).href, { waitUntil: "networkidle" });
   await page.getByRole("table", { name: "Sandbox " + evil }).waitFor();
   assert.equal(await page.evaluate(() => window.__xss), undefined);
   assert.equal(await page.locator("main i, main script").count(), 0);
@@ -345,8 +349,14 @@ test("@perf sandboxes: no layout shift when the inventory replaces the loading s
 
 test("router: free engine routes immediately and refetches the ledger (POST intercepted)", async () => {
   let posts = [];
+  let routerGets = 0;
   const { ctx, page } = await openAt("/router", {
     routes: {
+      "**/api/router": (r) => {
+        routerGets++;
+        return r.fulfill(json(200, { paid: false, dest_host: "", per_route_cost: 0, spend: 0, cap: 1,
+          ledger: routerGets === 1 ? [] : [{ ts: Date.now() / 1000, event: "decision", route: "just-routed", engine: "table", cost: 0 }] }));
+      },
       "**/api/router/test": async (r) => {
         posts.push(JSON.parse(r.request().postData() || "{}"));
         await new Promise((res) => setTimeout(res, 200)); // window for a double click
@@ -354,7 +364,7 @@ test("router: free engine routes immediately and refetches the ledger (POST inte
       },
     },
   });
-  await page.getByRole("table", { name: "Decision ledger, newest first" }).waitFor();
+  await page.getByText("No decisions yet").waitFor();
   await page.getByRole("textbox", { name: "Utterance to route" }).fill("summarise this");
   const go = page.getByRole("button", { name: /^Route/ });
   await go.click();
@@ -362,6 +372,8 @@ test("router: free engine routes immediately and refetches the ledger (POST inte
   await page.getByRole("table", { name: "Route result" }).waitFor();
   assert.equal(posts.length, 1, "double submit sends one request");
   assert.equal(posts[0].confirm, undefined);
+  await page.getByRole("cell", { name: "just-routed" }).waitFor(); // the ledger was refetched
+  assert.equal(routerGets, 2);
   assert.ok(await page.getByText("nothing leaves this box").isVisible());
   await ctx.close();
 });
@@ -470,5 +482,78 @@ test("audit: a failed fetch offers Retry, and only the last filter's rows render
 test("an expired session on a ported page shows the session-expired state", async () => {
   const { ctx, page } = await openAt("/devices", { routes: { "**/api/devices": (r) => r.fulfill(json(401, { error: "Sign in again." })) } });
   await page.getByRole("alert").filter({ hasText: "session expired" }).waitFor();
+  await ctx.close();
+});
+
+test("nav: Sandboxes is current only for declared routes, and a same-URL click adds no history entry", async () => {
+  let { ctx, page } = await openAt("/sandboxes/sbx-7f3a91c2");
+  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').textContent(), "Sandboxes");
+  await page.evaluate(() => { history.pushState(null, "", "/sandboxes/a/b"); dispatchEvent(new PopStateEvent("popstate")); });
+  await page.getByRole("heading", { level: 1, name: "Not found" }).waitFor();
+  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').count(), 0);
+  await ctx.close();
+  ({ ctx, page } = await openAt("/devices"));
+  const before = await page.evaluate(() => history.length);
+  await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Devices" }).click();
+  assert.equal(await page.evaluate(() => history.length), before, "clicking the current page's link pushes nothing");
+  await ctx.close();
+});
+
+test("focus: the first client-side navigation from / lands on main; an audit filter submit keeps focus in the input", async () => {
+  let { ctx, page } = await open();
+  await page.getByRole("navigation", { name: "Operator" }).getByRole("link", { name: "Devices" }).click();
+  await page.getByRole("heading", { level: 1, name: "Devices" }).waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "main");
+  await ctx.close();
+  ({ ctx, page } = await openAt("/audit"));
+  const box = page.getByRole("searchbox", { name: "Filter audit rows" });
+  await box.fill("gpt");
+  await box.press("Enter");
+  await page.waitForURL(/q=gpt/);
+  await page.getByRole("table", { name: "Audit events, newest first" }).waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "audit-q", "focus stays in the filter input");
+  await ctx.close();
+});
+
+test("audit: rows from the previous filter are not shown while the next one loads; a bad timestamp does not crash", async () => {
+  const row = (event, ts) => ({ ts, event, result: "recorded", detail: "" });
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const { ctx, page } = await openAt("/audit", {
+    routes: {
+      "**/api/audit*": async (r) => {
+        const f = new URL(r.request().url()).searchParams.get("f") ?? "all";
+        if (f === "blocked") await gate;
+        return r.fulfill(json(200, { f, q: "", total: 2, shown: 2, rows: [row("e-" + f, 1), row("bad-ts", 1e16)] }));
+      },
+    },
+  });
+  await page.getByText("e-all", { exact: true }).waitFor();
+  assert.ok(await page.getByText("invalid time").isVisible(), "an out-of-range timestamp renders a fallback instead of throwing");
+  await page.getByRole("link", { name: "Blocked" }).click();
+  await page.getByRole("status").filter({ hasText: "Loading" }).waitFor();
+  assert.equal(await page.getByText("e-all", { exact: true }).count(), 0, "previous filter's rows are hidden while loading");
+  release();
+  await page.getByText("e-blocked", { exact: true }).waitFor();
+  await ctx.close();
+});
+
+test("router: a failed second route clears the first route's result", async () => {
+  let n = 0;
+  const { ctx, page } = await openAt("/router", {
+    routes: {
+      "**/api/router/test": (r) => (++n === 1
+        ? r.fulfill(json(200, { result: { route: "local", tier: "cheap", engine: "table", confidence: 0.9, cost: 0, ms: 1 } }))
+        : r.fulfill(json(502, { error: "Routing failed: budget halted. Nothing was sent." }))),
+    },
+  });
+  const box = page.getByRole("textbox", { name: "Utterance to route" });
+  await box.fill("first");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("table", { name: "Route result" }).waitFor();
+  await box.fill("second");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("alert").filter({ hasText: "Nothing was sent." }).waitFor();
+  assert.equal(await page.getByRole("table", { name: "Route result" }).count(), 0);
   await ctx.close();
 });

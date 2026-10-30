@@ -27,6 +27,7 @@ export default function Router() {
     if (busy) return;
     setBusy(true);
     setFailure("");
+    setResult(null); // a failed second route must not sit beside the first one's result
     try {
       const r = await testRoute(utterance, confirmed);
       if ("needs_confirm" in r) {

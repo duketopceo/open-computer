@@ -5,6 +5,7 @@ no models, no network beyond 127.0.0.1. The fixture swaps the matrix runner for 
 uses a fake passkey session (`oc_sess=test`), so it is test-only.
 
     cd tests/e2e && npm i && npx playwright install chromium && npm test
+    # the React-app tests need a UI build first: pnpm --dir ui install && pnpm --dir ui build
     npm run test:a11y        # axe, WCAG 2.2 AA, both themes, 1440 and 390, every route (console + React pages)
     npm run test:spa         # the React app (needs `pnpm --dir ui build`): home, Devices, Sandboxes, Router, Audit
     npm run test:keyboard    # keyboard-only journeys
