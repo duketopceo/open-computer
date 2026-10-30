@@ -1,5 +1,6 @@
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
+import { engine, errorKind, placement } from "@/lib/friendly";
 import { Dot, StateWord } from "./primitives";
 
 export function RunView({ run }: { run: RunDetail }) {
@@ -50,7 +51,7 @@ function SubTaskRow({ s }: { s: SubTask }) {
         <div className="flex items-baseline justify-between gap-3">
           <p className="truncate text-sm font-medium text-ink">{s.title || s.subtask}</p>
           <div className="flex shrink-0 items-center gap-2">
-            <span className="mono text-muted">{s.engine || "—"}</span>
+            {engine(s.engine) && <span className="mono text-muted">{engine(s.engine)}</span>}
             {took && (
               <span className="mono text-muted" title={live ? "Running for" : "Run time"}>
                 {took}
@@ -63,13 +64,13 @@ function SubTaskRow({ s }: { s: SubTask }) {
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
           <span className="mono">{s.route || "route —"}</span>
           <span>·</span>
-          <span className="mono">{s.placement || "placement —"}</span>
+          <span className="mono">{placement(s.placement)}</span>
           {s.pii && <span className="text-violet-600">· private</span>}
         </p>
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "FAILED" && (
           <p className="mt-1 text-xs text-red-600">
-            {s.error_kind ?? "failed"}: {s.error}
+            {errorKind(s.error_kind)}: {s.error}
             {s.hint ? ` — ${s.hint}` : ""}
           </p>
         )}

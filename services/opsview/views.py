@@ -578,15 +578,26 @@ def route_result(d: dict) -> str:
 # ------------------------------------------------------------------- goals
 
 
+_KIND_WORDS = {
+    "CancelledError": "Cancelled",
+    "DependencyFailed": "Skipped",
+    "NoPlacement": "Couldn't be placed",
+    "CommandExitException": "Step failed",
+    "SandboxWorkerUnavailable": "Sandbox unavailable",
+    "BudgetHalt": "Over budget",
+}
+
+
 def _fail_item(f: dict) -> str:
     """One worker_fail audit row as an inspector item: kind, detail, hint."""
     kind = f.get("kind")
-    kind_t = f'<span class="chip err-chip mono">{e(str(kind))}</span> ' if kind else ""
+    label = _KIND_WORDS.get(str(kind), str(kind)) if kind else ""
+    kind_t = f'<span class="chip err-chip mono">{e(label)}</span> ' if label else ""
+    sub = f.get("subtask")
+    sub_t = f'<span class="mono">{e(str(sub))}</span> ' if sub else ""
     hint = f.get("hint")
     hint_t = f'<p class="muted caption w-hint">{e(str(hint))}</p>' if hint else ""
-    return (
-        f'<li><span class="mono">{e(str(f.get("task", "")))}</span> {kind_t}{e(str(f.get("error", "")))}{hint_t}</li>'
-    )
+    return f"<li>{sub_t}{kind_t}{e(str(f.get('error', '')))}{hint_t}</li>"
 
 
 def _state_chips(states: dict) -> str:
