@@ -385,3 +385,16 @@ export function decideQueueItem(
 ): Promise<{ ok: boolean }> {
   return postJson(`/api/approvals/${encodeURIComponent(id)}/${verb}`, { hash, note });
 }
+
+// ---- Overview ----
+
+export interface OverviewPayload {
+  pending_approvals: ApprovalItem[];
+  runs: Record<string, unknown>[];
+  audit: Record<string, unknown>[];
+  spend: number;
+  cap: number;
+  now: number;
+}
+
+export const getOverview = () => json<OverviewPayload>("/api/overview");

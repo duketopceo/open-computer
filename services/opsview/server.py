@@ -294,8 +294,9 @@ GET_ROUTES = [
     (r"/api/agent-jobs", "g_api_agent_jobs"),
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
     (r"/api/approvals", "g_api_approvals"),
+    (r"/api/overview", "g_api_overview"),
     (r"/work", "g_work"),
-    (r"/overview", "g_overview"),
+    (r"/overview", "g_spa_route"),
     (r"/sandboxes", "g_spa_route"),
     (r"/sandboxes/(?P<id>[^/]+)", "g_spa_route"),
     (r"/devices", "g_spa_route"),
@@ -682,6 +683,21 @@ class Handler(BaseHTTPRequestHandler):
         audit = list(reversed(read_ndjson(audit_path())))[:8]
         body = views.page_overview(q.pending(), runstore.list_runs(), audit, day_spend(), daily_cap(), now)
         self._page("overview", body, sub="What needs you, and what is running")
+
+    def g_api_overview(self, qs):
+        q = ApprovalQueue(approvals_path())
+        audit = list(reversed(read_ndjson(audit_path())))[:8]
+        self._json(
+            200,
+            {
+                "pending_approvals": q.pending(),
+                "runs": runstore.list_runs(),
+                "audit": audit,
+                "spend": day_spend(),
+                "cap": daily_cap(),
+                "now": time.time(),
+            },
+        )
 
     def g_api_sandboxes(self, qs):
         self._json(200, consoleapi.sandboxes_payload(fleet_state()))

@@ -40,7 +40,7 @@ def test_request_id_is_generated_echoed_and_on_the_access_line(console, lines):
     assert status == 200 and re.fullmatch(r"[0-9a-f]{16}", rid)
     (row,) = access(lines(1))
     assert row["request_id"] == rid and row["method"] == "GET" and row["status"] == 200
-    assert row["route"] == "g_overview" and isinstance(row["ms"], float) and row["level"] == "INFO"
+    assert row["route"] == "spa/overview" and isinstance(row["ms"], float) and row["level"] == "INFO"
 
 
 def test_well_formed_inbound_request_id_is_kept_malformed_is_replaced(console, lines):
