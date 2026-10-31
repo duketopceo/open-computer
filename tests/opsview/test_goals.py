@@ -24,9 +24,9 @@ def submitted(monkeypatch):
 
 
 def test_goals_pages_render(console):
-    assert console.get("/goals")[0] == 200
-    status, _, html = console.get("/goals/new")
-    assert status == 200 and 'name="goal"' in html and 'name="csrf"' in html
+    assert console.get("/goals")[0] == 200  # React shell
+    status, headers, _ = console.get("/goals/new")
+    assert status == 302 and headers["Location"] == "/"  # composer lives at /
     status, _, _ = console.get("/goals/goal_00000000")
     assert status == 404
 
@@ -70,8 +70,9 @@ def test_run_list_and_detail_read_disk(console, monkeypatch, tmp_path):
     runs = json.loads(body)["runs"]
     row = next(r for r in runs if r["run"] == rid)
     assert row["goal"] == "Do two things" and row["states"]["DONE"] == 2
-    status, _, html = console.get(f"/goals/{rid}")
-    assert status == 200 and "out:p2" in html and "first" in html
+    status, _, body = console.get(f"/api/runs/{rid}")
+    detail = json.loads(body)
+    assert detail["subtasks"][0]["title"] == "first" and "out:p2" in detail["subtasks"][1]["result"]
 
 
 def test_resume_recovers_interrupted_run(console, monkeypatch, tmp_path):
@@ -128,8 +129,8 @@ def test_failed_decompose_renders_visible_run(console, monkeypatch, tmp_path):
     assert got["error_kind"] == "RuntimeError"
     listing = goalruns.list_runs()
     assert listing[0]["run"] == rid and listing[0]["states"]["FAILED"] == 1
-    status, _, html = console.get(f"/goals/{rid}")
-    assert status == 200 and "planner endpoint unreachable" in html
+    status, _, body = console.get(f"/api/runs/{rid}")
+    assert json.loads(body)["error"] == "planner endpoint unreachable"
     status, _, body = console.get("/api/runs")
     row = next(r for r in json.loads(body)["runs"] if r["run"] == rid)
     assert row["goal"] == "Will fail" and row["states"]["FAILED"] == 1
@@ -162,8 +163,9 @@ def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
     assert sub["state"] == "FAILED"
     assert sub["error_kind"] == "LocalModelUnavailable"
     assert ":8080 refused" in sub["error"] and sub["hint"] == "start llama-local.service"
-    status, _, html = console.get(f"/goals/{rid}")
-    assert "LocalModelUnavailable" in html and "start llama-local.service" in html
+    status, _, body = console.get(f"/api/runs/{rid}")
+    sub = json.loads(body)["subtasks"][0]
+    assert sub["error_kind"] == "LocalModelUnavailable" and sub["hint"] == "start llama-local.service"
 
 
 def _write_run(base, rid, rows, thinking=None):
@@ -204,7 +206,7 @@ def test_old_runs_without_start_or_thinking_still_render(console, monkeypatch, t
     got = goalruns.get_run("goal_01d01d00")
     (s,) = got["subtasks"]
     assert "started_ts" not in s and "thinking" not in s and "plan_thinking" not in got
-    assert console.get("/goals/goal_01d01d00")[0] == 200
+    assert console.get("/api/runs/goal_01d01d00")[0] == 200
 
 
 def test_thinking_rows_attach_to_steps_and_plan(console, monkeypatch, tmp_path):

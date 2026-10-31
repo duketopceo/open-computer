@@ -297,14 +297,14 @@ GET_ROUTES = [
     (r"/api/overview", "g_api_overview"),
     (r"/api/skills", "g_api_skills"),
     (r"/api/automations", "g_api_automations"),
-    (r"/work", "g_work"),
+    (r"/work", "g_work_redirect"),
     (r"/overview", "g_spa_route"),
     (r"/sandboxes", "g_spa_route"),
     (r"/sandboxes/(?P<id>[^/]+)", "g_spa_route"),
     (r"/devices", "g_spa_route"),
     (r"/goals", "g_spa_route"),
-    (r"/goals/new", "g_goal_new"),
-    (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
+    (r"/goals/new", "g_goal_new_redirect"),
+    (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal_redirect"),
     (r"/skills", "g_spa_route"),
     (r"/automations", "g_spa_route"),
     (r"/runs", "g_spa_route"),
@@ -676,8 +676,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(502, {"error": f"groq unreachable: {type(e).__name__}"})
         self._send(200, out, "application/json", {"Cache-Control": "no-store"})
 
-    def g_work(self, qs):
-        self._page("work", views.page_work(self._csrf()), sub="Goals, plans, results — the workplace")
+    def g_work_redirect(self, qs):
+        self._redirect("/")
+
+    def g_goal_new_redirect(self, qs):
+        self._redirect("/")
+
+    def g_goal_redirect(self, qs, id):
+        if goalruns.get_run(id) is None:
+            return self._json(404, {"error": "not found"})
+        self._redirect(f"/#{id}")
 
     def g_overview(self, qs):
         now = time.time()
