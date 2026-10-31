@@ -1,4 +1,30 @@
-# open-computer design direction: "Flight Strip"
+# open-computer design direction
+
+Two directions live here. **Console (people)** is what the web console ships for everyone. **Flight Strip** is for the
+CLI, the approval TUI and the console's Developer tools. Plan: `docs/plans/2026-10-31-002-feat-general-market-ux-plan.md`.
+
+## Console (people), 2026-10-31
+
+The web console is for people who are not technical. It follows the shape of Perplexity Computer: one task box with an
+effort picker, a short left nav, and plain words. This section supersedes Flight Strip for the console's default
+views. Flight Strip still governs the rules marked "carries over".
+
+- **Thesis:** a calm paper canvas, one teal accent for "this is yours to act on", a serif for the single question on the page,
+  plain sans for everything else. A notebook with one pen on it, not a cockpit.
+- **Tokens:** `ui/tailwind.config.ts` is the source (canvas `#faf9f6`, ink `#1a1a18`, muted `#6b6b64`, line `#e7e4dc`, teal `#0f766e`).
+  Soft card shadow is allowed; gradients are not.
+- **Navigation:** at most five primary entries (New, Tasks, Needs you, Automations, Recent). Operator and developer screens sit behind
+  the **Developer tools** switch. Under 768 px the sidebar is a slide-in menu.
+- **Cards** only where the card is the interaction (a task, an approval, a starter idea). Lists are stacked rows, not sideways tables.
+- **Words:** sentence case, verbs on buttons, no ids, model ids, paths or env var names outside Developer tools. The glossary in the
+  plan is the source of truth (`ui/src/lib/words.ts`).
+- **Carries over from Flight Strip:** state is a glyph plus a word, never colour alone; the accent means "live or needs you";
+  text pairs meet 4.5:1; every state is explicit; reduced motion is respected; no chat-bubble thread UI.
+- **Dark theme:** not yet implemented in the React console; when added it reuses the Flight Strip dark tokens below.
+
+---
+
+# Flight Strip (CLI, approval TUI, Developer tools)
 
 Status: proposal, 2026-10-10. The owner signs off direction and logo. The product has no UI yet;
 this fixes the look of the surfaces it will have.
