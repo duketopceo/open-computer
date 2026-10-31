@@ -25,6 +25,13 @@ from .thinking import ThinkingLog, join_thoughts
 log = get_logger("worker")
 
 
+def _attempts(fs, tid: str) -> int:
+    try:
+        return int((fs._task_dir(tid) / "attempts").read_text().strip())
+    except (OSError, ValueError):
+        return 0
+
+
 def _ctx(task: dict, tid: str):
     """Bind the id spine carried on the task body for the duration of a log/work block."""
     return bind(run_id=task.get("run"), subtask=task.get("subtask"), task=tid, chat_id=task.get("chat"),
@@ -93,9 +100,19 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
                 if thinking is not None and thoughts:
                     thinking.append(task.get("run", ""), tid, task.get("subtask", ""), join_thoughts(thoughts))
     except Exception as e:
+        from .engines import SandboxWorkerUnavailable  # local: avoids import cycle
+
         log.error("task failed", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1), **error_fields(e))
         if token:
             ledger.release(task["run"], token)
+        if isinstance(e, SandboxWorkerUnavailable) and _attempts(fs, tid) < 3:
+            # Temporary backend outage is not a step failure: release the
+            # lease so the task returns to queued for the next sweep.
+            attempts_file = fs._task_dir(tid) / "attempts"
+            attempts_file.write_text(str(_attempts(fs, tid) + 1))
+            fs.expire(tid)
+            audit.append({"event": "worker_requeue", "task": tid, "reason": str(e)[:200]})
+            return True
         fs.fail(tid)
         audit.append(
             {

@@ -252,14 +252,19 @@ def sandbox_work(
     hosts = set(task.get("egress_hosts") or [])
     b64 = base64.b64encode(script.encode()).decode()
     if run_id:
-        ent = _acquire_run_sandbox(plane, run_id, hosts)
-        try:
-            res = ent["sb"].exec(f"echo {b64} | base64 -d | bash")
-        except Exception:
-            _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
-            raise
-        finally:
-            _release_run_sandbox(ent)
+        res = None
+        for attempt in range(2):  # transient VM/control-plane errors get exactly one retry
+            ent = _acquire_run_sandbox(plane, run_id, hosts)
+            try:
+                res = ent["sb"].exec(f"echo {b64} | base64 -d | bash")
+            except Exception:
+                _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
+                if attempt == 1:
+                    raise
+                continue
+            finally:
+                _release_run_sandbox(ent)
+            break
     else:
         sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)
         try:
