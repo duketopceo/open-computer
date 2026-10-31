@@ -292,11 +292,20 @@ def test_exec_exception_evicts_the_run_vm(scripted):
     second = _FakeSandbox(ExecResult(0, "ok\n", ""))
     first.exec = lambda cmd: (_ for _ in ()).throw(OSError("vm gone"))
     plane = _seq_plane(first, second)
-    with pytest.raises(OSError):
-        engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=plane)
-    assert first.closed and "r1" not in engines._RUN_SANDBOXES
-    engines.sandbox_work({"prompt": "b", "run": "r1"}, api_key="k", plane=plane)
-    assert second.seen  # next step booted a fresh VM
+    # transient exec failure: evict the dead VM and retry once on a fresh one
+    assert engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=plane) == "ok\n"
+    assert first.closed and second.seen and len(plane.calls) == 2
+
+
+def test_exec_exception_twice_raises(scripted):
+    for _ in range(2):
+        bad = _FakeSandbox(ExecResult(0, "ok\n", ""))
+        bad.exec = lambda cmd: (_ for _ in ()).throw(OSError("vm gone"))
+        plane = _FakePlane()
+        plane.sb = bad
+        with pytest.raises(OSError):
+            engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=plane)
+        engines._RUN_SANDBOXES.clear()
 
 
 def test_nonzero_script_exit_keeps_the_run_vm(scripted):
