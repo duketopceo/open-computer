@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, transcribe } from "@/lib/api";
+import { errorMessage, getEffort, transcribe, type GoalOptions } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { useFetch } from "@/lib/useFetch";
+import { EffortPicker, toOptions, type EffortChoice } from "./EffortPicker";
 import { Button } from "./primitives";
 
 type RecState = "idle" | "starting" | "recording" | "transcribing";
@@ -22,12 +24,18 @@ export function Composer({
   busy,
   starter,
 }: {
-  onRun: (goal: string) => void;
+  onRun: (goal: string, opts: GoalOptions) => void;
   disabled?: boolean;
   busy?: boolean;
   starter?: string;
 }) {
   const [value, setValue] = useState("");
+  const effort = useFetch(getEffort, []);
+  const catalog = effort.data;
+  const [choice, setChoice] = useState<EffortChoice | null>(null);
+  // Until the user picks, the server's default level is selected.
+  const picked: EffortChoice = choice ?? { effort: catalog?.default ?? "", model: "", budget: "" };
+  const opts = toOptions(picked, catalog);
   const [rec, setRec] = useState<RecState>("idle");
   const [err, setErr] = useState("");
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -145,7 +153,28 @@ export function Composer({
     }
   }
 
-  const canRun = value.trim().length > 0 && !disabled && !busy && rec === "idle";
+  const canRun = value.trim().length > 0 && !disabled && !busy && rec === "idle" && !effort.loading && opts !== null;
+  const run = () => opts && onRun(value.trim(), opts);
+
+  const mic = (
+    <button
+      type="button"
+      onClick={toggleVoice}
+      disabled={disabled || busy || rec === "starting" || rec === "transcribing"}
+      aria-label={rec === "recording" ? "Stop recording" : "Dictate"}
+      title="Dictate (Groq LPU)"
+      className={cn(
+        "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+        rec === "recording" ? "bg-red-500 text-white" : "text-muted hover:bg-black/5",
+      )}
+    >
+      {rec === "transcribing" || rec === "starting" ? (
+        <span className="h-3 w-3 animate-pulse rounded-full border border-muted" />
+      ) : (
+        <MicIcon />
+      )}
+    </button>
+  );
 
   return (
     <div className="w-full max-w-2xl">
@@ -158,7 +187,7 @@ export function Composer({
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              if (canRun) onRun(value.trim());
+              if (canRun) run();
             }
           }}
           rows={3}
@@ -167,30 +196,22 @@ export function Composer({
           aria-label="Describe a goal"
           className="w-full resize-none border-0 bg-transparent p-2 text-[15px] leading-relaxed text-ink outline-none placeholder:text-muted"
         />
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-1.5">
-            <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-teal/30 bg-teal-soft px-2.5 text-xs font-medium text-teal">
-              Computer
-            </span>
-            <button
-              type="button"
-              onClick={toggleVoice}
-              disabled={disabled || busy || rec === "starting" || rec === "transcribing"}
-              aria-label={rec === "recording" ? "Stop recording" : "Dictate"}
-              title="Dictate (Groq LPU)"
-              className={cn(
-                "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                rec === "recording" ? "bg-red-500 text-white" : "text-muted hover:bg-black/5",
-              )}
-            >
-              {rec === "transcribing" || rec === "starting" ? (
-                <span className="h-3 w-3 animate-pulse rounded-full border border-muted" />
-              ) : (
-                <MicIcon />
-              )}
-            </button>
+        <div className="flex flex-wrap items-start justify-between gap-2 px-1">
+          <div className="min-w-0 flex-1 basis-full sm:basis-0">
+            {catalog ? (
+              <EffortPicker catalog={catalog} value={picked} onChange={setChoice} disabled={disabled || busy} lead={mic} />
+            ) : (
+              <div className="flex items-center gap-2">
+                {mic}
+                {effort.error && (
+                  <p className="text-xs text-muted" role="status">
+                    Effort levels unavailable; the server default applies.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
-          <Button variant="primary" disabled={!canRun} aria-busy={busy} onClick={() => onRun(value.trim())}>
+          <Button variant="primary" className="ml-auto" disabled={!canRun} aria-busy={busy} onClick={run}>
             {busy ? "Sending…" : rec === "recording" ? "Listening…" : "Run"}
           </Button>
         </div>

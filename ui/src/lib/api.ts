@@ -46,6 +46,16 @@ export interface SubTask {
   thinking?: string; // reasoning text the step's model calls returned
 }
 
+// What a run was started with, and what it has spent against its own budget.
+// `paused`: the budget stopped new steps; nothing was cancelled.
+export interface RunEffort {
+  id: string | null;
+  model: string | null;
+  budget: number | null;
+  spent: number;
+  paused: boolean;
+}
+
 export interface RunDetail {
   run: string;
   goal: string;
@@ -57,6 +67,7 @@ export interface RunDetail {
   started?: number;
   ended?: number;
   plan_thinking?: string;
+  effort?: RunEffort;
   error?: string;
   error_kind?: string;
   hint?: string;
@@ -156,11 +167,44 @@ export function pollMs(link: string, active: boolean): number {
   return link === "offline" ? 10000 : active ? 2500 : 8000;
 }
 
-export async function submitGoal(
-  goal: string,
-  confirm: boolean,
-): Promise<{ needs_confirm?: boolean; cap?: number; run?: string }> {
-  return postJson("/goals", { goal, confirm: confirm ? "1" : undefined });
+// The effort picker's options come from the server so the UI never carries its own model or price list.
+export interface EffortLevel {
+  id: string;
+  label: string;
+  blurb: string;
+  model: string;
+  budget: number;
+}
+
+export interface EffortCatalog {
+  default: string;
+  max_budget: number;
+  models: string[];
+  levels: EffortLevel[];
+}
+
+export function getEffort(): Promise<EffortCatalog> {
+  return json<EffortCatalog>("/api/effort");
+}
+
+// `model` and `budget` are the advanced overrides; omitted means "what the effort level says".
+export interface GoalOptions {
+  effort?: string;
+  model?: string;
+  budget?: number;
+}
+
+export interface GoalReply {
+  needs_confirm?: boolean;
+  cap?: number;
+  run?: string;
+  effort?: string;
+  model?: string;
+  budget?: number;
+}
+
+export async function submitGoal(goal: string, confirm: boolean, opts: GoalOptions = {}): Promise<GoalReply> {
+  return postJson("/goals", { goal, ...opts, confirm: confirm ? "1" : undefined });
 }
 
 export async function transcribe(audio: Blob): Promise<string> {

@@ -8,6 +8,8 @@ import {
   pollMs,
   session,
   submitGoal,
+  type GoalOptions,
+  type GoalReply,
   type AgentJobSummary,
   type RunDetail,
   type RunSummary,
@@ -34,7 +36,7 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [run, setRun] = useState<RunDetail | null>(null);
   const [runError, setRunError] = useState("");
-  const [confirm, setConfirm] = useState<{ goal: string; cap: number; error?: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ goal: string; opts: GoalOptions; plan: GoalReply; error?: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [starter, setStarter] = useState<string | undefined>();
   const [draft, setDraft] = useState<string | undefined>();
@@ -158,14 +160,14 @@ export default function App() {
     return () => clearInterval(id);
   }, [selected, active, link, refreshRuns, fetchRun, noteFailure]);
 
-  function onRun(goal: string) {
+  function onRun(goal: string, opts: GoalOptions) {
     if (submitting) return;
     setError("");
     setSubmitting(true);
-    submitGoal(goal, false)
+    submitGoal(goal, false, opts)
       .then((r) => {
         if (r.run) select(r.run);
-        else if (r.needs_confirm) setConfirm({ goal, cap: r.cap ?? 0 });
+        else if (r.needs_confirm) setConfirm({ goal, opts, plan: r });
         else setError("The server didn't start a run or ask to confirm. Try again.");
       })
       .catch((e) => {
@@ -178,10 +180,10 @@ export default function App() {
 
   function confirmRun() {
     if (!confirm || submitting) return;
-    const goal = confirm.goal;
+    const { goal, opts } = confirm;
     setSubmitting(true);
     setConfirm({ ...confirm, error: undefined });
-    submitGoal(goal, true)
+    submitGoal(goal, true, opts)
       .then((r) => {
         if (!r.run) throw new Error("The server accepted the goal but returned no run id.");
         setConfirm(null); // only once it actually started
@@ -247,7 +249,7 @@ export default function App() {
           {confirm ? (
             <ConfirmCard
               goal={confirm.goal}
-              cap={confirm.cap}
+              plan={confirm.plan}
               error={confirm.error}
               busy={submitting}
               onRun={confirmRun}
@@ -319,14 +321,14 @@ function LinkBanner({ link }: { link: Exclude<Link, "ok"> }) {
 
 function ConfirmCard({
   goal,
-  cap,
+  plan,
   error,
   busy,
   onRun,
   onCancel,
 }: {
   goal: string;
-  cap: number;
+  plan: GoalReply;
   error?: string;
   busy: boolean;
   onRun: () => void;
@@ -336,10 +338,18 @@ function ConfirmCard({
     <div className="mx-auto w-full max-w-xl animate-fade-up rounded-2xl border border-line bg-white p-5 shadow-card">
       <h2 className="font-display text-xl text-ink">Run this?</h2>
       <p className="mt-2 text-sm text-ink/90">{goal}</p>
+      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt className="text-muted">Effort</dt>
+        <dd className="mono capitalize">{plan.effort}</dd>
+        <dt className="text-muted">Model</dt>
+        <dd className="mono break-all">{plan.model}</dd>
+        <dt className="text-muted">Budget</dt>
+        <dd className="mono">up to ${(plan.budget ?? 0).toFixed(2)} for this run</dd>
+      </dl>
       <p className="mt-3 text-xs leading-relaxed text-muted">
-        A planner call decomposes the goal; subtasks placed cloud-* run against OpenRouter and are
-        metered against the ${cap}/day cap. Anything flagged private stays local or waits for
-        approval.
+        A planner call decomposes the goal; subtasks placed cloud-* run against OpenRouter with that
+        model. The run pauses when it reaches its budget; nothing is cancelled. Anything flagged
+        private stays local or waits for approval.
       </p>
       {error && (
         <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">

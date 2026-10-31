@@ -15,12 +15,13 @@ from temporalio import activity
 
 from services.orchestrator import Orchestrator
 from services.orchestrator.engines import decompose_engine, work_fn as _engine_work_fn
+from services.orchestrator.runcfg import ledger_for, model_of
 from services.placement import place_live
 
 
 def _recover(run_dir: str) -> tuple[Orchestrator, str | None]:
     """Fresh-process view of a run: plan.json + audit rows on disk."""
-    orch = Orchestrator(run_dir, place_fn=place_live)
+    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger_for(run_dir))
     rid = next(
         (r["run"] for r in reversed(orch.audit.rows()) if r.get("event") == "run_submit"),
         None,
@@ -35,7 +36,8 @@ def work_sweep(run_dir: str) -> int:
     """One sweep: claim pending, execute, tombstone, dispatch unblocked.
     Returns completed-task count (0 = nothing pending)."""
     orch, _ = _recover(run_dir)
-    return len(orch.work(_engine_work_fn()))
+    model = model_of(orch.audit.rows())  # a run started with an effort keeps its model across workers
+    return len(orch.work(_engine_work_fn(model) if model else _engine_work_fn()))
 
 
 @activity.defn
