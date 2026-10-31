@@ -67,13 +67,16 @@ def _jsonable(obj: Any) -> Any:
 def rp_for(host: str) -> str:
     """Relying-party id for a request host.
 
-    shippedit.dev and all subdomains share the parent rp so one passkey
-    covers oc./docketry./etc. Everything else (tailnet names, localhost)
-    scopes to the literal host.
+    Set OC_RP_PARENT (e.g. `example.com`) to make that domain and all its subdomains
+    share one parent rp, so a single passkey covers `oc.example.com`, `app.example.com`,
+    and so on. Unset (the default), and everything else (tailnet names, localhost)
+    scopes to the literal host. Changing OC_RP_PARENT changes the rp id, so passkeys
+    registered under the old value stop matching: set it before the first enrolment.
     """
     h = host.split(":", 1)[0].lower()
-    if h == "shippedit.dev" or h.endswith(".shippedit.dev"):
-        return "shippedit.dev"
+    parent = os.environ.get("OC_RP_PARENT", "").strip().lower().strip(".")
+    if parent and (h == parent or h.endswith("." + parent)):
+        return parent
     return h
 
 

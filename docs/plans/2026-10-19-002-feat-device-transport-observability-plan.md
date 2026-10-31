@@ -134,7 +134,7 @@ local — plus an operator who can't see any of it without shell access.
     `--remote` over tailscale; TOTP pair → token → heartbeat → parked
     drain → fs grant → `echo`/`fs_read` step end-to-end.
   - Deploy `oc-device-agent.service` on the second host; relay on
-    omarchy-max.
+    dev-host.
   - Audit review: pairing, dispatch, result, kill-switch paths all write
     rows.
 - **Files:** `docs/runbooks/device-remote.md`, `deploy/oc-device-agent.service`.

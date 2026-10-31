@@ -18,8 +18,8 @@ NVIDIA OpenShell, on the luke-agents harness.
 | Sub-agent coordination (filesystem) | Filesystem protocol: per-agent inbox/outbox, lease files, tombstones (`docs/fs-protocol-spec.md`, `oc/fsproto/`) | implemented (#4, #5); spec deviations tracked as OC-019 |
 | Context compaction | jev-compact (span-scored + tombstone restore, stdlib-only) | exists |
 | Input screening | **browsesafe** (MIT, HF) + browsesafe-bench (14,719 examples) — caveat: 36% bypass vs encoding tricks; one layer only | adopt |
-| Monitoring | **perplexityai/numbat** (Apache-2.0, CEL rule engine, opt-in pre-action blocking) — already adopted via omarchy-numbat | wire enforcement mode |
-| Supply-chain scanning | **perplexityai/bumblebee** (Apache-2.0, pure Go, scans MCP configs) — already adopted via omarchy-bumblebee | wire to execution |
+| Monitoring | **perplexityai/numbat** (Apache-2.0, CEL rule engine, opt-in pre-action blocking) — already adopted via numbat | wire enforcement mode |
+| Supply-chain scanning | **perplexityai/bumblebee** (Apache-2.0, pure Go, scans MCP configs) — already adopted via bumblebee | wire to execution |
 | Local knowledge index | **pplx-embed-v2-late-0.6b/9b** (MIT, shared embedding space: index with 9B, query with 0.6B) or kurultai (his) | adopt or keep kurultai |
 | Durable task queue / scheduler | Temporal (AGENT_STACK.md; adapter in Khan) | wire it up |
 | Benchmarks to measure against | DRACO, WANDR, PII-TRACE, browsesafe-bench (all open); Local Knowledge Work Bench promised-open, not yet released | adopt |

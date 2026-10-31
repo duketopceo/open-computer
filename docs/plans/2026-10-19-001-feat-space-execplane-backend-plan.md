@@ -34,7 +34,7 @@ OC-023 cassette delta for the new backend.
   - Adopt OC-033 v2 directly as `network_credential_rules` emission;
     the v1 placeholder scheme (`substitute()`, `_guest_env`) becomes
     unnecessary once a worker uses v2.
-  - SPACE runs on x86_64 + KVM only — Hetzner host, never this M1 Max
+  - SPACE runs on x86_64 + KVM only — Hetzner host, never this personal dev machine
     (aarch64, no KVM path). CubeVM stays for the aarch64 dev loop.
   - First client: ECW + the E2B Python SDK (the tested client). Native
     HTTP/gRPC API later if ECW falls short.
@@ -151,9 +151,9 @@ placement, cost cap, and audit above it.
 ### S4. Credential boundary v2 (OC-033)
 
 > **Parked (2026-10-24, owner choice).** Not in the current phase. The
-> cluster-4 eval cluster has no upstream route, so the "allowed endpoint
+> the SPACE host (an eval cluster) has no upstream route, so the "allowed endpoint
 > receives injected credentials" scenario cannot be verified live without
-> changing cluster-4's net-gateway config. Until S4 lands, `SpaceAdapter`
+> changing the SPACE host's net-gateway config. Until S4 lands, `SpaceAdapter`
 > keeps refusing `secrets=` (ValueError), so no SPACE task can carry a
 > secret and no v1 placeholder ever reaches a SPACE guest.
 
@@ -248,7 +248,7 @@ placement, cost cap, and audit above it.
   - Wildcard or empty-string host → rejected before the policy check.
   - Audit path unwritable → no SDK call, error surfaces to the caller.
   - SDK create failure → audit row `failed` with the error class.
-- **Verification:** unit suite green. Live: on cluster-4, an unapproved
+- **Verification:** unit suite green. Live: on the SPACE host, an unapproved
   host is refused without a create call, and an approved host's create
   is accepted by ECW (payload-level; packet-level R2 waits for S4's
   routed gateway).
@@ -256,16 +256,16 @@ placement, cost cap, and audit above it.
 ### S7. SPACE in the production path
 
 - **Goal:** with `OC_EXECPLANE_BACKEND=space`, goals whose steps are
-  placed `cloud-sandbox` run in SPACE microVMs on cluster-4, and the
+  placed `cloud-sandbox` run in SPACE microVMs on the SPACE host, and the
   console shows the result like any other run.
 - **Work:**
   1. Durable link: a systemd user unit (`oc-space-tunnel`) holding the
-     SSH forwards omarchy-max `127.0.0.1:18080 -> cluster-4:8080` (ECW
-     API) and `127.0.0.1:18092 -> cluster-4:8092` (data plane), with
+     SSH forwards dev-host `127.0.0.1:18080 -> space-host:8080` (ECW
+     API) and `127.0.0.1:18092 -> space-host:8092` (data plane), with
      keepalives, `ExitOnForwardFailure`, and `Restart=always`. Kind
      binds hostPorts to loopback, so a tunnel is the access path, not a
      workaround. The unit template lives in the repo; the installed copy
-     uses the `cluster4` SSH alias.
+     uses the `space-host` SSH alias.
   2. Backend selection at the composition root: `engines._plane()`
      reads `OC_EXECPLANE_BACKEND` (`cube` default, or `space`) and
      passes it explicitly to `execplane.adapter(root, backend=...)`. An
@@ -275,7 +275,7 @@ placement, cost cap, and audit above it.
      `pyproject.toml` (lockfile regenerated with `uv`, not hand-edited).
      The worker wrapper installs it and exports `SPACE_API_URL`,
      `SPACE_DATA_PLANE_URL`, `SPACE_DOMAIN`, and `SPACE_API_KEY` (key
-     from omaseal `space/ecw-cluster4`, never written to disk).
+     from omaseal `space/ecw-key`, never written to disk).
   4. `oc-deploy` restarts and health-checks the tunnel unit with the
      rest.
 - **Files:** `services/orchestrator/engines.py`,
@@ -292,10 +292,10 @@ placement, cost cap, and audit above it.
   - Unknown value → `ValueError` at `_plane()` construction.
   - `space` selected but API unreachable → `SandboxWorkerUnavailable`
     whose message names `space`, never a silent fallback to cube.
-- **Verification:** live on omarchy-max: tunnel unit active across a
+- **Verification:** live on dev-host: tunnel unit active across a
   restart, the worker running with `backend=space`, a goal placed
   `cloud-sandbox` reaching DONE in the console with output produced in a
-  cluster-4 microVM (confirmed in the SPACE sandbox list or logs), and
+  a SPACE microVM on the SPACE host (confirmed in the SPACE sandbox list or logs), and
   the cube path still working when the env is unset.
 
 ### S6. Conformance + cassettes for the second backend (OC-023 delta)
@@ -347,11 +347,11 @@ placement, cost cap, and audit above it.
 ### Status note (2026-10-26, implementation)
 
 - **S7 done** (`fd93546`): `deploy/oc-space-tunnel.service` (systemd user,
-  `ExitOnForwardFailure`, `Restart=always`, keepalives, `cluster4` alias),
+  `ExitOnForwardFailure`, `Restart=always`, keepalives, `space-host` alias),
   `OC_EXECPLANE_BACKEND` in `engines._plane()` (default `cube`, unknown →
   `ValueError` at construction, no silent fallback), `e2b==2.21.1` optional
   extra + regenerated `uv.lock`, `oc-worker` exports the SPACE env and
-  resolves `SPACE_API_KEY` via omaseal `space/ecw-cluster4`, `oc-deploy`
+  resolves `SPACE_API_KEY` via omaseal `space/ecw-key`, `oc-deploy`
   restarts/health-checks the tunnel. Live-verified: tunnel active,
   `SpaceAdapter(...).sandboxes_available()` → True through 127.0.0.1:18080.
 - **S5 done**: `PolicyEngine.approved_egress()` (applied-only grants,
@@ -403,7 +403,7 @@ Two adjacent landings change what S5 must not re-solve:
 ### Status note (2026-10-23, PR #61)
 
 S2 (skeleton) shipped in #56. S3 shipped in #61 against the live
-cluster-4 ECW deployment:
+the SPACE host ECW deployment:
 
 - create/exec/kill verified live (Firecracker microVM; `seed` template).
 - pause/resume verified live — a `/tmp/marker` file survives
@@ -458,7 +458,7 @@ cluster-4 ECW deployment:
 - CI green and honest: SPACE rows PENDING without a reachable API —
   no fake-pass, same contract as Cube today.
 - A goal submitted from the console with a `cloud-sandbox` step runs in
-  a cluster-4 SPACE microVM and reaches DONE, with its create recorded
+  a SPACE microVM on the SPACE host and reaches DONE, with its create recorded
   in the audit log (S5, S7).
 
 ## Sources

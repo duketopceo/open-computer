@@ -51,7 +51,7 @@ Date: 2026-10-10 · Basis: live verification of every claim in the seeded resear
 1. **Orchestrator glue** (the real product): goal → subtask decomposition → per-subtask route → placement → sub-agent lifecycle → collect/synthesize. Everything else is adoption.
 2. **Filesystem sub-agent protocol**: OACP-derived envelope + leases, tombstones, dependency queueing, deterministic conformance tests. The genuinely novel engineering.
 3. **Escalation gate**: PII-Tracer scan → per-step human approval → audit log. Fail-closed.
-4. **Placement policy**: local (omarchy ollama/llama.cpp) vs cloud (OpenRouter via Hetzner/CF) per step by privacy/cost/latency — the "hybrid local/cloud" half of the thesis. A rule engine, not a model.
+4. **Placement policy**: local (local ollama/llama.cpp) vs cloud (OpenRouter via Hetzner/CF) per step by privacy/cost/latency — the "hybrid local/cloud" half of the thesis. A rule engine, not a model.
 
 A fifth is conditional: **router service**, only if Phase 0's bench beats `openrouter/auto` + hosted decider + vLLM-SR. If `auto` wins, we build the placement policy and call routing done.
 
@@ -63,7 +63,7 @@ A fifth is conditional: **router service**, only if Phase 0's bench beats `openr
 - R4: Routing decisions are made by whatever the Phase 0 bench crowns — the service boundary (task type × complexity × latency × cost → model) is ours; the engine is adopted.
 - R5: Pause/resume/branch any task via microVM snapshots; durable across host restarts (Temporal + CubeCoW).
 - R6: The deterministic rule set + test matrix in `docs/determinism.md` gates every merge — no rule is enforced by LLM judgment.
-- R7: Works on aarch64 dev (omarchy-max, if Asahi KVM cooperates) and x86 prod (Hetzner). PVM fallback noted x86-only.
+- R7: Works on aarch64 dev (dev-host, if Asahi KVM cooperates) and x86 prod (Hetzner). PVM fallback noted x86-only.
 
 ## Open decisions for Luke
 

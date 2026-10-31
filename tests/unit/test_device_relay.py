@@ -218,11 +218,11 @@ def test_remote_client_url_policy_resolves_hostnames(monkeypatch):
     from services.device_agent import remote as remote_mod
 
     def fake_gai(host, port, *a, **k):
-        ips = {"omarchy-max": "100.101.102.103", "relay": "192.168.1.50"}[host]
+        ips = {"dev-host": "100.101.102.103", "relay": "192.168.1.50"}[host]
         return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ips, port or 0))]
 
     monkeypatch.setattr(remote_mod.socket, "getaddrinfo", fake_gai)
-    RemoteClient("http://omarchy-max:8792", "d", "s")
+    RemoteClient("http://dev-host:8792", "d", "s")
     with pytest.raises(RemoteError, match="cleartext"):
         RemoteClient("http://relay:8792", "d", "s")  # resolves to LAN, not tailnet
 

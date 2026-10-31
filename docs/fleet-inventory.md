@@ -41,8 +41,8 @@ four genuinely new builds.
 - **docketry** — agent-native issue tracker; `services/dispatch` specced as an
   agent-routing worker on BullMQ — the natural human front door for long-running
   tasks. *Dispatch is a stub.*
-- **omarchy-numbat** — already adopted Perplexity's Numbat (monitor mode).
-- **omarchy-bumblebee** — already adopted Perplexity's Bumblebee (detect mode).
+- **numbat** — already adopted Perplexity's Numbat (monitor mode).
+- **bumblebee** — already adopted Perplexity's Bumblebee (detect mode).
 - **luke-agents** — the constitution: inference layer vs orchestration harness
   are separate concerns; LangGraph + Temporal + MCP + openai-agents handoff as
   the runtime; Triple-Lock Harness.

@@ -1,15 +1,15 @@
 # systemd user service template for the SPACE control-plane tunnel (S7)
 #
-# ECW on cluster-4 (Kind, hostPorts on loopback) is reached through SSH
+# ECW on the SPACE host (Kind, hostPorts on loopback) is reached through SSH
 # forwards. This unit holds them open; oc-deploy restarts it with the
 # other oc-* units. Install:
 #   mkdir -p ~/.config/systemd/user
 #   cp deploy/oc-space-tunnel.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now oc-space-tunnel
-# Requires the `cluster4` ssh config alias (key-pinned) on this host.
+# Requires the `space-host` ssh config alias (key-pinned) on this host.
 
 [Unit]
-Description=open-computer SPACE tunnel (omarchy-max -> cluster-4 ECW)
+Description=open-computer SPACE tunnel (dev host -> SPACE host ECW)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300
@@ -24,7 +24,7 @@ ExecStart=/usr/bin/ssh -N \
   -o ExitOnForwardFailure=yes \
   -L 127.0.0.1:18080:127.0.0.1:8080 \
   -L 127.0.0.1:18092:127.0.0.1:8092 \
-  cluster4
+  space-host
 Restart=always
 RestartSec=5
 

@@ -5,7 +5,7 @@ never breaks the caller. Stdlib only (urllib), ~2s timeouts.
 
 Env:
   OC_SENTRY_DSN          Sentry-compatible DSN (Glitchtip project key)
-  OC_TALLYLINE_URL       e.g. https://api.tallyline.app
+  OC_TALLYLINE_URL       e.g. https://tallyline.example
   OC_TALLYLINE_WORKSPACE workspace slug (e.g. luke)
   OC_TALLYLINE_KEY       agent key bearer token
 """

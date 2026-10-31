@@ -154,7 +154,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
 const DEVICES = {
   total: 3, online: 1, eligible: 1, parked_depth: 2,
   devices: [
-    { device_id: "omarchy-max", os: "omarchy-aarch64", capabilities: ["browser", "fs"], roots: ["/home/luke/src"], online: true, awake: true, eligible: true, state: "online", last_heartbeat: Date.now() / 1000 - 30, active_grants: 1, inbox_depth: 0 },
+    { device_id: "dev-host", os: "linux-aarch64", capabilities: ["browser", "fs"], roots: ["/home/user/src"], online: true, awake: true, eligible: true, state: "online", last_heartbeat: Date.now() / 1000 - 30, active_grants: 1, inbox_depth: 0 },
     { device_id: "<img src=x onerror=window.__xss=1>", os: "<b>bold</b>", capabilities: [], roots: [], online: true, awake: false, eligible: false, state: "asleep", last_heartbeat: Date.now() / 1000 - 600, active_grants: 0, inbox_depth: 3 },
     { device_id: "stale-box", os: "linux", capabilities: ["fs"], roots: [], online: false, awake: false, eligible: false, state: "offline", last_heartbeat: 0, active_grants: 0, inbox_depth: 0 },
   ],
@@ -281,7 +281,7 @@ test("@nav in-app not-found offers a way home", async () => {
 test("devices: rows, states as words, empty fixture, and hostile text stays text", async () => {
   let { ctx, page } = await openAt("/devices", { routes: { "**/api/devices": (r) => r.fulfill(json(200, DEVICES)) } });
   await page.getByRole("table", { name: "Devices, state and queue depth" }).waitFor();
-  await page.getByText("omarchy-aarch64").waitFor();
+  await page.getByText("linux-aarch64").waitFor();
   assert.ok(await page.getByText("<img src=x onerror=window.__xss=1>").isVisible(), "device id rendered as literal text");
   assert.equal(await page.evaluate(() => window.__xss), undefined);
   assert.equal(await page.locator("table img, table b").count(), 0);

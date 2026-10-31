@@ -63,7 +63,7 @@ The genuinely new design work. OACP-derived envelope + the semantics OACP lacks.
 - Deps: none beyond running CubeSandbox.
 
 ### U3 — escalation gate *(no deps)*
-- `services/gate/pii.py` — PII-Tracer-GGUF (llama.cpp or ollama on omarchy-max) scanning step outputs bound for cloud/frontier.
+- `services/gate/pii.py` — PII-Tracer-GGUF (llama.cpp or ollama on dev-host) scanning step outputs bound for cloud/frontier.
 - `services/gate/approve.py` — per-step human approval record; unapproved → blocked before any token leaves.
 - `services/gate/audit.py` — append-only NDJSON audit log (every approval, every block, every policy change).
 - `services/gate/input_screen.py` — browsesafe pre-filter on fetched content (one layer, documented 36% bypass caveat).

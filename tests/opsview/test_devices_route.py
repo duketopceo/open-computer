@@ -9,10 +9,10 @@ from services.device import adapter as device_adapter
 from services.device_agent.heartbeat import registration_payload
 
 
-def _pair(console, device_id: str = "omarchy-max", caps=("fs", "browser")):
+def _pair(console, device_id: str = "dev-host", caps=("fs", "browser")):
     reg = device_adapter(console.base)
     reg.register(
-        registration_payload(device_id, ["/home/luke/src"], capabilities=list(caps), os_name="omarchy-aarch64")
+        registration_payload(device_id, ["/home/user/src"], capabilities=list(caps), os_name="linux-aarch64")
     )
     return reg
 
@@ -26,10 +26,10 @@ def test_api_devices_json_shape(console):
     data = json.loads(body)
     assert data["total"] == 1 and data["online"] == 1 and data["parked_depth"] == 0
     d = data["devices"][0]
-    assert d["device_id"] == "omarchy-max"
+    assert d["device_id"] == "dev-host"
     assert d["state"] == "online" and d["eligible"] is True
     assert d["capabilities"] == ["browser", "fs"]
-    assert d["roots"] == ["/home/luke/src"]
+    assert d["roots"] == ["/home/user/src"]
     # no token/secret material may reach the API surface
     assert ".secret" not in body and "token" not in d
 
