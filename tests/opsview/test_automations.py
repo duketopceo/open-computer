@@ -1,17 +1,19 @@
 """/skills + /automations (F4): capability registry renders live health;
 the schedules surface is honest when Temporal is away — never guesses."""
 
+import json
+
 from services.opsview import capabilities
 
 
 def test_skills_page_lists_real_capabilities(console):
-    code, _, html = console.get("/skills")
-    assert code == 200
-    for word in ("Capability", "OpenRouter", "llama", "Ollama", "Sandbox", "gate", "cap"):
-        assert word.lower() in html.lower(), word
-    # live probe results render as normative state words
+    code, _, body = console.get("/api/skills")
+    skills = json.loads(body)["skills"]
+    hay = json.dumps(skills).lower()
+    for word in ("OpenRouter", "llama", "Ollama", "Sandbox", "gate"):
+        assert word.lower() in hay, word
     for st in ("ready", "down", "not configured", "active"):
-        assert f">{st}<" in html or f">{st.title()}<" in html, st
+        assert any(s.get("status") == st for s in skills) or st in hay, st
 
 
 def test_capabilities_report_live_not_static():
@@ -25,10 +27,10 @@ def test_capabilities_report_live_not_static():
 def test_automations_page_shows_outage_when_temporal_away(console, monkeypatch):
     # OC_DURABLE unset in the fixture env → disabled → honest outage, not a fake list
     monkeypatch.delenv("OC_DURABLE", raising=False)
-    code, _, html = console.get("/automations")
+    code, _, body = console.get("/api/automations")
     assert code == 200
-    assert "unreachable" in html.lower() or "No automations" in html
-    assert "New automation" in html  # the create form still renders
+    payload = json.loads(body)
+    assert payload["enabled"] is False and payload["automations"] == []
 
 
 def test_automations_create_validates_input(console):

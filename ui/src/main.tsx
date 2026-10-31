@@ -6,7 +6,9 @@ import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
 import Devices from "./pages/Devices";
 import NotFound from "./pages/NotFound";
+import Automations from "./pages/Automations";
 import Overview from "./pages/Overview";
+import Skills from "./pages/Skills";
 import Router from "./pages/Router";
 import Runs from "./pages/Runs";
 import SandboxDetail from "./pages/SandboxDetail";
@@ -27,6 +29,8 @@ const ROUTES: Row[] = [
   { path: "/approvals", page: () => <Approvals /> },
   { path: "/runs", page: () => <Runs /> },
   { path: "/overview", page: () => <Overview /> },
+  { path: "/skills", page: () => <Skills /> },
+  { path: "/automations", page: () => <Automations /> },
   { path: "/goals", page: () => <Runs /> },
 ];
 

@@ -295,6 +295,8 @@ GET_ROUTES = [
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
     (r"/api/approvals", "g_api_approvals"),
     (r"/api/overview", "g_api_overview"),
+    (r"/api/skills", "g_api_skills"),
+    (r"/api/automations", "g_api_automations"),
     (r"/work", "g_work"),
     (r"/overview", "g_spa_route"),
     (r"/sandboxes", "g_spa_route"),
@@ -303,8 +305,8 @@ GET_ROUTES = [
     (r"/goals", "g_spa_route"),
     (r"/goals/new", "g_goal_new"),
     (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
-    (r"/skills", "g_skills"),
-    (r"/automations", "g_automations"),
+    (r"/skills", "g_spa_route"),
+    (r"/automations", "g_spa_route"),
     (r"/runs", "g_spa_route"),
     (r"/runs/new", "g_run_new"),
     (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
@@ -754,6 +756,13 @@ class Handler(BaseHTTPRequestHandler):
             views.page_automations(self._csrf(), automations.list_automations(), time.time()),
             sub="Goals on a cadence — durable Temporal schedules",
         )
+
+    def g_api_skills(self, qs):
+        self._json(200, {"skills": capabilities.collect()})
+
+    def g_api_automations(self, qs):
+        items = automations.list_automations()
+        self._json(200, {"enabled": items is not None, "automations": items or []})
 
     def g_api_router(self, qs):
         self._json(
