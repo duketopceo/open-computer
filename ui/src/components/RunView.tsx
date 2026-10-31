@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, placement } from "@/lib/friendly";
@@ -6,6 +7,12 @@ import { Dot, StateWord } from "./primitives";
 export function RunView({ run }: { run: RunDetail }) {
   const states = count(run);
   const active = run.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED");
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [active]);
   return (
     <div className="mx-auto w-full max-w-3xl animate-fade-up">
       <header className="mb-6">
