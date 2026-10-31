@@ -84,3 +84,24 @@ Verified 2026-10-26 on omarchy-max: `adapter(root, backend="space")
 .sandboxes_available()` → `True` through the tunnel.
 `oc-deploy` restarts the tunnel and fails the health check if an enabled
 link unit is down.
+
+## Guest egress (TPROXY datapath)
+
+ECW sandboxes route guest traffic through a per-sandbox `space-netgtw-svc`
+transparent proxy (TCP :15001, UDP :15002) inside the `sns-*` netns.
+Diverted packets take `fwmark 0x1 -> table 100 -> local dev lo` to reach the
+proxy's transparent socket. Two host-side details make that work:
+
+- `net.ipv4.conf.tap0.accept_local=1` (+ `all`) — without it the FIB
+  rejects the `local` route for packets arriving on tap0 and every guest
+  packet is dropped silently at the route lookup (no INPUT, no forward,
+  no error counter). Upstream ECW netns setup does not enable it.
+- Masquerade chain: `sns-*` (`169.254.0.0/16` -> vpeer `10.12.128.x`),
+  then `cni-*` pod netns (`10.12.0.0/16` -> pod IP). Worker
+  `KIND-MASQ-AGENT` + host NAT cover the rest.
+
+`oc-ecw-egress@<worker>` systemd units on cluster-4 run
+`/usr/local/lib/oc-ecw-egress/watch.sh` inside each Kind worker container
+every 2s to enforce all of it on new namespaces. Enabled on
+space-local-worker{,2,3,4,5}. Verified 2026-10-27: `R2[space]` conformance
+PASS with `SPACE_EGRESS_ROUTED=1`; deny-by-default intact.
