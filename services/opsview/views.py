@@ -248,78 +248,6 @@ def shell(page: str, body: str, *, csrf: str, pending: int = 0, who: str = "", c
 </html>"""
 
 
-def conn_pill(fleet: dict) -> str:
-    if not fleet["configured"]:
-        return f'<span class="pill">{status("not configured", "Control plane not configured")}</span>'
-    word = "up" if fleet["up"] else "down"
-    return f'<span class="pill">{status(word, "Control plane " + word.upper())}</span>'
-
-
-# ------------------------------------------------------------------ fleet
-
-
-def fleet_rows(fleet: dict) -> str:
-    if not fleet["configured"]:
-        return empty(
-            "Control plane not configured",
-            "Set <code>CUBE_API_URL</code> and <code>CUBE_API_KEY</code> to list sandboxes. Nothing here is guessed.",
-        )
-    if not fleet["up"]:
-        return empty(
-            "Control plane is down",
-            f"{e(fleet['api_host'])} did not answer. The sandbox inventory is unknown, not empty. "
-            "Check that CubeSandbox is running, then reload.",
-        )
-    sb = fleet["sandboxes"]
-    if not sb:
-        return empty(
-            "No sandboxes running",
-            "A sandbox appears here while a run holds it. Start one with a matrix run.",
-            '<a class="btn primary" href="/runs/new">New matrix run</a>',
-        )
-    rows = "".join(
-        f'<tr data-row data-href="/sandboxes/{quote(str(s.get("sandboxID", "?")), safe="")}">'
-        f'<td class="mono"><a href="/sandboxes/{quote(str(s.get("sandboxID", "?")), safe="")}">{e(str(s.get("sandboxID", "?")))}</a></td>'
-        f'<td class="mono">{e(str(s.get("templateID", "?")))}</td>'
-        f"<td>{status(str(s.get('status', 'unknown')))}</td></tr>"
-        for s in sb
-    )
-    return (
-        f'<table class="dense" data-table><caption class="sr">Sandboxes</caption>'
-        f'<thead><tr><th scope="col">Sandbox</th><th scope="col">Template</th>'
-        f'<th scope="col">State</th></tr></thead><tbody>{rows}</tbody></table>'
-    )
-
-
-def page_sandboxes(fleet: dict, inline: bool) -> str:
-    if inline:
-        inner = fleet_rows(fleet)
-        attrs = ""
-    else:
-        inner = skeleton_rows(5, 3)
-        attrs = ' data-frag="/_frag/fleet" aria-busy="true"'
-    dest = (
-        f'Inventory read from <span class="mono">{e(fleet["api_host"])}</span>. Read only.'
-        if fleet["configured"]
-        else "No control plane configured."
-    )
-    return f'<p class="muted note">{dest}</p><section aria-label="Sandboxes"{attrs}>{inner}</section>'
-
-
-def page_sandbox_detail(sid: str, row: dict | None) -> str:
-    if row is None:
-        return empty(
-            "Sandbox not found",
-            f"{e(sid)} is not in the current inventory. It may have been reclaimed.",
-            '<a class="btn" href="/sandboxes">Back to sandboxes</a>',
-        )
-    rows = "".join(
-        f'<tr><th scope="row">{e(str(k))}</th><td class="mono">{e(json.dumps(v) if not isinstance(v, str) else v)}</td></tr>'
-        for k, v in sorted(row.items())
-    )
-    return f'<table class="kv dense"><caption class="sr">Sandbox {e(sid)}</caption><tbody>{rows}</tbody></table>'
-
-
 # --------------------------------------------------------------- approvals
 
 
@@ -497,82 +425,6 @@ def page_run_detail(row: dict, text: str, now: float) -> str:
         f'<p class="muted note">{status(row["status"])} · started {time_tag(row["ts"], now)} by {e(row.get("by", ""))} · '
         f"took {duration(row['duration_s'])}</p>{rt}<h2>Log</h2>{log_viewer(text)}"
     )
-
-
-# ------------------------------------------------------------------ router
-
-
-def router_dest(paid: bool, base: str) -> str:
-    if paid:
-        return (
-            f'Decider engine sends the utterance to <span class="mono">{e(host_of(base))}</span> '
-            "and costs about $0.000004 per route. The table engine stays on this box."
-        )
-    return "No cloud key configured. Routes resolve in the local table engine: $0.00, nothing leaves this box."
-
-
-def page_router(
-    csrf: str, ledger: list[dict], spend: float, cap: float, paid: bool, base: str, now: float, result: str = ""
-) -> str:
-    pct = min(spend / cap, 1) if cap else 0
-    cost = "~$0.000004" if paid else "$0.00"
-    rows = "".join(
-        f'<tr><td class="num">{time_tag(r.get("ts", 0), now)}</td><td>{e(str(r.get("event", "")))}</td>'
-        f'<td>{e(str(r.get("route", "")))}</td><td class="mono">{e(str(r.get("engine", "")))}</td>'
-        f'<td class="num">{money(r.get("cost", 0))}</td></tr>'
-        for r in reversed(ledger)
-    )
-    ledger_t = (
-        (
-            f'<table class="dense"><caption class="sr">Decision ledger, newest first</caption><thead><tr><th scope="col" class="num">When</th>'
-            '<th scope="col">Event</th><th scope="col">Route</th><th scope="col">Engine</th><th scope="col" class="num">Cost</th></tr></thead>'
-            f"<tbody>{rows}</tbody></table>"
-        )
-        if rows
-        else empty(
-            "No decisions yet", "Every route decision is recorded here with the engine that made it and what it cost."
-        )
-    )
-    return f"""<section aria-labelledby="rt"><h2 id="rt">Route tester</h2>
-<p class="muted note">{router_dest(paid, base)}</p>
-<form method="post" action="/router/test" class="inline-form">
-<input type="hidden" name="csrf" value="{e(csrf)}">
-<label for="q" class="sr">Utterance to route</label>
-<input id="q" name="q" type="text" class="input" placeholder="Describe a task to route" autocomplete="off" required aria-keyshortcuts="/">
-<button type="submit" class="btn primary">Route <span class="cost">{cost}</span></button>
-</form>
-{result}
-<div class="meter"><label for="spend" class="caption muted">Spent today {money(spend)} of {money(cap)} daily cap</label>
-<progress id="spend" value="{pct:.4f}" max="1">{pct:.0%}</progress></div></section>
-<h2>Decision ledger</h2>{ledger_t}"""
-
-
-def router_confirm(csrf: str, q: str, base: str) -> str:
-    return f"""<section class="confirm" aria-labelledby="ct"><h2 id="ct">Send this to the decider?</h2>
-<table class="kv dense"><tbody>
-<tr><th scope="row">Leaves this box</th><td>The utterance below, sent to <span class="mono">{e(host_of(base))}</span></td></tr>
-<tr><th scope="row">Cost</th><td>About $0.000004, charged to the configured key</td></tr>
-<tr><th scope="row">Utterance</th><td class="mono">{e(q)}</td></tr></tbody></table>
-<form method="post" action="/router/test" class="actions">
-<input type="hidden" name="csrf" value="{e(csrf)}"><input type="hidden" name="confirm" value="1">
-<input type="hidden" name="q" value="{e(q)}">
-<button type="submit" class="btn primary" id="go">Route it <span class="cost">~$0.000004</span></button>
-<a class="btn" href="/router">Cancel</a></form></section>"""
-
-
-def route_result(d: dict) -> str:
-    rows = "".join(
-        f'<tr><th scope="row">{k}</th><td>{v}</td></tr>'
-        for k, v in [
-            ("Route", e(str(d["route"]))),
-            ("Tier", e(str(d["tier"]))),
-            ("Engine", f'<span class="mono">{e(str(d["engine"]))}</span>'),
-            ("Confidence", e(str(d["confidence"]))),
-            ("Cost", money(d["cost"])),
-            ("Took", f"{d['ms']} ms"),
-        ]
-    )
-    return f'<table class="kv dense result" aria-label="Route result"><tbody>{rows}</tbody></table>'
 
 
 # ------------------------------------------------------------------- goals
@@ -1041,40 +893,6 @@ def page_skills(caps: list[dict]) -> str:
     )
 
 
-def page_devices(payload: dict) -> str:
-    """Personal Computer device fleet — reachability, grants and mailbox depth."""
-    devs = payload.get("devices", [])
-    if not devs:
-        rows = '<tr><td colspan="6" class="muted">No devices paired — start a device agent to register one.</td></tr>'
-    else:
-        state_pill = {"online": "up", "asleep": "pending", "offline": "down"}
-
-        def row(d: dict) -> str:
-            caps = ", ".join(d["capabilities"]) or "—"
-            roots = ", ".join(d["roots"]) or "—"
-            beat = time_tag(d["last_heartbeat"]) if d.get("last_heartbeat") else '<span class="muted">never</span>'
-            return (
-                f'<tr><td class="mono">{e(d["device_id"])}<div class="muted caption">{e(d["os"])}</div></td>'
-                f'<td class="muted">{e(caps)}</td><td class="muted caption">{e(roots)}</td>'
-                f'<td>{status(state_pill.get(d["state"], "neutral"), d["state"])}</td>'
-                f'<td class="num">{beat}</td>'
-                f'<td class="num">{d["active_grants"]}</td><td class="num">{d["inbox_depth"]}</td></tr>'
-            )
-
-        rows = "".join(row(d) for d in devs)
-    return (
-        '<section aria-labelledby="dev"><h2 id="dev">Personal Computer devices</h2>'
-        '<p class="muted note">Paired machines the router can place work on. A device is eligible '
-        f"when it is online and awake — <b>{payload.get('eligible', 0)}</b> of <b>{payload.get('total', 0)}</b> "
-        f"eligible now; <b>{payload.get('parked_depth', 0)}</b> task(s) parked waiting for a device to come back."
-        " Grants are filesystem scopes the device may touch; inbox is queued work in its mailbox.</p>"
-        '<table class="dense"><caption class="sr">Devices, state and queue depth</caption><thead><tr>'
-        '<th scope="col">Device</th><th scope="col">Capabilities</th><th scope="col">Granted roots</th>'
-        '<th scope="col">State</th><th scope="col">Heartbeat</th><th scope="col">Grants</th>'
-        f'<th scope="col">Inbox</th></tr></thead><tbody>{rows}</tbody></table></section>'
-    )
-
-
 def _auto_row(a: dict, csrf: str, now: float) -> str:
     sid = e(a["id"])
     nxt = ", ".join(time_tag(t, now) for t in a["next"][:2]) or '<span class="muted">—</span>'
@@ -1161,20 +979,7 @@ def page_automation_confirm(csrf: str, sid: str, op: str, desc: str) -> str:
 </form></section>"""
 
 
-# ------------------------------------------------------------------- audit
-
-AUDIT_FILTERS = (("all", "All"), ("blocked", "Blocked"), ("allowed", "Allowed"), ("decisions", "Decisions"))
-
-
-def audit_match(r: dict, f: str, q: str) -> bool:
-    ev = str(r.get("event", ""))
-    if f == "blocked" and "blocked" not in ev:
-        return False
-    if f == "allowed" and "allowed" not in ev:
-        return False
-    if f == "decisions" and ev != "human_decision":
-        return False
-    return not q or q.lower() in json.dumps(r).lower()
+# ------------------------------------------------------------------- audit rows (used by Overview)
 
 
 def audit_state(r: dict) -> str:
@@ -1198,35 +1003,6 @@ def audit_rows(rows: list[dict], now: float) -> str:
             f'<td class="mono">{e(str(r.get("event", "")))}</td><td class="mono muted detail" title="{e(text)}">{e(text)}</td></tr>'
         )
     return "".join(out)
-
-
-def page_audit(rows: list[dict], total: int, f: str, q: str, now: float) -> str:
-    chips = "".join(
-        f'<a class="chip" href="/audit?f={k}{"&q=" + quote(q) if q else ""}"'
-        f"{' aria-current=true' if k == f else ''}>{lbl}</a>"
-        for k, lbl in AUDIT_FILTERS
-    )
-    form = (
-        f'<form method="get" action="/audit" class="inline-form"><input type="hidden" name="f" value="{e(f)}">'
-        f'<label for="aq" class="sr">Filter audit rows</label>'
-        f'<input id="aq" name="q" type="search" class="input" placeholder="Filter by text, session or model" value="{e(q)}" aria-keyshortcuts="/">'
-        '<button class="btn" type="submit">Filter</button></form>'
-    )
-    if not rows:
-        body = empty(
-            "No matching events",
-            "The audit log is append-only. Blocked and allowed calls and human decisions appear here as they happen.",
-        )
-    else:
-        body = (
-            '<table class="dense" data-table><caption class="sr">Audit events, newest first</caption><thead><tr>'
-            '<th scope="col" class="num">When</th><th scope="col">Result</th><th scope="col">Event</th>'
-            f'<th scope="col">Detail</th></tr></thead><tbody>{audit_rows(rows, now)}</tbody></table>'
-        )
-    cap = f'<p class="muted caption">Showing the latest {len(rows)} of {total} matching events.</p>' if rows else ""
-    return (
-        f'<div class="toolbar"><div class="chips" role="group" aria-label="Filter">{chips}</div>{form}</div>{body}{cap}'
-    )
 
 
 # ---------------------------------------------------------------- overview

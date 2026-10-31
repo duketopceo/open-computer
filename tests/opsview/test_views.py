@@ -32,11 +32,6 @@ def test_status_is_glyph_plus_word_never_color_alone():
         assert "<svg" in s and f"<span>{word}</span>" in s
 
 
-def test_audit_page_uses_relative_times(console):
-    _, _, html = console.get("/audit")
-    assert "ago</time>" in html and not re.search(r">\s*17\d{8}\.\d+", html)
-
-
 def test_empty_states_say_what_will_appear(tmp_path, monkeypatch, console):
     monkeypatch.setenv("OC_APPROVALS", str(tmp_path / "x.ndjson"))
     monkeypatch.setenv("OC_RUNS_DIR", str(tmp_path / "runs"))

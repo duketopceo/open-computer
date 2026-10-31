@@ -29,12 +29,12 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 from oc.obs import bind, get_logger
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
-from services.opsview import agentjobs, automations, capabilities, devices, goalruns
+from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -182,7 +182,7 @@ def fleet_state() -> dict:
     _, body = _get(f"{api}/sandboxes", key)
     try:
         data = json.loads(body)
-        st["sandboxes"] = data if isinstance(data, list) else []
+        st["sandboxes"] = [s for s in data if isinstance(s, dict)] if isinstance(data, list) else []
     except ValueError:
         pass
     return st
@@ -284,9 +284,9 @@ GET_ROUTES = [
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
     (r"/work", "g_work"),
     (r"/overview", "g_overview"),
-    (r"/sandboxes", "g_sandboxes"),
-    (r"/sandboxes/(?P<id>[^/]+)", "g_sandbox"),
-    (r"/devices", "g_devices"),
+    (r"/sandboxes", "g_spa_route"),
+    (r"/sandboxes/(?P<id>[^/]+)", "g_spa_route"),
+    (r"/devices", "g_spa_route"),
     (r"/goals", "g_goals"),
     (r"/goals/new", "g_goal_new"),
     (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
@@ -296,10 +296,12 @@ GET_ROUTES = [
     (r"/runs/new", "g_run_new"),
     (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
     (r"/approvals", "g_approvals"),
-    (r"/router", "g_router"),
-    (r"/audit", "g_audit"),
+    (r"/router", "g_spa_route"),
+    (r"/audit", "g_spa_route"),
     (r"/api/devices", "g_api_devices"),
-    (r"/_frag/fleet", "g_frag_fleet"),
+    (r"/api/sandboxes", "g_api_sandboxes"),
+    (r"/api/router", "g_api_router"),
+    (r"/api/audit", "g_api_audit"),
     (r"/_frag/status", "g_frag_status"),
     (r"/_frag/work", "g_frag_work"),
 ]
@@ -308,7 +310,7 @@ POST_ROUTES = [
     (r"/api/transcribe", "p_transcribe"),
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
-    (r"/router/test", "p_router_test"),
+    (r"/api/router/test", "p_api_router_test"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_sendback"),
     (r"/automations", "p_automations"),
@@ -342,6 +344,8 @@ def route_label(method: str, path: str) -> str:
     """The route *template* (handler name), never the raw path: ids stay out of the access log's cardinality."""
     table = GET_ROUTES if method == "GET" else POST_ROUTES
     name, _ = match(table, path)
+    if name == "g_spa_route":
+        return "spa/" + path.split("/")[1]  # one label per SPA page; ids never reach the log
     if name:
         return name
     if path.startswith("/static/") or path.startswith("/assets/"):
@@ -562,6 +566,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.g_overview(qs)
         return self._send(200, index.read_bytes(), "text/html; charset=utf-8", page=True)
 
+    def g_spa_route(self, qs, **_):
+        """A deep link into the React app (/devices, /sandboxes/<id>, ...). The client router
+        renders the page; the passkey gate already ran. Unlike `/`, there is no server-rendered
+        fallback for these paths, so a missing build is an explicit 503."""
+        index = UI_DIST / "index.html"
+        if not index.is_file():
+            return self._send(
+                503, b"The console UI is not built. Run: pnpm --dir ui build", "text/plain; charset=utf-8"
+            )
+        return self._send(200, index.read_bytes(), "text/html; charset=utf-8", page=True)
+
     def g_asset(self, qs, file):
         name = Path(file).name  # no traversal
         p = UI_DIST / "assets" / name
@@ -639,31 +654,8 @@ class Handler(BaseHTTPRequestHandler):
         body = views.page_overview(q.pending(), runstore.list_runs(), audit, day_spend(), daily_cap(), now)
         self._page("overview", body, sub="What needs you, and what is running")
 
-    def g_sandboxes(self, qs):
-        inline = (qs.get("inline") or [""])[0] == "1"
-        fleet = (
-            fleet_state()
-            if inline
-            else {
-                "configured": bool(os.environ.get("CUBE_API_URL")),
-                "up": False,
-                "sandboxes": [],
-                "api_host": views.host_of(os.environ.get("CUBE_API_URL", "")),
-            }
-        )
-        self._page("sandboxes", views.page_sandboxes(fleet, inline), conn=views.conn_pill(fleet) if inline else "")
-
-    def g_sandbox(self, qs, id):
-        sid = unquote(id)
-        row = next((s for s in fleet_state()["sandboxes"] if str(s.get("sandboxID")) == sid), None)
-        self._page("sandboxes", views.page_sandbox_detail(sid, row), 200 if row else 404, sub=views.e(sid))
-
-    def g_devices(self, qs):
-        self._page(
-            "devices",
-            views.page_devices(devices.collect_devices(oc_root())),
-            sub="Paired Personal Computer devices — reachability, grants and queue depth",
-        )
+    def g_api_sandboxes(self, qs):
+        self._json(200, consoleapi.sandboxes_payload(fleet_state()))
 
     def g_api_devices(self, qs):
         self._json(200, devices.collect_devices(oc_root()))
@@ -718,32 +710,17 @@ class Handler(BaseHTTPRequestHandler):
             sub="Goals on a cadence — durable Temporal schedules",
         )
 
-    def g_router(self, qs):
-        self._page("router", self._router_body(), sub="Route tester and decision ledger")
-
-    def _router_body(self, result: str = "") -> str:
-        return views.page_router(
-            self._csrf(),
-            read_ndjson(ledger_path())[-14:],
-            day_spend(),
-            daily_cap(),
-            paid_router(),
-            router_base(),
-            time.time(),
-            result,
+    def g_api_router(self, qs):
+        self._json(
+            200,
+            consoleapi.router_payload(
+                read_ndjson(ledger_path()), day_spend(), daily_cap(), paid_router(), views.host_of(router_base())
+            ),
         )
 
-    def g_audit(self, qs):
-        f = (qs.get("f") or ["all"])[0]
-        f = f if f in dict(views.AUDIT_FILTERS) else "all"
-        q = (qs.get("q") or [""])[0][:200]
-        rows = [r for r in read_ndjson(audit_path()) if views.audit_match(r, f, q)]
-        self._page(
-            "audit", views.page_audit(list(reversed(rows))[:200], len(rows), f, q, time.time()), sub="Append-only"
-        )
-
-    def g_frag_fleet(self, qs):
-        self._send(200, views.fleet_rows(fleet_state()).encode(), page=True)
+    def g_api_audit(self, qs):
+        f, q = (qs.get("f") or ["all"])[0], (qs.get("q") or [""])[0]
+        self._json(200, consoleapi.audit_payload(read_ndjson(audit_path()), f, q))
 
     def g_frag_status(self, qs):
         self._send(200, views.status_cell(fleet_state()).encode(), page=True)
@@ -830,19 +807,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"run": rid})
         self._redirect(f"/goals/{rid}", 303)
 
-    def p_router_test(self, who, body):
+    def p_api_router_test(self, who, body):
         q = str(body.get("q", "")).strip()[:500]
         if not q:
-            return self._page("router", self._router_body(), 400)
+            return self._json(400, {"error": "Enter something to route."})
         if paid_router() and body.get("confirm") != "1":
-            return self._page(
-                "router", views.router_confirm(self._csrf(), q, router_base()), sub="Confirm before it leaves"
+            # Leaving the box costs money: say where and how much, send nothing yet.
+            return self._json(
+                200,
+                {
+                    "needs_confirm": True,
+                    "dest_host": views.host_of(router_base()),
+                    "cost": consoleapi.PAID_ROUTE_COST,
+                },
             )
         try:
-            result = views.route_result(_route(q))
+            result = _route(q)
         except Exception as e:  # BudgetHalt, engine failure
-            result = f'<p class="err" role="alert">Routing failed: {views.e(str(e))}. Nothing was sent.</p>'
-        self._page("router", self._router_body(result), sub="Route tester and decision ledger")
+            return self._json(502, {"error": f"Routing failed: {e}. Nothing was sent."})
+        self._json(200, {"result": result})
 
     def _decide(self, who, body, id, approve: bool):
         gate = Gate(audit_path())

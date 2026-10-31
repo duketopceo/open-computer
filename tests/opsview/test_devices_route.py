@@ -34,17 +34,13 @@ def test_api_devices_json_shape(console):
     assert ".secret" not in body and "token" not in d
 
 
-def test_devices_page_renders(console):
-    _pair(console)
-    status, _, html = console.get("/devices")
-    assert status == 200
-    assert "omarchy-max" in html and "omarchy-aarch64" in html
-    assert "Personal Computer devices" in html and "1</b>" in html
+def test_devices_page_is_the_spa_shell(console):
+    status, headers, html = console.get("/devices")
+    assert status == 200 and 'id="root"' in html
+    assert "script-src 'self'" in headers["Content-Security-Policy"]
 
 
 def test_devices_empty_state_is_safe(console):
-    status, _, html = console.get("/devices")
-    assert status == 200 and "No devices paired" in html
     _, _, body = console.get("/api/devices")
     data = json.loads(body)
     assert data["total"] == 0 and data["devices"] == []
@@ -59,8 +55,6 @@ def test_devices_stale_heartbeat_reads_offline(console):
     _, _, body = console.get("/api/devices")
     d = json.loads(body)["devices"][0]
     assert d["state"] == "offline" and d["online"] is False and d["eligible"] is False
-    status, _, html = console.get("/devices")
-    assert status == 200 and "offline" in html
 
 
 def test_devices_malformed_registry_rows_skipped(console):
@@ -106,9 +100,6 @@ def test_devices_bad_field_types_degrade_not_crash(console):
     assert by_id["bad-caps"]["capabilities"] == [] and by_id["bad-caps"]["roots"] == ["ok"]
     assert by_id["bad-beat"]["last_heartbeat"] == 0.0 and by_id["bad-beat"]["state"] == "offline"
     assert by_id["huge-beat"]["state"] == "offline"  # 1e20 clamped, not rendered as OverflowError
-    # the HTML page is the more fragile consumer — it must render too
-    status, _, html = console.get("/devices")
-    assert status == 200 and "bad-os" in html
 
 
 def test_devices_post_rejected(console):

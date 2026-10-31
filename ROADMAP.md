@@ -106,7 +106,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-050 | P4 | Decision: knowledge index (pplx-embed) cut or keep kurultai | open |
 | OC-051 | P3 | Logo v2: sketch 3 marks, 16px test, owner sign-off | open |
 | OC-052 | P3 | Brand build script and rollout (README, ops view, favicon, social preview, plugin icons) | open |
-| OC-053 | P3 | Ops view v2 on FD design: split views, tokens.css, strips, glyphs, FD state vocabulary | partial: Silver Lining console landed (#17) |
+| OC-053 | P3 | Ops view v2 on FD design: unify the console into the React app (one look, one nav; Python serves `/api/*` JSON plus the SPA shell; each server-rendered page is deleted in the PR that ports it). Plan: `docs/plans/2026-10-30-1400-feat-console-react-unification-plan.md`. Order: PR 1 shell + router + nav + Devices/Sandboxes/Router/Audit, 2 Skills + Overview, 3 Automations, 4 Approvals, 5 Runs, 6 Goals + Work, 7 Workspace, 8 palette/shortcuts/theme + final retirement (PRs 4-6 wait for the orchestrator resume-console merge) | partial: Silver Lining console landed (#17); PR 1 shipped: client router, shared shell and nav, JSON API conventions, Devices, Sandboxes (+ detail), Router (ledger + tester), Audit in React with playwright + axe parity |
 | OC-054 | P3 | UI a11y and screenshot regression (pinned playwright + axe) | open |
 | OC-055 | P3 | README and social card with generated numbers only | open |
 | OC-057 | P5 | Agent Skill: skills/open-computer/SKILL.md | open |

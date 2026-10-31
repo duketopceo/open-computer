@@ -5,7 +5,7 @@
   "scripts": {
     "test": "node --test console.e2e.mjs spa.e2e.mjs workspace.e2e.mjs workspace-gates.e2e.mjs",
     "test:spa": "node --test spa.e2e.mjs",
-    "test:a11y": "node --test --test-name-pattern=@a11y console.e2e.mjs workspace-gates.e2e.mjs",
+    "test:a11y": "node --test --test-name-pattern=@a11y console.e2e.mjs spa.e2e.mjs workspace-gates.e2e.mjs",
     "test:keyboard": "node --test --test-name-pattern=@keyboard console.e2e.mjs workspace.e2e.mjs",
     "test:workspace": "node --test workspace.e2e.mjs",
     "test:replay": "node --test --test-name-pattern=@replay workspace.e2e.mjs",

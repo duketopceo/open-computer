@@ -6,7 +6,7 @@ import fs from "node:fs";
 
 const [base, out, prefix = "after"] = process.argv.slice(2);
 fs.mkdirSync(out, { recursive: true });
-const pages = (process.env.PAGES || "/,/sandboxes,/runs,/runs/RUNID,/approvals,/router,/audit").split(",");
+const pages = (process.env.PAGES || "/,/sandboxes,/devices,/runs,/runs/RUNID,/approvals,/router,/audit").split(",");
 const browser = await chromium.launch();
 for (const theme of ["dark", "light"]) {
   for (const [w, h] of [[1440, 900], [390, 844]]) {

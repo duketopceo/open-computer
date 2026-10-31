@@ -117,6 +117,11 @@ def console(tmp_path, monkeypatch, calls):
     monkeypatch.setenv("CUBE_API_URL", url)
     monkeypatch.setenv("CUBE_API_KEY", "fixture")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # A stub UI build: SPA deep links serve it, so tests never depend on a local `pnpm build`.
+    dist = tmp_path / "ui-stub-dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text('<!doctype html><div id="root"></div><script type="module" src="/assets/app.js"></script>')
+    monkeypatch.setattr(server, "UI_DIST", dist)
     monkeypatch.setattr(server.Handler, "auth", FakeAuth())
     srv = server.make_server(0)
     threading.Thread(target=lambda: srv.serve_forever(poll_interval=0.01), daemon=True).start()

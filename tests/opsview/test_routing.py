@@ -21,7 +21,6 @@ def concrete(pattern: str) -> str:
     [
         "/",
         "/sandboxes",
-        "/sandboxes?inline=1",
         "/devices",
         "/runs",
         "/runs/new",
@@ -29,7 +28,6 @@ def concrete(pattern: str) -> str:
         "/router",
         "/audit",
         "/audit?f=blocked&q=gpt",
-        "/_frag/fleet",
         "/_frag/status",
     ],
 )
@@ -70,20 +68,6 @@ def test_unknown_path_404_and_static_whitelist(console):
     assert console.get("/static/auth.py")[0] == 404
     assert console.get("/runs/run_zzzzzzzz")[0] == 404
     assert console.get("/runs/run_00000000")[0] == 404
-    assert console.get("/sandboxes/does-not-exist")[0] == 404
-
-
-def test_sandbox_detail_and_inline_inventory(console):
-    _, _, html = console.get("/sandboxes?inline=1")
-    assert "sbx-7f3a91c2" in html and "code-interpreter" in html
-    status, _, html = console.get("/sandboxes/sbx-7f3a91c2")
-    assert status == 200 and "templateID" in html
-
-
-def test_sandboxes_page_uses_skeleton_then_fragment(console):
-    _, _, html = console.get("/sandboxes")
-    assert 'data-frag="/_frag/fleet"' in html and "skeleton" in html and 'aria-busy="true"' in html
-    assert "<svg" in html and "spinner" not in html.lower()
 
 
 def test_route_tables_are_disjoint_and_named():
@@ -95,12 +79,3 @@ def test_route_tables_are_disjoint_and_named():
     assert {p for p, _ in server.GET_ROUTES}.isdisjoint(
         {p for p, _ in server.POST_ROUTES} - {"/runs", "/goals", "/automations"}
     )
-
-
-def test_api_down_is_honest(console, monkeypatch):
-    monkeypatch.setenv("CUBE_API_URL", "http://127.0.0.1:9")
-    _, _, html = console.get("/_frag/fleet")
-    assert "Control plane is down" in html and "unknown, not empty" in html
-    monkeypatch.delenv("CUBE_API_URL")
-    _, _, html = console.get("/_frag/fleet")
-    assert "not configured" in html.lower()

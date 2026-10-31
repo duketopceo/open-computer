@@ -127,3 +127,433 @@ test("@errors a missing run offers retry instead of spinning forever", async () 
   await page.getByRole("textbox", { name: "Describe a goal" }).waitFor();
   await ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Ported console pages: Devices, Sandboxes (+ detail), Router, Audit.
+// Real fixture data unless a test intercepts an /api call; the router tester POST
+// is always intercepted, so nothing routes or spends.
+// ---------------------------------------------------------------------------
+async function openAt(path, { w = 1440, h = 900, routes = {} } = {}) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce" });
+  await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
+  const page = await ctx.newPage();
+  for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
+  await page.goto(base + path, { waitUntil: "networkidle" });
+  return { ctx, page };
+}
+
+async function axeViolations(page) {
+  await page.evaluate(AXE);
+  const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] }));
+  return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`);
+}
+
+const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+
+const DEVICES = {
+  total: 3, online: 1, eligible: 1, parked_depth: 2,
+  devices: [
+    { device_id: "omarchy-max", os: "omarchy-aarch64", capabilities: ["browser", "fs"], roots: ["/home/luke/src"], online: true, awake: true, eligible: true, state: "online", last_heartbeat: Date.now() / 1000 - 30, active_grants: 1, inbox_depth: 0 },
+    { device_id: "<img src=x onerror=window.__xss=1>", os: "<b>bold</b>", capabilities: [], roots: [], online: true, awake: false, eligible: false, state: "asleep", last_heartbeat: Date.now() / 1000 - 600, active_grants: 0, inbox_depth: 3 },
+    { device_id: "stale-box", os: "linux", capabilities: ["fs"], roots: [], online: false, awake: false, eligible: false, state: "offline", last_heartbeat: 0, active_grants: 0, inbox_depth: 0 },
+  ],
+};
+const PAID = { paid: true, dest_host: "openrouter.ai", per_route_cost: 0.000004, spend: 0.01, cap: 1, ledger: [] };
+
+const PAGES = [
+  ["/devices", "Devices"],
+  ["/sandboxes", "Sandboxes"],
+  ["/sandboxes/sbx-7f3a91c2", "Sandbox"],
+  ["/router", "Router"],
+  ["/audit", "Audit"],
+  ["/audit?f=blocked&q=gpt", "Audit"],
+  ["/no-such-page", "Not found"],
+];
+
+for (const w of [1440, 390]) {
+  test(`@a11y spa ported pages: axe 0 violations and no horizontal scroll at ${w}px`, async () => {
+    for (const [path, title] of PAGES) {
+      // /no-such-page is a server 404; render the in-app not-found page by client navigation instead
+      const target = path === "/no-such-page" ? "/devices" : path;
+      const { ctx, page } = await openAt(target, { w });
+      if (path === "/no-such-page") {
+        await page.evaluate(() => { history.pushState(null, "", "/no-such-page"); dispatchEvent(new PopStateEvent("popstate")); });
+      }
+      await page.getByRole("heading", { level: 1, name: title }).waitFor();
+      await page.getByRole("status").waitFor({ state: "detached" }).catch(() => {});
+      assert.deepEqual(await axeViolations(page), [], `${path} @${w}`);
+      assert.ok(await noHScroll(page), `${path} @${w} scrolls horizontally`);
+      await ctx.close();
+    }
+  });
+}
+
+test("@a11y spa ported pages: error, empty, confirm and open-menu states have 0 violations", async () => {
+  // error state with Retry
+  let { ctx, page } = await openAt("/audit", { routes: { "**/api/audit*": (r) => r.fulfill(json(500, { error: "audit unreadable" })) } });
+  await page.getByRole("alert").filter({ hasText: "audit unreadable" }).waitFor();
+  assert.deepEqual(await axeViolations(page), [], "error state");
+  await ctx.close();
+  // empty states
+  ({ ctx, page } = await openAt("/devices"));
+  await page.getByText("No devices paired").waitFor();
+  assert.deepEqual(await axeViolations(page), [], "devices empty");
+  await ctx.close();
+  // paid confirm panel
+  ({ ctx, page } = await openAt("/router", {
+    routes: {
+      "**/api/router": (r) => r.fulfill(json(200, PAID)),
+      "**/api/router/test": (r) => r.fulfill(json(200, { needs_confirm: true, dest_host: "openrouter.ai", cost: 0.000004 })),
+    },
+  }));
+  await page.getByRole("textbox", { name: "Utterance to route" }).fill("secret plan");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("heading", { name: "Send this to the decider?" }).waitFor();
+  assert.deepEqual(await axeViolations(page), [], "confirm panel");
+  await ctx.close();
+  // mobile menu open
+  ({ ctx, page } = await openAt("/devices", { w: 390 }));
+  await page.getByRole("button", { name: "Menu" }).click();
+  await page.getByRole("link", { name: "Audit" }).waitFor();
+  assert.deepEqual(await axeViolations(page), [], "mobile menu open");
+  await ctx.close();
+});
+
+test("@nav every SPA nav entry deep-links with one current item; unported entries are plain links", async () => {
+  const { ctx, page } = await openAt("/devices");
+  const nav = page.getByRole("navigation", { name: "Console" });
+  const entries = await nav.getByRole("link").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
+  assert.deepEqual(entries.map(([t]) => t), ["Computer", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace"]);
+  for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit"]) {
+    const { ctx: c2, page: p2 } = await openAt(href);
+    if (href !== "/") {
+      assert.equal(await p2.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').count(), 1, href);
+      assert.equal(await p2.locator("h1").count(), 1, href);
+    }
+    await c2.close();
+  }
+  await ctx.close();
+});
+
+test("@nav client-side navigation keeps the document, retitles, moves focus, and back/forward work", async () => {
+  const { ctx, page } = await openAt("/sandboxes");
+  await page.evaluate(() => { window.__same = true; });
+  const nav = page.getByRole("navigation", { name: "Console" });
+  await nav.getByRole("link", { name: "Devices" }).click();
+  await page.waitForURL(base + "/devices");
+  await page.getByRole("heading", { level: 1, name: "Devices" }).waitFor();
+  assert.equal(await page.title(), "Devices · open-computer");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "main");
+  await nav.getByRole("link", { name: "Audit" }).click();
+  await page.waitForURL(base + "/audit");
+  await page.goBack();
+  await page.waitForURL(base + "/devices");
+  await page.getByRole("heading", { level: 1, name: "Devices" }).waitFor();
+  await page.goForward();
+  await page.getByRole("heading", { level: 1, name: "Audit" }).waitFor();
+  assert.equal(await page.evaluate(() => window.__same), true, "no document reload happened");
+  // a ctrl-click is left to the browser (new tab), the SPA does not intercept it
+  const before = page.url();
+  await nav.getByRole("link", { name: "Router" }).click({ modifiers: ["Control"] });
+  assert.equal(page.url(), before);
+  // an unported page is a full navigation to the server-rendered console
+  await Promise.all([page.waitForURL(base + "/runs"), nav.getByRole("link", { name: "Runs" }).click()]);
+  assert.equal(await page.evaluate(() => window.__same), undefined, "Runs is a real page load");
+  await ctx.close();
+});
+
+test("@nav in-app not-found offers a way home", async () => {
+  const { ctx, page } = await openAt("/devices");
+  await page.evaluate(() => { history.pushState(null, "", "/nope"); dispatchEvent(new PopStateEvent("popstate")); });
+  await page.getByRole("heading", { level: 1, name: "Not found" }).waitFor();
+  await page.getByRole("link", { name: "Back to the computer" }).click();
+  await page.getByRole("textbox", { name: "Describe a goal" }).waitFor();
+  await ctx.close();
+});
+
+test("devices: rows, states as words, empty fixture, and hostile text stays text", async () => {
+  let { ctx, page } = await openAt("/devices", { routes: { "**/api/devices": (r) => r.fulfill(json(200, DEVICES)) } });
+  await page.getByRole("table", { name: "Devices, state and queue depth" }).waitFor();
+  await page.getByText("omarchy-aarch64").waitFor();
+  assert.ok(await page.getByText("<img src=x onerror=window.__xss=1>").isVisible(), "device id rendered as literal text");
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  assert.equal(await page.locator("table img, table b").count(), 0);
+  const table = await page.getByRole("table", { name: "Devices, state and queue depth" }).innerText();
+  for (const word of ["online", "asleep", "offline"]) assert.match(table, new RegExp(`●?◐?○?\\s*${word}`));
+  await page.getByText("never").waitFor();
+  assert.match(await page.locator("main").innerText(), /1 of 3 eligible now/);
+  await ctx.close();
+  ({ ctx, page } = await openAt("/devices"));
+  await page.getByText("No devices paired").waitFor();
+  await ctx.close();
+});
+
+test("sandboxes: list, client-side detail, missing id, and honest control-plane states", async () => {
+  let { ctx, page } = await openAt("/sandboxes");
+  await page.getByRole("table", { name: "Sandboxes" }).waitFor();
+  assert.ok(await page.getByRole("link", { name: "sbx-7f3a91c2" }).isVisible());
+  assert.ok((await page.getByText("code-interpreter").count()) >= 1);
+  await page.evaluate(() => { window.__same = true; });
+  await page.getByRole("link", { name: "sbx-7f3a91c2" }).click();
+  await page.waitForURL(base + "/sandboxes/sbx-7f3a91c2");
+  await page.getByRole("table", { name: "Sandbox sbx-7f3a91c2" }).waitFor();
+  assert.ok(await page.getByText("templateID").isVisible());
+  assert.equal(await page.evaluate(() => window.__same), true);
+  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').textContent(), "Sandboxes");
+  await ctx.close();
+
+  ({ ctx, page } = await openAt("/sandboxes/does-not-exist"));
+  await page.getByText("Sandbox not found").waitFor();
+  await page.getByRole("link", { name: "Back to sandboxes" }).click();
+  await page.getByRole("table", { name: "Sandboxes" }).waitFor();
+  await ctx.close();
+
+  ({ ctx, page } = await openAt("/sandboxes", { routes: { "**/api/sandboxes": (r) => r.fulfill(json(200, { configured: true, up: false, api_host: "cube.test", sandboxes: [] })) } }));
+  await page.getByText("unknown, not empty").waitFor();
+  await ctx.close();
+  ({ ctx, page } = await openAt("/sandboxes", { routes: { "**/api/sandboxes": (r) => r.fulfill(json(200, { configured: false, up: false, api_host: "", sandboxes: [] })) } }));
+  await page.getByText("CUBE_API_URL").waitFor();
+  await ctx.close();
+  ({ ctx, page } = await openAt("/sandboxes", { routes: { "**/api/sandboxes": (r) => r.fulfill(json(200, { configured: true, up: true, api_host: "cube.test", sandboxes: [] })) } }));
+  await page.getByText("No sandboxes running").waitFor();
+  await ctx.close();
+});
+
+test("sandboxes: ids with markup or slashes are encoded in links and rendered as text", async () => {
+  const evil = "a/b<i>x</i>";
+  const payload = { configured: true, up: true, api_host: "cube.test", sandboxes: [{ sandboxID: evil, templateID: "t", status: "running", note: { n: "<script>window.__xss=1</script>" } }] };
+  const { ctx, page } = await openAt("/sandboxes", { routes: { "**/api/sandboxes": (r) => r.fulfill(json(200, payload)) } });
+  const link = page.getByRole("link", { name: evil });
+  const href = await link.getAttribute("href");
+  assert.equal(href, "/sandboxes/" + encodeURIComponent(evil));
+  await link.click();
+  await page.getByRole("table", { name: "Sandbox " + evil }).waitFor();
+  // loading the encoded detail URL directly (a hard load, not a client navigation) works too
+  await page.goto(new URL(href, page.url()).href, { waitUntil: "networkidle" });
+  await page.getByRole("table", { name: "Sandbox " + evil }).waitFor();
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  assert.equal(await page.locator("main i, main script").count(), 0);
+  await ctx.close();
+});
+
+test("@perf sandboxes: no layout shift when the inventory replaces the loading state", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
+  const page = await ctx.newPage();
+  await page.addInitScript(() => { window.__cls = 0; new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: "layout-shift", buffered: true }); });
+  await page.goto(base + "/sandboxes", { waitUntil: "networkidle" });
+  await page.getByRole("table", { name: "Sandboxes" }).waitFor();
+  assert.ok((await page.evaluate(() => window.__cls)) <= 0.02);
+  await ctx.close();
+});
+
+test("router: free engine routes immediately and refetches the ledger (POST intercepted)", async () => {
+  let posts = [];
+  let routerGets = 0;
+  const { ctx, page } = await openAt("/router", {
+    routes: {
+      "**/api/router": (r) => {
+        routerGets++;
+        return r.fulfill(json(200, { paid: false, dest_host: "", per_route_cost: 0, spend: 0, cap: 1,
+          ledger: routerGets === 1 ? [] : [{ ts: Date.now() / 1000, event: "decision", route: "just-routed", engine: "table", cost: 0 }] }));
+      },
+      "**/api/router/test": async (r) => {
+        posts.push(JSON.parse(r.request().postData() || "{}"));
+        await new Promise((res) => setTimeout(res, 200)); // window for a double click
+        return r.fulfill(json(200, { result: { route: "local", tier: "cheap", engine: "table", confidence: 0.9, cost: 0, ms: 1 } }));
+      },
+    },
+  });
+  await page.getByText("No decisions yet").waitFor();
+  await page.getByRole("textbox", { name: "Utterance to route" }).fill("summarise this");
+  const go = page.getByRole("button", { name: /^Route/ });
+  await go.click();
+  await go.click({ force: true, timeout: 500 }).catch(() => {});
+  await page.getByRole("table", { name: "Route result" }).waitFor();
+  assert.equal(posts.length, 1, "double submit sends one request");
+  assert.equal(posts[0].confirm, undefined);
+  await page.getByRole("cell", { name: "just-routed" }).waitFor(); // the ledger was refetched
+  assert.equal(routerGets, 2);
+  assert.ok(await page.getByText("nothing leaves this box").isVisible());
+  await ctx.close();
+});
+
+test("router: a paid router asks first, sends nothing until confirmed, Cancel sends nothing (POST intercepted)", async () => {
+  const posts = [];
+  const { ctx, page } = await openAt("/router", {
+    routes: {
+      "**/api/router": (r) => r.fulfill(json(200, PAID)),
+      "**/api/router/test": (r) => {
+        const body = JSON.parse(r.request().postData() || "{}");
+        posts.push(body);
+        if (body.confirm !== "1") return r.fulfill(json(200, { needs_confirm: true, dest_host: "openrouter.ai", cost: 0.000004 }));
+        return r.fulfill(json(200, { result: { route: "frontier", tier: "big", engine: "decider", confidence: 0.8, cost: 0.000004, ms: 120 } }));
+      },
+    },
+  });
+  await page.getByText("sends the utterance to openrouter.ai").waitFor();
+  await page.getByRole("textbox", { name: "Utterance to route" }).fill("secret plan");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("heading", { name: "Send this to the decider?" }).waitFor();
+  assert.ok(await page.getByText("openrouter.ai", { exact: true }).first().isVisible());
+  assert.deepEqual(posts.map((p) => p.confirm), [undefined]); // asked, not sent
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("textbox", { name: "Utterance to route" }).waitFor();
+  assert.equal(posts.length, 1, "cancel sends nothing");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("button", { name: /^Route it/ }).click();
+  await page.getByRole("table", { name: "Route result" }).waitFor();
+  assert.deepEqual(posts.map((p) => p.confirm), [undefined, undefined, "1"]);
+  await ctx.close();
+});
+
+test("router: a failed route says nothing was sent and keeps the utterance", async () => {
+  const { ctx, page } = await openAt("/router", {
+    routes: { "**/api/router/test": (r) => r.fulfill(json(502, { error: "Routing failed: budget halted. Nothing was sent." })) },
+  });
+  const box = page.getByRole("textbox", { name: "Utterance to route" });
+  await box.fill("hello there");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("alert").filter({ hasText: "Nothing was sent." }).waitFor();
+  assert.equal(await box.inputValue(), "hello there");
+  await ctx.close();
+});
+
+test("router: the real tester API refuses a POST without the CSRF header", async () => {
+  const { ctx, page } = await openAt("/router");
+  const status = await page.evaluate(async () => (await fetch("/api/router/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: "hi" }) })).status);
+  assert.equal(status, 403);
+  await ctx.close();
+});
+
+test("audit: deep-link filters, URL-driven filtering without reload, back restores, hostile text stays text", async () => {
+  let { ctx, page } = await openAt("/audit?f=blocked&q=gpt");
+  await page.getByRole("table", { name: "Audit events, newest first" }).waitFor();
+  assert.equal(await page.getByRole("link", { name: "Blocked" }).getAttribute("aria-current"), "true");
+  assert.equal(await page.getByRole("searchbox", { name: "Filter audit rows" }).inputValue(), "gpt");
+  assert.ok((await page.locator("tbody tr").count()) >= 1);
+  assert.equal(await page.locator("tbody tr", { hasNotText: "blocked" }).count(), 0);
+  await page.evaluate(() => { window.__same = true; });
+  await page.getByRole("link", { name: "Allowed" }).click();
+  await page.waitForURL(base + "/audit?f=allowed&q=gpt");
+  await page.getByRole("link", { name: "Allowed" }).and(page.locator('[aria-current="true"]')).waitFor();
+  await page.goBack();
+  await page.waitForURL(/f=blocked/);
+  await page.getByRole("link", { name: "Blocked" }).and(page.locator('[aria-current="true"]')).waitFor();
+  assert.equal(await page.evaluate(() => window.__same), true);
+  await page.getByRole("searchbox", { name: "Filter audit rows" }).fill("zzz-no-such-text");
+  await page.getByRole("button", { name: "Filter" }).click();
+  await page.getByText("No matching events").waitFor();
+  await ctx.close();
+
+  const rows = { f: "all", q: "", total: 1, shown: 1, rows: [{ ts: Date.now() / 1000, event: "note", result: "recorded", detail: "what=<script>window.__xss=1</script><b>x</b>" }] };
+  ({ ctx, page } = await openAt("/audit", { routes: { "**/api/audit*": (r) => r.fulfill(json(200, rows)) } }));
+  await page.getByText("what=<script>window.__xss=1</script><b>x</b>").waitFor();
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  assert.equal(await page.locator("td b").count(), 0);
+  await page.getByText("Showing the latest 1 of 1 matching events.").waitFor();
+  await ctx.close();
+});
+
+test("audit: a failed fetch offers Retry, and only the last filter's rows render", async () => {
+  let fail = true;
+  const { ctx, page } = await openAt("/audit", {
+    routes: {
+      "**/api/audit*": async (r) => {
+        const u = new URL(r.request().url());
+        if (fail) return r.fulfill(json(500, { error: "audit unreadable" }));
+        if (u.searchParams.get("f") === "blocked") await new Promise((res) => setTimeout(res, 400)); // slow, stale response
+        return r.fulfill(json(200, { f: u.searchParams.get("f") ?? "all", q: "", total: 1, shown: 1, rows: [{ ts: 1, event: "e-" + (u.searchParams.get("f") ?? "all"), result: "recorded", detail: "" }] }));
+      },
+    },
+  });
+  await page.getByRole("alert").filter({ hasText: "audit unreadable" }).waitFor();
+  fail = false;
+  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByText("e-all", { exact: true }).waitFor();
+  await page.getByRole("link", { name: "Blocked" }).click();
+  await page.getByRole("link", { name: "Allowed" }).click();
+  await page.getByText("e-allowed", { exact: true }).waitFor();
+  await page.waitForTimeout(600);
+  assert.equal(await page.getByText("e-blocked", { exact: true }).count(), 0, "stale response dropped");
+  await ctx.close();
+});
+
+test("an expired session on a ported page shows the session-expired state", async () => {
+  const { ctx, page } = await openAt("/devices", { routes: { "**/api/devices": (r) => r.fulfill(json(401, { error: "Sign in again." })) } });
+  await page.getByRole("alert").filter({ hasText: "session expired" }).waitFor();
+  await ctx.close();
+});
+
+test("nav: Sandboxes is current only for declared routes, and a same-URL click adds no history entry", async () => {
+  let { ctx, page } = await openAt("/sandboxes/sbx-7f3a91c2");
+  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').textContent(), "Sandboxes");
+  await page.evaluate(() => { history.pushState(null, "", "/sandboxes/a/b"); dispatchEvent(new PopStateEvent("popstate")); });
+  await page.getByRole("heading", { level: 1, name: "Not found" }).waitFor();
+  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').count(), 0);
+  await ctx.close();
+  ({ ctx, page } = await openAt("/devices"));
+  const before = await page.evaluate(() => history.length);
+  await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Devices" }).click();
+  assert.equal(await page.evaluate(() => history.length), before, "clicking the current page's link pushes nothing");
+  await ctx.close();
+});
+
+test("focus: the first client-side navigation from / lands on main; an audit filter submit keeps focus in the input", async () => {
+  let { ctx, page } = await open();
+  await page.getByRole("navigation", { name: "Operator" }).getByRole("link", { name: "Devices" }).click();
+  await page.getByRole("heading", { level: 1, name: "Devices" }).waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "main");
+  await ctx.close();
+  ({ ctx, page } = await openAt("/audit"));
+  const box = page.getByRole("searchbox", { name: "Filter audit rows" });
+  await box.fill("gpt");
+  await box.press("Enter");
+  await page.waitForURL(/q=gpt/);
+  await page.getByRole("table", { name: "Audit events, newest first" }).waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "audit-q", "focus stays in the filter input");
+  await ctx.close();
+});
+
+test("audit: rows from the previous filter are not shown while the next one loads; a bad timestamp does not crash", async () => {
+  const row = (event, ts) => ({ ts, event, result: "recorded", detail: "" });
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const { ctx, page } = await openAt("/audit", {
+    routes: {
+      "**/api/audit*": async (r) => {
+        const f = new URL(r.request().url()).searchParams.get("f") ?? "all";
+        if (f === "blocked") await gate;
+        return r.fulfill(json(200, { f, q: "", total: 2, shown: 2, rows: [row("e-" + f, 1), row("bad-ts", 1e16)] }));
+      },
+    },
+  });
+  await page.getByText("e-all", { exact: true }).waitFor();
+  assert.ok(await page.getByText("invalid time").isVisible(), "an out-of-range timestamp renders a fallback instead of throwing");
+  await page.getByRole("link", { name: "Blocked" }).click();
+  await page.getByRole("status").filter({ hasText: "Loading" }).waitFor();
+  assert.equal(await page.getByText("e-all", { exact: true }).count(), 0, "previous filter's rows are hidden while loading");
+  release();
+  await page.getByText("e-blocked", { exact: true }).waitFor();
+  await ctx.close();
+});
+
+test("router: a failed second route clears the first route's result", async () => {
+  let n = 0;
+  const { ctx, page } = await openAt("/router", {
+    routes: {
+      "**/api/router/test": (r) => (++n === 1
+        ? r.fulfill(json(200, { result: { route: "local", tier: "cheap", engine: "table", confidence: 0.9, cost: 0, ms: 1 } }))
+        : r.fulfill(json(502, { error: "Routing failed: budget halted. Nothing was sent." }))),
+    },
+  });
+  const box = page.getByRole("textbox", { name: "Utterance to route" });
+  await box.fill("first");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("table", { name: "Route result" }).waitFor();
+  await box.fill("second");
+  await page.getByRole("button", { name: /^Route/ }).click();
+  await page.getByRole("alert").filter({ hasText: "Nothing was sent." }).waitFor();
+  assert.equal(await page.getByRole("table", { name: "Route result" }).count(), 0);
+  await ctx.close();
+});
