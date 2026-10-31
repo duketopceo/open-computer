@@ -7,6 +7,7 @@ hammer dead ports. Fail-closed: a probe error means "down".
 
 from __future__ import annotations
 
+import os
 import socket
 import time
 
@@ -17,6 +18,12 @@ log = get_logger("placement")
 _ENDPOINTS = (("127.0.0.1", 8080), ("127.0.0.1", 11434))  # llama.cpp, Ollama
 _TTL = 30.0
 _cache: tuple[float, bool] = (0.0, True)
+
+
+def local_models_enabled() -> bool:
+    """Local models are opt-in: `OC_LOCAL_MODELS=1` (also true/yes/on). Off by default, so no step is placed
+    on a local endpoint unless the owner asked for it."""
+    return os.environ.get("OC_LOCAL_MODELS", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def local_endpoints_up(now: float | None = None) -> bool:
@@ -45,11 +52,12 @@ def _probe(timeout: float = 1.0) -> bool:
 
 
 def place_live(subtask: dict, **kw):
-    """place() with a live local-endpoint probe and the human-approved
-    egress set injected (S5)."""
+    """place() with the local-models opt-in, a live local-endpoint probe (only when local is opted in) and the
+    human-approved egress set injected (S5)."""
     from .rules import place
 
-    kw.setdefault("local_up", local_endpoints_up())
+    enabled = kw.setdefault("local_enabled", local_models_enabled())
+    kw.setdefault("local_up", enabled and local_endpoints_up())
     kw.setdefault("egress_approved", approved_egress())
     return place(subtask, **kw)
 

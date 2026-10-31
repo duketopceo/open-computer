@@ -13,6 +13,7 @@ from oc.obs import get_logger
 from services.device.parked import pick_device_for_task, required_capability
 from services.device.protocol import seal
 from services.placement import DEVICE_NEEDS, headroom_from
+from .engines import local_model_name
 from services.telemetry import report_failure
 
 log = get_logger("orchestrator")
@@ -30,9 +31,24 @@ def _pick_device(devices, sub: dict, *, now: float | None = None):
     return pick_device_for_task(devices, sub, now=now)
 
 
+def planned_model(placement_target: str, run_model: str | None) -> str | None:
+    """The model a placement is expected to run on, for the run page before the step has run: the run's own
+    (effort) model for every cloud target, the configured local model for a local one, none for a device or
+    a blocked step. What actually ran is recorded by the worker; the run page prefers that."""
+    if placement_target.startswith("local"):
+        return local_model_name()
+    if placement_target.startswith("cloud"):
+        return run_model
+    return None
+
+
 def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, ledger=None, devices=None,
-             chat_id: str | None = None) -> dict:
+             chat_id: str | None = None, approved: bool = False, approval_id: str | None = None,
+             model: str | None = None) -> dict:
     """Route, place, and offer a subtask to the worker inbox.
+
+    `approved`: the owner approved sending exactly this step (`approval_id` names the approval; the audit row
+    carries it). `model`: the run's orchestrator model, recorded as the planned model of cloud steps.
 
     `devices` is a services.device.DeviceRegistry (or None). A step the
     placer sends to `device` goes to that device's own mailbox; with no
@@ -55,6 +71,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
             **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
         },
         pii_flagged=bool(pii.categories),
+        approved=approved,
         headroom=headroom,
         device_available=device is not None,
     )
@@ -66,6 +83,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "route": decision.route,
         "engine": decision.engine,
         "placement": placement.target,
+        "model": planned_model(placement.target, model),
         "est_cost": sub.get("est_cost", 0.0),
         **({"chat": chat_id} if chat_id else {}),
         **({"egress_hosts": list(placement.egress_hosts)} if placement.egress_hosts else {}),
@@ -107,6 +125,8 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "reason": placement.reason,
         "gate_required": placement.gate_required,
         "pii": list(pii.categories),
+        "model": planned_model(placement.target, model),
+        **({"approval": approval_id} if approval_id else {}),
     }
     audit.append(rec)
     plog.info("placement decided", subtask=sub["id"], target=placement.target, reason=placement.reason,

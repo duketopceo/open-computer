@@ -13,11 +13,14 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Callable
 
 from oc.fsproto import adapter as fs_adapter
+from services.gate.queue import ApprovalQueue
+from services.gate.queue import default_path as approvals_path
 from services.orchestrator import Orchestrator
 from services.orchestrator.runcfg import create_ledger, effort_row, ledger_for, model_of
 from services.orchestrator.thinking import PLAN, ThinkingLog, join_thoughts
@@ -37,6 +40,17 @@ def runs_dir() -> Path:
 
 _live: dict[str, Orchestrator] = {}
 _lock = threading.Lock()
+
+# How long a driver thread keeps a run alive while its steps wait on an owner approval. After that the run stays
+# on disk (steps AWAITING-APPROVAL) and a console restart re-drives it.
+HOLD_WAIT_S = float(os.environ.get("OC_APPROVAL_WAIT_S", str(6 * 3600)))
+HOLD_POLL_S = 2.0
+
+
+def _orchestrator(run_dir: Path, **kw) -> Orchestrator:
+    """The one place a goal run's Orchestrator is built: live placement, the console's approval queue, and the
+    run's own effort ledger and model (read back from disk by the caller or by the Orchestrator itself)."""
+    return Orchestrator(run_dir, place_fn=place_live, approvals=ApprovalQueue(approvals_path()), **kw)
 
 
 def _audit_rows(run_dir: Path) -> list[dict]:
@@ -80,6 +94,8 @@ def list_runs() -> list[dict]:
             if r.get("event") == "dispatch":
                 st = _task_state(d, r["task"])
                 states[st] = states.get(st, 0) + 1
+        held = _held_subtasks(rows)
+        states["AWAITING-APPROVAL"] += len(held)
         undispatched = (submit or {}).get("subtasks", 0) - sum(states.values())
         states["QUEUED"] += max(0, undispatched)
         anchor = submit or failed
@@ -97,6 +113,16 @@ def list_runs() -> list[dict]:
         if len(out) >= 30:
             break
     return out
+
+
+def _held_subtasks(rows: list[dict]) -> list[dict]:
+    """Steps asked of the owner and not dispatched yet: one row each (latest request), in request order."""
+    dispatched = {r.get("subtask") for r in rows if r.get("event") == "dispatch"}
+    asked: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "approval_requested" and r.get("subtask") not in dispatched:
+            asked[r["subtask"]] = r
+    return list(asked.values())
 
 
 def get_run(run_id: str) -> dict | None:
@@ -117,6 +143,9 @@ def get_run(run_id: str) -> dict | None:
     for t in sorted(ThinkingLog(d / "thinking.ndjson").rows(), key=lambda t: t.get("ts") or 0):
         key = PLAN if t.get("subtask") == PLAN else t.get("task")
         thoughts.setdefault(key, []).append(t["text"])
+    ran = {r.get("task"): r.get("model") for r in rows if r.get("event") == "worker_done" and r.get("model")}
+    ledger = ledger_for(d)
+    spent = ledger.by_subtask(run_id) if ledger is not None else None
     subs = []
     for r in rows:
         if r.get("event") != "dispatch":
@@ -136,8 +165,15 @@ def get_run(run_id: str) -> dict | None:
             "placement": r.get("placement"),
             "reason": r.get("reason"),
             "gate_required": r.get("gate_required"),
-            "cost": r.get("cost"),
+            # What the step itself cost, from the run's ledger. Runs from before the ledger only have the router
+            # decision's cost, which is all they ever showed. That decision cost is always `route_cost`.
+            "cost": r.get("cost") if spent is None else round(spent.get(r.get("subtask"), 0.0), 6),
+            "route_cost": r.get("cost"),
             "pii": r.get("pii"),
+            # The model that answered (from the worker) once the step ran; before that, the model it is planned to run on.
+            "model": ran.get(tid) or r.get("model"),
+            "model_ran": tid in ran,
+            "approval": r.get("approval"),
         }
         if state == "DONE":
             try:
@@ -158,6 +194,27 @@ def get_run(run_id: str) -> dict | None:
         if tid in thoughts:
             rec["thinking"] = join_thoughts(thoughts[tid])
         subs.append(rec)
+    titles = _plan_titles(d)
+    for h in _held_subtasks(rows):
+        subs.append(
+            {
+                "subtask": h["subtask"],
+                "title": titles.get(h["subtask"], h["subtask"]),
+                "state": "AWAITING-APPROVAL",
+                "route": None,
+                "engine": None,
+                "placement": None,
+                "reason": "private details found: waiting for your approval to send this step to the cloud model",
+                "gate_required": True,
+                "cost": 0.0,
+                "route_cost": None,
+                "pii": h.get("pii") or [],
+                "model": h.get("model"),
+                "model_ran": False,
+                "approval": h.get("approval"),
+                "ts": h.get("ts"),
+            }
+        )
     out = {
         "run": run_id,
         "goal": (submit or failed or {}).get("goal", ""),
@@ -179,6 +236,13 @@ def get_run(run_id: str) -> dict | None:
         out["error_kind"] = failed.get("kind", "")
         out["hint"] = failed.get("hint", "")
     return out
+
+
+def _plan_titles(run_dir: Path) -> dict[str, str]:
+    try:
+        return {t["id"]: t["title"] for t in json.loads((run_dir / "plan.json").read_text())}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
 
 
 def _effort_view(run_dir: Path, run_id: str, row: dict) -> dict:
@@ -212,7 +276,7 @@ def submit(
     run_dir = runs_dir() / rid
     run_dir.mkdir(parents=True, exist_ok=True)
     ledger = create_ledger(run_dir, rid, budget, by or "owner") if budget is not None else None
-    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger)
+    orch = _orchestrator(run_dir, ledger=ledger, model=model)
     if budget is not None:
         orch.audit.append({"event": "effort_set", "run": rid, "effort": effort, "model": model, "budget": budget})
     with _lock:
@@ -235,12 +299,19 @@ def submit(
 
 def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object]) -> None:
     try:
-        for _ in range(400):
+        sweeps = 0
+        hold_deadline = time.monotonic() + HOLD_WAIT_S
+        while sweeps < 400:
             res = orch.results(rid)
             if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
                 break
-            if not orch.work(wfn):
-                break
+            if orch.work(wfn):
+                sweeps += 1
+                continue
+            if orch.holds(rid) and time.monotonic() < hold_deadline:
+                time.sleep(HOLD_POLL_S)  # steps wait on the owner's approval; the queue is re-read each sweep
+                continue
+            break
     except Exception:
         pass  # the audit rows + task files on disk remain the truth
 
@@ -267,7 +338,7 @@ def resume(wfn, wfn_for_model: Callable[[str], Callable[[dict], object]] | None 
         if not d.is_dir():
             continue
         try:
-            orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d))
+            orch = _orchestrator(d, ledger=ledger_for(d))
             if not orch.recover(d.name):
                 continue
             res = orch.results(d.name)

@@ -194,7 +194,7 @@ Plans in `docs/plans/` mapped to one board. Status verified against main.
 | Agent orchestrator | 2026-10-29-001, 2026-10-30-002 (sandbox launcher), 2026-10-30-1346 (resume + console) | slices 1-3 merged (#77, #79, #80, #81, #84, #86); fakes only | roadmap item 2: wire the production planner and launcher so submitted jobs run; then finish-in-a-PR |
 | Effort composer | 2026-10-31-001 | OC-067 merged (#95) | folded into the chat product below |
 | Chat agent product | 2026-10-31-003 | planned (OC-068..OC-085) | Phase 0: OC-068 routing truth, OC-069 run page truth; then threads. Supersedes the nav and direction of 2026-10-31-002 (#97) |
-| Unified UI shell | 2026-10-30-001, 2026-10-30-003 | merged: legible output (#83), React shell + pages (#85, #92, #93, #94), Approvals card fields (#96); only `/runs/new` and `/runs/<run_id>` still server-rendered | finish the full move per 2026-10-30-003 (the two run pages, cutover deleting old `page_*` renderers and `console.css`), U2 step activity, U3 onboarding |
+| Unified UI shell | 2026-10-30-001, 2026-10-30-003 | merged: legible output (#83), React shell + pages (#85, #92, #93, #94), Approvals card fields (#96); `/runs/new` and `/runs/<run_id>` still server-rendered pending migration; `/login`, `/enroll` and `/workspace` stay server-rendered by design | finish the full move per 2026-10-30-003 (the two run pages, cutover deleting old `page_*` renderers and `console.css`), U2 step activity, U3 onboarding |
 | Run resilience | 2026-10-30-002 | R1 + R2 merged (#89), R3 merged (#90) | R4 approval affordance for blocked egress ← **next**, then R5 planner determinism |
 
 ## Product direction (owner, 2026-10-11; reaffirmed 2026-10-31)

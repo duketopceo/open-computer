@@ -58,16 +58,19 @@ def _local_for(latency: str) -> str:
 
 
 def headroom_from(budget=None, ledger=None, run: str | None = None) -> float | None:
-    """Spend headroom in dollars: the smallest remaining cap across the router's decision Budget and the
-    run's cost ledger. None = nothing to enforce. This is the only impure step (it reads ledger files);
-    place() itself takes the resulting number."""
-    parts: list[float] = []
-    if budget is not None:
-        parts.append(min(budget.task_cap - budget.task_spend, budget.daily_cap - budget.day_spend()))
+    """Spend headroom in dollars. None = nothing to enforce. This is the only impure step (it reads ledger
+    files); place() itself takes the resulting number.
+
+    A run with a cost ledger is capped by that ledger alone: the owner's effort budget is the per-run cap,
+    and the router's small decision-spend `Budget` (a separate $0.10 task cap) must not shrink it, or a
+    Medium or High run would quietly fall back to a local model long before its own budget is used.
+    Without a ledger, the router's task and daily caps are the headroom."""
     if ledger is not None and run is not None:
         st = ledger.state(run)
-        parts.append(0.0 if st.cap is None or st.state != "running" else st.cap - st.spend - st.reserved)
-    return min(parts) if parts else None
+        return 0.0 if st.cap is None or st.state != "running" else st.cap - st.spend - st.reserved
+    if budget is not None:
+        return min(budget.task_cap - budget.task_spend, budget.daily_cap - budget.day_spend())
+    return None
 
 
 def place(
@@ -78,6 +81,7 @@ def place(
     headroom: float | None = None,
     budget=None,
     local_up: bool = True,
+    local_enabled: bool = True,
     device_available: bool = True,
     egress_approved=(),
 ) -> Placement:
@@ -86,6 +90,9 @@ def place(
     pii_flagged: the gate's scan of the prompt found PII.
     approved:    a human approval for exactly this payload exists. The gate re-verifies hash, expiry and
                  single use at send time, so True here only opens the *option* of a gated cloud call.
+    local_enabled: the owner opted in to local models (`OC_LOCAL_MODELS`). When False nothing is ever placed
+                 on a local endpoint, as if every one were down: cheap and latency-critical steps run on the
+                 run's cloud model, and private or over-budget steps are held or blocked with a reason.
     headroom:    dollars still spendable (see headroom_from). A cloud call the headroom cannot cover
                  demotes to local. `budget` is a legacy shim: its headroom is derived here when `headroom`
                  is not given; a corrupt ledger raises BudgetHalt from day_spend() and propagates.
@@ -104,6 +111,9 @@ def place(
     est_cost = float(subtask.get("est_cost", 0.0))
     if headroom is None and budget is not None:
         headroom = headroom_from(budget=budget)
+    if not local_enabled:
+        local_up = False
+    no_local = "local models are off" if not local_enabled else "local endpoints down"
 
     # 0. Steps bound to the user's machine run there or nowhere: a local
     #     file, app or browser cannot be reached from any other target.
@@ -120,6 +130,11 @@ def place(
     #    local dead there is no legal home — block, don't crash-land the
     #    step on an endpoint that isn't there.
     if pii_flagged and not approved:
+        if not local_enabled:
+            return Placement(
+                "blocked",
+                "pii-flagged, unapproved, and local models are off — approve sending this step to the cloud model",
+            )
         if not local_up:
             return Placement(
                 "blocked",
@@ -176,7 +191,7 @@ def place(
         if not local_up:
             return Placement(
                 "cloud-OpenRouter",
-                "latency=crit but local endpoints down — cloud fallback",
+                f"latency=crit but {no_local} — cloud model",
             )
         return Placement("local-llamacpp", "latency=crit - GPU local, no network RTT")
 
@@ -187,7 +202,8 @@ def place(
         if not local_up:
             return Placement(
                 "blocked",
-                f"over-budget (est {est_cost} > headroom {headroom:.4f}) and local endpoints down — raise the cap or restore local",
+                f"over-budget (est {est_cost} > headroom {headroom:.4f}) and {no_local} — raise the cap"
+                + ("" if not local_enabled else " or restore local"),
             )
         return Placement(
             "local-ollama",
@@ -208,7 +224,7 @@ def place(
         if not local_up:
             return Placement(
                 "cloud-OpenRouter",
-                "cheap tier but local endpoints down — cloud fallback",
+                f"cheap tier but {no_local} — cloud model",
             )
         return Placement("local-llamacpp", "cheap tier - local model suffices")
 

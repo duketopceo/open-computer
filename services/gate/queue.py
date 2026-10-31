@@ -28,6 +28,11 @@ from .pii import scan
 log = get_logger("gate")
 
 
+def default_path() -> Path:
+    """Where the console's approval queue lives (`OC_APPROVALS`). One definition for every process that reads or writes it."""
+    return Path(os.environ.get("OC_APPROVALS", "/tmp/oc-audit/approvals.ndjson"))
+
+
 class QueueError(Exception):
     """Refused decision: unknown id, already decided, stale hash, missing note."""
 

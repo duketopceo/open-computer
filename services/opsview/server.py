@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, urlparse
 from oc.obs import bind, get_logger
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
+from services.gate.queue import default_path as default_approvals_path
 from services.agents.approvals import ApprovalError
 from services.opsview.agentgrants import GrantError
 from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns
@@ -135,7 +136,7 @@ def audit_path() -> Path:
 
 
 def approvals_path() -> Path:
-    return Path(os.environ.get("OC_APPROVALS", "/tmp/oc-audit/approvals.ndjson"))
+    return default_approvals_path()
 
 
 def oc_root() -> Path:

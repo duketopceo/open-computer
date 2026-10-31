@@ -9,6 +9,7 @@ Conformance: tests/conformance/checks/orchestrator_checks.py (ORCH rows).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -18,14 +19,17 @@ from oc.fsproto import adapter as fs_adapter
 from oc.obs import bind, error_fields, get_logger
 from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
-from services.placement import place
+from services.placement import local_models_enabled, needs_device, place
 from services.gate.audit import AuditLog
+from services.gate.gate import payload_hash
+from services.gate.queue import QueueError
 from services.openrouter import collect_reasoning, collect_usage, total_usage
 from services.router import adapter as router_adapter
 
 from .collect import collect_run, task_state
 from .decompose import DEP_OUTPUT_CAP, DecomposeError, decompose
 from .dispatch import dispatch
+from .runcfg import model_of
 from .runner import WorkResult, run_once
 from .thinking import PLAN, ThinkingLog, join_thoughts
 
@@ -48,7 +52,12 @@ __all__ = [
 class Orchestrator:
     """goal -> dispatched subtask DAG -> collected results."""
 
-    def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None, devices=None):
+    def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None, devices=None, approvals=None,
+                 model: str | None = None):
+        """`model` is the run's orchestrator model (the effort's pick): the planner and every cloud step use it.
+        Left unset it is read back from the run's `effort_set` audit row, so a restarted process agrees.
+        `approvals` is a services.gate.queue.ApprovalQueue: with it, a step holding private details is held for
+        the owner's approval instead of being silently sent to a local model (see `_hold`)."""
         root = Path(root)
         self.root = root
         self.fs = fs_adapter(root / "run")
@@ -59,6 +68,8 @@ class Orchestrator:
         self.place = place_fn or place
         self.ledger = ledger  # services.cost.CostLedger | None
         self.devices = devices  # services.device.DeviceRegistry | None (P1)
+        self.approvals = approvals  # services.gate.queue.ApprovalQueue | None
+        self.model = model or model_of(self.audit.rows())
         if self.devices is not None and hasattr(self.devices, "bind"):
             self.devices.bind(fs=self.fs, audit=self.audit)
         self.dispatches: dict[str, list[dict]] = {}  # run_id -> records
@@ -224,6 +235,17 @@ class Orchestrator:
         The task is a literal on-disk record (status=failed, never worked);
         deeper dependents cascade through it in the same dispatch_ready call.
         """
+        return self._fail_step(
+            run_id,
+            sub,
+            kind="DependencyFailed",
+            reason=f"dep '{blocked_by}' failed — cannot run",
+            hint="rerun the goal, or fix the failed dep and resume the run",
+            blocked_by=blocked_by,
+        )
+
+    def _fail_step(self, run_id: str, sub: dict, *, kind: str, reason: str, hint: str, **body_extra) -> dict:
+        """Dispatch a tombstone task for `sub` and fail it before any lease; the audit rows carry kind/reason/hint."""
         tid = self.fs.send(
             "worker",
             {
@@ -231,12 +253,11 @@ class Orchestrator:
                 "subtask": sub["id"],
                 "title": sub["title"],
                 "prompt": sub["prompt"],
-                "blocked_by": blocked_by,
+                **body_extra,
             },
         )
         self.fs.fail(tid)
-        reason = f"dep '{blocked_by}' failed — cannot run"
-        log.warning("dep failed: tombstoned dependent", subtask=sub["id"], blocked_by=blocked_by, task=tid)
+        log.warning("step failed before dispatch", kind=kind, subtask=sub["id"], task=tid)
         rec = {
             "event": "dispatch",
             "run": run_id,
@@ -256,12 +277,68 @@ class Orchestrator:
                 "run": run_id,
                 "task": tid,
                 "subtask": sub["id"],
-                "kind": "DependencyFailed",
+                "kind": kind,
                 "error": reason,
-                "hint": "rerun the goal, or fix the failed dep and resume the run",
+                "hint": hint,
             }
         )
         return rec
+
+    def _hold(self, run_id: str, sub: dict) -> tuple[str, str | None]:
+        """Does this step need the owner's approval before it may leave the machine?
+
+        Returns (state, approval_id). state is "none" (no hold applies), "waiting", "approved", or "refused".
+        A step holding private details (the PII scan) used to be sent to a local model without a word; with
+        local models off, that silent route is gone, so the step waits in the approval queue instead — the
+        same queue, card and hash binding every other send uses. The request id is derived from the run,
+        step and payload hash, so a restart never duplicates it and a changed payload is a new request.
+        Steps bound to the user's own machine never leave it, so they are never held."""
+        if self.approvals is None or local_models_enabled() or needs_device(sub):
+            return "none", None
+        categories = self.gate.scan(sub["prompt"]).categories
+        if not categories:
+            return "none", None
+        payload = {
+            "model": self.model or "(the run's cloud model)",
+            "egress": "openrouter.ai",
+            "run": run_id,
+            "subtask": sub["id"],
+            "title": sub["title"],
+            "prompt": sub["prompt"],
+        }
+        h = payload_hash(payload)
+        aid = "ap_" + hashlib.sha256(f"{run_id}:{sub['id']}:{h}".encode()).hexdigest()[:8]
+        item = self.approvals.get(aid)
+        if item is None:
+            self.audit.append(
+                {"event": "approval_requested", "run": run_id, "subtask": sub["id"], "approval": aid,
+                 "pii": list(categories), "model": payload["model"]}
+            )
+            try:
+                self.approvals.submit(
+                    who=f"goal {run_id}",
+                    what=f"Send step '{sub['title']}' to {payload['model']}",
+                    payload=payload,
+                    session=run_id,
+                    est_cost=float(sub.get("est_cost", 0.0)),
+                    item_id=aid,
+                    bound_hash=h,
+                )
+            except QueueError:
+                pass  # a concurrent sweep created it first
+            return "waiting", aid
+        if item["status"] == "pending":
+            return "waiting", aid
+        if item["status"] == "approved" and item["payload_hash"] == h:
+            return "approved", aid
+        return "refused", aid
+
+    def holds(self, run_id: str) -> list[str]:
+        """Subtask ids waiting on an owner approval right now (requested, not yet dispatched)."""
+        tids = self._tid_by_sub.get(run_id, {})
+        asked = [r["subtask"] for r in self.audit.rows()
+                 if r.get("event") == "approval_requested" and r.get("run") == run_id]
+        return [sid for sid in dict.fromkeys(asked) if sid not in tids]
 
     def dispatch_ready(self, run_id: str) -> list[dict]:
         """Dispatch ready subtasks; dep-fail ones whose deps can't complete.
@@ -289,18 +366,33 @@ class Orchestrator:
                     with_deps = self._with_dep_results(sub, tids)
                     if with_deps is None:
                         continue  # a dep's output isn't collectable yet — hold
-                    rec = dispatch(
-                        self.fs,
-                        self.router,
-                        self.gate,
-                        self.place,
-                        self.audit,
-                        run_id,
-                        with_deps,
-                        ledger=self.ledger,
-                        devices=self.devices,
-                        chat_id=self._chat.get(run_id),
-                    )
+                    hold, aid = self._hold(run_id, with_deps)
+                    if hold == "waiting":
+                        continue  # in the approval queue; a later sweep re-checks
+                    if hold == "refused":
+                        rec = self._fail_step(
+                            run_id,
+                            with_deps,
+                            kind="ApprovalRefused",
+                            reason="the owner sent this step back instead of approving it — it was not sent anywhere",
+                            hint="rerun the goal with the private details removed, or approve the step next time",
+                        )
+                    else:
+                        rec = dispatch(
+                            self.fs,
+                            self.router,
+                            self.gate,
+                            self.place,
+                            self.audit,
+                            run_id,
+                            with_deps,
+                            ledger=self.ledger,
+                            devices=self.devices,
+                            chat_id=self._chat.get(run_id),
+                            approved=hold == "approved",
+                            approval_id=aid,
+                            model=self.model,
+                        )
                 elif any(st == "failed" for st in states):
                     rec = self._dep_fail(run_id, sub, sub["deps"][states.index("failed")])
                 else:

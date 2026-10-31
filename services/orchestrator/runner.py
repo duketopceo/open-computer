@@ -44,6 +44,7 @@ class WorkResult:
 
     output: object
     usage: Usage | None = None
+    model: str | None = None  # the model that answered, when the work_fn knows it (else usage.model)
 
 
 def run_once(
@@ -69,6 +70,13 @@ def run_once(
             if _run_task(fs, audit, agent, work_fn, ttl, ledger, tid, task, thinking):
                 attempted.append(tid)
     return attempted
+
+
+def _model_ran(result: object) -> str | None:
+    """The model that really answered: what the provider reported, else what the work_fn named."""
+    if not isinstance(result, WorkResult):
+        return None
+    return (result.usage.model if result.usage is not None and result.usage.model else None) or result.model
 
 
 def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thinking: ThinkingLog | None) -> bool:
@@ -135,9 +143,10 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
         ledger.record(task["run"], task["subtask"], result.usage, token=token)
     elif token:
         ledger.release(task["run"], token)  # no usage reported: nothing was spent
+    ran = _model_ran(result)
     if isinstance(result, WorkResult):
         result = result.output
     fs.outbox_write(agent, tid, result)
-    audit.append({"event": "worker_done", "task": tid})
+    audit.append({"event": "worker_done", "task": tid, **({"model": ran} if ran else {})})
     log.info("task done", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1))
     return True

@@ -4,7 +4,8 @@ decompose_engine: the planner LLM call (returns text; decompose()
 validates it). work_fn: executes one dispatched task — and honors the
 dispatch's placement for real:
 
-  local-*          -> llama.cpp :8080 (OpenAI-compat), Ollama :11434 fallback
+  local-*          -> llama.cpp :8080 (OpenAI-compat), Ollama :11434 fallback — opt-in only
+                      (`OC_LOCAL_MODELS=1`); placement never picks it otherwise
   cloud-OpenRouter -> OpenRouter chat completion
   cloud-sandbox    -> raises SandboxWorkerUnavailable — sandbox workers
                       are not wired yet (U2 live path); the task fails
@@ -342,28 +343,35 @@ def decompose_engine(
     return engine
 
 
-def local_work(task: dict) -> str:
-    """Execute on this machine's local servers — GPU llama.cpp, then Ollama."""
+def local_model_name() -> str:
+    """The local model tried first (llama.cpp); `OC_LOCAL_MODEL` overrides the default."""
+    return os.environ.get("OC_LOCAL_MODEL", "qwen3-4b")
+
+
+def local_work(task: dict) -> WorkResult:
+    """Execute on this machine's local servers — GPU llama.cpp, then Ollama. Only reached when local models
+    are opted in (`OC_LOCAL_MODELS`). The result names the model that really answered."""
     prompt = task["prompt"]
-    model = os.environ.get("OC_LOCAL_MODEL", "qwen3-4b")
+    model = local_model_name()
     attempts = []
     try:
         text, _ = _chat("http://127.0.0.1:8080/v1/chat/completions", model, prompt, timeout=90)
-        return text
+        return WorkResult(text, model=model)
     except (OSError, RuntimeError) as e:
         attempts.append(f"llama.cpp :8080 — {e}")
+    ollama_model = os.environ.get("OC_OLLAMA_MODEL", "ornith:latest")
     try:
         out = _post(
             "http://127.0.0.1:11434/api/generate",
-            {"model": os.environ.get("OC_OLLAMA_MODEL", "ornith:latest"), "prompt": prompt, "stream": False},
+            {"model": ollama_model, "prompt": prompt, "stream": False},
             timeout=120,
         )
-        return out["response"]
+        return WorkResult(out["response"], model=ollama_model)
     except (OSError, RuntimeError) as e:
         attempts.append(f"ollama :11434 — {e}")
     raise LocalModelUnavailable(
         "local model endpoints unreachable: " + "; ".join(attempts),
-        hint="start llama-local.service or ollama.service, or let placement demote to cloud",
+        hint="start llama-local.service or ollama.service, or turn local models off (OC_LOCAL_MODELS)",
     )
 
 
@@ -385,6 +393,6 @@ def work_fn(
                 out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
         usage = total_usage(used)
         # Provider-reported spend goes to the run's cost ledger (the cap enforces on real dollars).
-        return WorkResult(out, usage) if usage is not None else out
+        return WorkResult(out, usage, model=or_model) if usage is not None else WorkResult(out, model=or_model)
 
     return run
