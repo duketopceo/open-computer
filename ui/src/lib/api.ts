@@ -151,6 +151,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   });
 }
 
+// Poll cadence shared by every live view: fast while something is running, slow when idle or offline.
+export function pollMs(link: string, active: boolean): number {
+  return link === "offline" ? 10000 : active ? 2500 : 8000;
+}
+
 export async function submitGoal(
   goal: string,
   confirm: boolean,
@@ -271,4 +276,85 @@ export const getAudit = (f: AuditFilter, q: string) => json<AuditPayload>(`/api/
 
 export function testRoute(q: string, confirm: boolean): Promise<RouteTestResponse> {
   return postJson("/api/router/test", { q, confirm: confirm ? "1" : undefined });
+}
+
+// ---- Agent jobs (orchestrator console) ----
+
+export type AgentStatus =
+  | "queued"
+  | "running"
+  | "finished"
+  | "stalled"
+  | "rejected"
+  | "budget_exhausted"
+  | "max_rounds"
+  | "failed";
+
+export interface AgentJobSummary {
+  job: string;
+  goal: string;
+  started: number;
+  status: AgentStatus;
+  budget: number;
+  spent: number;
+  awaiting_approval: boolean;
+  pending: number;
+}
+
+export type ApprovalKind = "plan" | "risky" | "egress" | "spend" | "tool";
+
+export interface Approval {
+  id: string;
+  kind: ApprovalKind;
+  detail: Record<string, unknown>;
+  hash: string;
+  ts: number;
+  expires_at: number;
+}
+
+export interface TrailRow {
+  job: string;
+  seq: number;
+  ts: number;
+  event: string;
+  [field: string]: unknown;
+}
+
+export interface AgentJobDetail {
+  job: string;
+  goal: string;
+  status: AgentStatus;
+  budget: number;
+  spent: number;
+  events: TrailRow[];
+  approvals: Approval[];
+}
+
+export async function listAgentJobs(): Promise<AgentJobSummary[]> {
+  return (await json<{ jobs?: AgentJobSummary[] }>("/api/agent-jobs")).jobs ?? [];
+}
+
+export async function getAgentJob(id: string): Promise<AgentJobDetail> {
+  return json<AgentJobDetail>(`/api/agent-jobs/${encodeURIComponent(id)}`);
+}
+
+export async function submitAgentJob(
+  goal: string,
+  budget: number | undefined,
+  confirm: boolean,
+): Promise<{ needs_confirm?: boolean; budget?: number; model?: string; job?: string }> {
+  return postJson("/api/agent-jobs", { goal, budget, confirm: confirm ? "1" : undefined });
+}
+
+export async function decideApproval(
+  job: string,
+  id: string,
+  verb: "approve" | "deny",
+  hash: string,
+  note?: string,
+): Promise<{ ok: boolean }> {
+  return postJson(`/api/agent-jobs/${encodeURIComponent(job)}/approvals/${encodeURIComponent(id)}/${verb}`, {
+    hash,
+    note,
+  });
 }

@@ -26,3 +26,10 @@ def test_docs_name_no_premium_orchestrator():
     root = Path(__file__).resolve().parents[2]
     text = (root / "ARCHITECTURE_MAP.md").read_text()
     assert "Opus" not in text
+
+
+def test_default_orchestrator_model_is_not_premium():
+    from services.agents.loop import DEFAULT_ORCHESTRATOR_MODEL
+
+    assert DEFAULT_ORCHESTRATOR_MODEL == "deepseek/deepseek-v4-pro"
+    assert not PREMIUM.match(DEFAULT_ORCHESTRATOR_MODEL)

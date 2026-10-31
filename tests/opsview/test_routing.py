@@ -12,6 +12,8 @@ def concrete(pattern: str) -> str:
         .replace("(?P<id>goal_[0-9a-f]{8})", "goal_00000000")
         .replace("(?P<id>ap_[0-9a-f]{8})", "ap_00000000")
         .replace("(?P<id>auto-[0-9a-f]{8})", "auto-00000000")
+        .replace("(?P<id>[0-9a-f]{10})", "0123456789")
+        .replace("(?P<aid>ag_[0-9a-f]{8})", "ag_00000000")
         .replace("(?P<file>[^/]+)", "index-abc123.js")
     )
 
@@ -77,5 +79,5 @@ def test_route_tables_are_disjoint_and_named():
     for _, name in server.POST_ROUTES:
         assert name.startswith("p_") and hasattr(server.Handler, name)
     assert {p for p, _ in server.GET_ROUTES}.isdisjoint(
-        {p for p, _ in server.POST_ROUTES} - {"/runs", "/goals", "/automations"}
+        {p for p, _ in server.POST_ROUTES} - {"/runs", "/goals", "/automations", "/api/agent-jobs"}
     )

@@ -36,13 +36,14 @@ after(async () => { await browser?.close(); server?.kill(); });
 
 const json = (status, body) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 
-async function open({ w = 1440, h = 900, routes = {} } = {}) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce" });
+async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup } = {}) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", colorScheme: scheme });
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
   // Empty runs list by default so the composer (not a run) is the landing view.
   await page.route("**/api/runs", (r) => r.fulfill(json(200, { runs: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
+  if (setup) await setup(page);
   await page.goto(base + "/", { waitUntil: "networkidle" });
   return { ctx, page };
 }
@@ -557,3 +558,252 @@ test("router: a failed second route clears the first route's result", async () =
   assert.equal(await page.getByRole("table", { name: "Route result" }).count(), 0);
   await ctx.close();
 });
+// ---- U5: agent jobs view (every route mocked; nothing reaches the orchestrator) ----
+
+const J1 = "aaaaaaaaaa", J2 = "bbbbbbbbbb", J3 = "cccccccccc";
+const future = () => Date.now() / 1000 + 3600;
+const JOBS = () => [
+  { job: J1, goal: "migrate the billing tables", started: Date.now() / 1000 - 600, status: "running", budget: 25, spent: 1.2, awaiting_approval: true, pending: 2 },
+  { job: J2, goal: "queued research job", started: Date.now() / 1000 - 60, status: "queued", budget: 25, spent: 0, awaiting_approval: false, pending: 0 },
+  { job: J3, goal: "write release notes", started: Date.now() / 1000 - 9000, status: "finished", budget: 10, spent: 3.5, awaiting_approval: false, pending: 0 },
+];
+const APPROVALS = () => [
+  { id: "ap_plan", kind: "plan", detail: { steps: ["inspect schema", "write migration"] }, hash: "h".repeat(64), ts: Date.now() / 1000 - 30, expires_at: future() },
+  { id: "ap_egr", kind: "egress", detail: { host: "api.example.com" }, hash: "e".repeat(64), ts: Date.now() / 1000 - 20, expires_at: future() },
+];
+const DETAIL = (approvals) => ({
+  job: J1, goal: "migrate the billing tables", status: "running", budget: 25, spent: 1.2,
+  events: [{ job: J1, seq: 1, ts: Date.now() / 1000 - 500, event: "job_start", goal: "migrate the billing tables" },
+    { job: J1, seq: 2, ts: Date.now() / 1000 - 400, event: "decision", round: 1, action: "plan" }],
+  approvals,
+});
+
+// One handler for list, detail and the three POST routes; `o` supplies overrides
+// and `o.posts` records what the SPA sent.
+function agentApi(o = {}) {
+  o.posts ??= [];
+  const handler = async (r) => {
+    const req = r.request();
+    const p = new URL(req.url()).pathname;
+    const m = req.method();
+    if (m === "GET" && p === "/api/agent-jobs") return r.fulfill(await (o.list ? o.list() : json(200, { jobs: JOBS() })));
+    const d = p.match(/^\/api\/agent-jobs\/(\w+)$/);
+    if (m === "GET" && d) return r.fulfill(await (o.detail ? o.detail(d[1]) : json(200, d[1] === J1 ? DETAIL(APPROVALS()) : { ...DETAIL([]), job: d[1], events: [] })));
+    if (m === "POST") {
+      const rec = { path: p, headers: req.headers(), body: JSON.parse(req.postData() || "{}") };
+      o.posts.push(rec);
+      if (p === "/api/agent-jobs") return r.fulfill(await (o.submit ? o.submit(rec.body) : json(200, { job: J2 })));
+      return r.fulfill(await (o.decide ? o.decide(rec) : json(200, { ok: true })));
+    }
+    return r.continue();
+  };
+  o.setup = (page) => page.route(/\/(api\/)?agent-jobs/, handler);
+  return o;
+}
+
+const goAgents = async (page) => page.getByRole("button", { name: /^Agent jobs/ }).click();
+const card = (page, kind) => page.getByRole("listitem", { name: new RegExp(`Approval needed: ${kind}`, "i") });
+
+test("@agents list shows statuses, queued as not running, pending badges and the payload card", async () => {
+  const api = agentApi();
+  const { ctx, page } = await open({ setup: api.setup });
+  await page.getByRole("button", { name: /^Agent jobs\s*2/ }).waitFor(); // sidebar pending count
+  await goAgents(page);
+  await page.getByText("queued · not running").waitFor();
+  await page.getByText("finished", { exact: true }).waitFor();
+  await page.getByText("awaiting approval", { exact: true }).waitFor(); // row badge
+  assert.ok(await page.getByText("$1.20 of $25").isVisible());
+  await page.getByRole("button", { name: /migrate the billing tables/ }).click();
+  const egress = card(page, "egress");
+  await egress.waitFor();
+  assert.ok((await egress.textContent()).includes("api.example.com"), "exact detail shown");
+  assert.ok((await card(page, "plan").textContent()).includes("write migration"));
+  assert.equal(await page.getByText("job_start").count() > 0, true, "trail timeline renders");
+  await ctx.close();
+});
+
+test("@agents empty list, empty trail, and failed list shows inline retry", async () => {
+  let fail = true;
+  const api = agentApi({
+    list: () => (fail ? json(500, { error: "orchestrator store unreadable" }) : json(200, { jobs: [{ ...JOBS()[2] }] })),
+  });
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByRole("alert").filter({ hasText: "orchestrator store unreadable" }).waitFor();
+  fail = false;
+  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByRole("button", { name: /write release notes/ }).click();
+  await page.getByText("No events yet").waitFor();
+  await ctx.close();
+
+  const empty = agentApi({ list: () => json(200, { jobs: [] }) });
+  const b = await open({ setup: empty.setup });
+  await goAgents(b.page);
+  await b.page.getByText("No agent jobs yet").waitFor();
+  await b.ctx.close();
+});
+
+test("@agents Approve sends the displayed hash and CSRF once; 409 keeps the card and asks for reload", async () => {
+  let stale = true;
+  let approved = false;
+  const api = agentApi({
+    detail: () => json(200, DETAIL(approved ? APPROVALS().slice(1) : APPROVALS())),
+    decide: async () => {
+      await new Promise((res) => setTimeout(res, 300)); // window for a double click
+      if (stale) return json(409, { error: "approval is stale" });
+      approved = true;
+      return json(200, { ok: true });
+    },
+  });
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByRole("button", { name: /migrate the billing tables/ }).click();
+  const plan = card(page, "plan");
+  await plan.waitFor();
+  const csrf = await page.evaluate(() => fetch("/api/session").then((r) => r.json()).then((j) => j.csrf));
+  const approve = plan.getByRole("button", { name: "Approve", exact: true });
+  await approve.click();
+  await approve.click({ force: true, timeout: 500 }).catch(() => {}); // second press while in flight
+  await plan.getByRole("alert").filter({ hasText: "Reload to review" }).waitFor();
+  assert.equal(api.posts.length, 1, "double click sends one request");
+  const post = api.posts[0];
+  assert.equal(post.path, `/api/agent-jobs/${J1}/approvals/ap_plan/approve`);
+  assert.equal(post.body.hash, "h".repeat(64));
+  assert.ok(csrf && post.headers["x-csrf-token"] === csrf, "CSRF header sent");
+  assert.ok(await plan.isVisible(), "card kept after 409");
+  assert.ok(await approve.isDisabled(), "stale card not actionable until reloaded");
+
+  stale = false;
+  await plan.getByRole("button", { name: "Reload" }).click();
+  await approve.click();
+  await plan.waitFor({ state: "detached" });
+  assert.equal(api.posts.length, 2);
+  await ctx.close();
+});
+
+test("@agents Deny sends the hash and a single press", async () => {
+  const api = agentApi();
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByRole("button", { name: /migrate the billing tables/ }).click();
+  await card(page, "plan").getByRole("button", { name: "Deny" }).click();
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(api.posts.length, 1);
+  assert.equal(api.posts[0].path, `/api/agent-jobs/${J1}/approvals/ap_plan/deny`);
+  assert.equal(api.posts[0].body.hash, "h".repeat(64));
+  await ctx.close();
+});
+
+test("@agents egress needs a second press with focus move; Esc reverts and never decides", async () => {
+  const api = agentApi();
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByRole("button", { name: /migrate the billing tables/ }).click();
+  const egress = card(page, "egress");
+  await egress.waitFor();
+  await egress.getByRole("button", { name: "Approve", exact: true }).click();
+  const confirm = egress.getByRole("button", { name: "Confirm approve egress" });
+  await confirm.waitFor();
+  assert.ok(await confirm.evaluate((el) => el === document.activeElement), "confirm takes focus");
+  assert.equal(api.posts.length, 0, "a single click sends nothing");
+  await page.keyboard.press("Escape");
+  await egress.getByRole("button", { name: "Approve", exact: true }).waitFor();
+  assert.ok(await egress.getByRole("button", { name: "Approve", exact: true }).evaluate((el) => el === document.activeElement), "focus returns");
+  assert.equal(api.posts.length, 0, "Esc never decides");
+
+  // Keyboard-only: Tab reaches Approve then Deny; Enter twice grants.
+  await egress.getByRole("button", { name: "Approve", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Deny");
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Enter");
+  await confirm.waitFor();
+  await page.keyboard.press("Enter");
+  await new Promise((res) => setTimeout(res, 300));
+  assert.equal(api.posts.length, 1);
+  assert.equal(api.posts[0].path, `/api/agent-jobs/${J1}/approvals/ap_egr/approve`);
+  assert.equal(api.posts[0].body.hash, "e".repeat(64));
+  await ctx.close();
+});
+
+test("@agents expired approval renders denied and is not actionable", async () => {
+  const api = agentApi({
+    detail: () => json(200, DETAIL([{ ...APPROVALS()[1], expires_at: Date.now() / 1000 - 5 }])),
+  });
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByRole("button", { name: /migrate the billing tables/ }).click();
+  const egress = card(page, "egress");
+  await egress.getByText("Expired, denied").waitFor();
+  assert.equal(await egress.getByRole("button").count(), 0);
+  await ctx.close();
+});
+
+test("@agents submit: first POST shows the confirm step with the $25 default, confirm posts confirm=1; 422 shows inline", async () => {
+  let reject = true;
+  const api = agentApi({
+    submit: (b) => {
+      if (reject) return json(422, { error: "goal rejected by policy" });
+      return b.confirm === "1" ? json(200, { job: J2 }) : json(200, { needs_confirm: true, budget: 25, model: "deepseek/deepseek-v4-pro" });
+    },
+  });
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByText("Default $25 per working day.").waitFor();
+  await page.getByLabel("New job").fill("do the long thing");
+  await page.getByRole("button", { name: "Submit" }).click();
+  await page.getByRole("alert").filter({ hasText: "goal rejected by policy" }).waitFor();
+  assert.equal(api.posts[0].body.confirm, undefined);
+  reject = false;
+  await page.getByRole("button", { name: "Submit" }).click();
+  await page.getByRole("heading", { name: "Start this job?" }).waitFor();
+  assert.ok(await page.getByText("Budget $25").isVisible());
+  assert.ok(await page.getByText("deepseek/deepseek-v4-pro").isVisible());
+  await page.getByRole("button", { name: "Start job" }).click();
+  await page.getByRole("heading", { name: "Start this job?" }).waitFor({ state: "detached" });
+  const last = api.posts.at(-1);
+  assert.equal(last.path, "/api/agent-jobs");
+  assert.equal(last.body.confirm, "1");
+  assert.equal(last.body.goal, "do the long thing");
+  assert.ok(last.headers["x-csrf-token"]);
+  await ctx.close();
+});
+
+test("@errors agent jobs 413 shows inline on the form", async () => {
+  const api = agentApi({ submit: () => json(413, { error: "goal too large" }) });
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByLabel("New job").fill("x");
+  await page.getByRole("button", { name: "Submit" }).click();
+  await page.getByRole("alert").filter({ hasText: "goal too large" }).waitFor();
+  await ctx.close();
+});
+
+test("@errors agent jobs session expiry shows the auth banner, not a generic error", async () => {
+  const api = agentApi({ list: () => json(401, { error: "Sign in again." }) });
+  const { ctx, page } = await open({ setup: api.setup });
+  await goAgents(page);
+  await page.getByRole("status").filter({ hasText: "Your session expired" }).waitFor();
+  assert.equal(await page.getByText("Sign in again.", { exact: true }).count(), 0);
+  await ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  for (const w of [1440, 390]) {
+    test(`@a11y agent jobs axe: 0 violations at ${w}px, ${scheme}`, async () => {
+      const api = agentApi();
+      const { ctx, page } = await open({ w, scheme, setup: api.setup });
+      await goAgents(page);
+      await page.getByRole("button", { name: /migrate the billing tables/ }).click();
+      const egress = card(page, "egress");
+      await egress.waitFor();
+      await egress.getByRole("button", { name: "Approve", exact: true }).click(); // armed state too
+      await egress.getByRole("button", { name: "Confirm approve egress" }).waitFor();
+      await page.evaluate(AXE);
+      const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+      assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${w} ${scheme}`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+      await ctx.close();
+    });
+  }
+}
