@@ -76,9 +76,12 @@ _SCRIPT_PROMPT = (
     "You are executing a task inside an isolated Linux microVM; outbound network is denied "
     "except hosts the task explicitly allows. "
     "Write ONE self-contained bash script that performs the task and prints the result to stdout. "
-    "Rules: output ONLY the script (no markdown fences, no commentary); coreutils and python3 are available; "
+    "Rules: output ONLY the script (no markdown fences, no commentary); coreutils and python3 are available "
+    "(do not assume jq — use python3 for JSON); "
     "write files ONLY inside the current working directory (use relative paths — system paths "
-    "outside the workdir are read-only); keep stdout under 4000 characters; exit nonzero on failure.\nTask: "
+    "outside the workdir are read-only); always print the absolute path (realpath) of every file you create "
+    "so the next step can find it; if an expected input file is not where you thought, run "
+    "`find . -name '*pattern*'` before failing; keep stdout under 4000 characters; exit nonzero on failure.\nTask: "
 )
 
 
