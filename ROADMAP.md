@@ -150,6 +150,20 @@ one squash commit (`4356ff5`). What is still to do:
   console submit and approve view and a React trail view, production planner wiring, and a live acceptance run.
   See [docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md](docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md).
 - **Goal runs end to end:** the fixes in #75 have not yet been confirmed by a real live run.
+## Program tracks (post-MVP, 2026-10-30)
+
+Plans in `docs/plans/` mapped to one board. Status verified against main.
+
+| Track | Plan | Status | Next |
+|---|---|---|---|
+| MVP backlog | this file, OC-001..066 | core shipped | open cells above |
+| SPACE execplane backend | 2026-10-19-001 | S0–S7 shipped + live-verified (R2[space] PASS, SPACE_EGRESS_ROUTED=1) | S4 credential-boundary v2 + routed gateway (parked) |
+| ECW guest egress fix | (runbook PR #82) | done live — `accept_local` sysctl + two-layer masq in `oc-ecw-egress@` watchers on all 5 workers | upstream ECW patch |
+| Device plane | 2026-10-16-001, 2026-10-19-002 | mailbox, parked steps, transports shipped | — |
+| Observability + cost telemetry | 2026-10-28-001 | stages 1–2 live (#72, #73; Glitchtip + tallyline) | stage 3 sink, 4–5 |
+| Agent orchestrator | 2026-10-29-001, 2026-10-30-001 | merged (#77, #79, #80, #81) | — |
+| Unified UI shell | 2026-10-30-001 | PR #83 (legible output, friendly labels, live ticker) | U1 port operator pages → React, U2 step activity, U3 onboarding |
+| Run resilience | 2026-10-30-002 | planned (PR #87) | R1 transient retry + R2 requeue-on-outage ← **next** |
 
 ## Product direction (owner, 2026-10-11)
 
