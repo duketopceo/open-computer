@@ -86,3 +86,25 @@ No stock icon packs. Every glyph is paired with a word.
 | Open-square mark | product concept: one permitted entry | brand only | legible at 16 px |
 | No shadows or gradients | reject list | n/a | keeps the terminal and web consistent |
 | Glyph plus word for state | accessibility rule | n/a | colour is never the only signal |
+
+---
+
+# Console surface and chat (2026-10-31)
+
+Plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-plan.md`. This section governs the web console (threads, composer,
+settings). It supersedes the Flight Strip rejects "no gradients, no shadows" and "no chat-bubble UI" for the console only;
+Flight Strip still governs the CLI, the approval TUI and the Developer area in Settings.
+
+- **Look:** a designed light theme and a designed dark theme, picked by `prefers-color-scheme` with a manual override in Settings.
+  The shipped console is light "paper" (`ui/tailwind.config.ts`); it has no dark theme, so a forced-dark browser makes it flat.
+- **Depth and texture, CSS only:** a base canvas, a grain layer (inline SVG noise, 3-4% opacity), a soft radial glow behind the
+  composer (accent at about 6%), a faint vignette, a translucent sidebar over the canvas, two shadow tiers, 1 px hairline borders.
+  No image assets. Honour `prefers-reduced-motion` and `prefers-reduced-transparency`.
+- **Dark tokens (starting point, contrast-checked in the PR):** canvas `#0E1113`, surface `#161A1D`, raised `#1C2125`, ink `#E9ECEE`,
+  muted `#9AA5AD`, accent `#4CC27A`-family teal for "this is yours to act on".
+- **Threads:** the owner's messages are compact; the agent's answer is a document-style block, not a bubble. Steps, tool calls and
+  subagent work are collapsed cards that show real model, cost and time. Approvals are cards that show who asks, what leaves,
+  where, cost, PII and the payload hash.
+- **Navigation:** New thread, Threads (recents with a needs-you count), Automations, Artifacts, Connectors, Settings. Operator
+  pages live under Settings > Developer.
+- **Carries over:** state is a glyph plus a word, never colour alone; text pairs meet 4.5:1; every state is explicit.
