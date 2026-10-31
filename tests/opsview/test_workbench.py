@@ -4,7 +4,6 @@ through the same confirm contract as the HTML path, JSON instead of pages.
 """
 
 import json
-import re
 
 import pytest
 

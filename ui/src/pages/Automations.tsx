@@ -66,6 +66,7 @@ function NewForm({ onDone }: { onDone: () => void }) {
       <input
         className="min-w-56 flex-1 rounded-lg border border-line px-3 py-1.5 text-sm"
         placeholder="Goal to run on a schedule"
+        aria-label="Goal to run on a schedule"
         value={goal}
         onChange={(e) => setGoal(e.target.value)}
       />
@@ -76,6 +77,7 @@ function NewForm({ onDone }: { onDone: () => void }) {
         value={mins}
         onChange={(e) => setMins(e.target.value)}
         title="Every N minutes"
+        aria-label="Every N minutes"
       />
       <Button onClick={submit} disabled={busy}>
         {busy ? "Creating…" : "Create"}

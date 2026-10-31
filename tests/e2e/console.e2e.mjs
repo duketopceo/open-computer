@@ -19,8 +19,10 @@ const REPO = path.resolve(import.meta.dirname, "../..");
 const PY = (process.env.OC_PYTHON || "uv run --with fido2 python").split(" ");
 
 const servers = [];
+const dirs = {};
 async function serve(port, ...extra) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-e2e-"));
+  dirs[`http://127.0.0.1:${port}`] = dir;
   const p = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", String(port), dir, ...extra], { cwd: REPO });
   servers.push(p);
   p.stderr.on("data", (d) => process.stderr.write(d)); // surface fixture crashes in CI logs
@@ -48,17 +50,25 @@ async function open(base, p, { theme = "dark", w = 1440, h = 900 } = {}) {
   return { ctx, page };
 }
 
-// Server-rendered pages only: Devices, Sandboxes, Router and Audit moved to the React app (spa.e2e.mjs).
-const ROUTES = ["/overview", "/runs", "/runs/new", "/approvals"];
+// This file drives the pages that are still rendered by the Python console: the matrix runner
+// confirm page and the run detail page. Everything else moved to the React app, whose pages are
+// covered by spa.e2e.mjs; `SPA_PAGES` only get the layout checks that apply to any page.
+const SERVER_ROUTES = ["/runs/new"];
+const SPA_PAGES = ["/overview", "/runs", "/approvals"];
+
+// Matrix runs are not served as JSON (`/api/runs` lists goal runs), so read the fixture's run index.
+function matrixRuns(base) {
+  const idx = path.join(dirs[base], "runs", "index.ndjson");
+  return fs.readFileSync(idx, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+}
+const runPath = (base, pick = () => true) => "/runs/" + matrixRuns(base).find(pick).id;
 
 for (const theme of ["dark", "light"]) {
   for (const w of [1440, 390]) {
     test(`@a11y axe: 0 violations, ${theme}, ${w}px, every route`, async () => {
-      for (const route of [...ROUTES, "RUN"]) {
-        let p = route;
-        const { ctx, page } = await open(RO, "/runs", { theme, w });
-        if (route === "RUN") p = await page.locator("tbody tr a").first().getAttribute("href");
-        await page.goto(RO + p, { waitUntil: "networkidle" });
+      for (const route of [...SERVER_ROUTES, "RUN"]) {
+        const p = route === "RUN" ? runPath(RO) : route;
+        const { ctx, page } = await open(RO, p, { theme, w });
         await page.evaluate(AXE);
         const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] }));
         assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${route} ${theme} ${w}`);
@@ -70,7 +80,7 @@ for (const theme of ["dark", "light"]) {
 
 test("@a11y axe on open layers (palette, shortcuts, note editor)", async () => {
   for (const theme of ["dark", "light"]) {
-    const { ctx, page } = await open(RO, "/approvals", { theme });
+    const { ctx, page } = await open(RO, "/runs/new", { theme });
     for (const open of [() => page.keyboard.press("Control+k"), async () => { await page.keyboard.press("Escape"); await page.keyboard.press("?"); }, async () => { await page.keyboard.press("Escape"); await page.keyboard.press("j"); await page.keyboard.press("r"); }]) {
       await open();
       await page.evaluate(AXE);
@@ -82,7 +92,7 @@ test("@a11y axe on open layers (palette, shortcuts, note editor)", async () => {
 });
 
 test("@palette lists 100% of the actions available on each screen", async () => {
-  for (const route of ROUTES) {
+  for (const route of [...SERVER_ROUTES, runPath(RO)]) {
     const { ctx, page } = await open(RO, route);
     const expected = (await page.evaluate(() => JSON.parse(document.getElementById("oc-actions").textContent))).filter((a) => a.id !== "palette").map((a) => a.label);
     await page.keyboard.press("Control+k");
@@ -93,7 +103,7 @@ test("@palette lists 100% of the actions available on each screen", async () => 
 });
 
 test("@keyboard shortcuts: ? overlay, g-nav, palette, Esc returns focus", async () => {
-  const { ctx, page } = await open(RO, "/overview");
+  const { ctx, page } = await open(RO, "/runs/new");
   await page.keyboard.press("?");
   const dlg = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await dlg.waitFor();
@@ -102,18 +112,15 @@ test("@keyboard shortcuts: ? overlay, g-nav, palette, Esc returns focus", async 
   assert.equal(await dlg.locator("li").count(), 2);
   await page.keyboard.press("Escape");
   assert.equal(await dlg.count(), 0);
-  for (const [seq, url] of [["g r", "/approvals"], ["g n", "/runs"]]) {
-    await Promise.all([page.waitForURL(RO + url), page.keyboard.press(seq.split(" ")[0]).then(() => page.keyboard.press(seq.split(" ")[1]))]);
-  }
   // Pages that moved to the React app are still one `g` chord away, but the SPA has no chords
   // yet (PR 8), so each chord starts from a freshly loaded server-rendered page.
-  for (const [seq, url] of [["g x", "/sandboxes"], ["g d", "/devices"], ["g u", "/router"], ["g e", "/audit"]]) {
-    const { ctx: c2, page: p2 } = await open(RO, "/overview");
+  for (const [seq, url] of [["g r", "/approvals"], ["g n", "/runs"], ["g x", "/sandboxes"], ["g d", "/devices"], ["g u", "/router"], ["g e", "/audit"]]) {
+    const { ctx: c2, page: p2 } = await open(RO, "/runs/new");
     await Promise.all([p2.waitForURL(RO + url), p2.keyboard.press(seq.split(" ")[0]).then(() => p2.keyboard.press(seq.split(" ")[1]))]);
     await p2.getByRole("heading", { level: 1 }).waitFor();
     await c2.close();
   }
-  await page.goto(RO + "/overview", { waitUntil: "networkidle" });
+  await page.goto(RO + "/runs/new", { waitUntil: "networkidle" });
   // Esc from the palette hands focus back to the element that opened it
   await page.locator("#main").focus();
   await page.keyboard.press("Control+k");
@@ -123,36 +130,40 @@ test("@keyboard shortcuts: ? overlay, g-nav, palette, Esc returns focus", async 
   await ctx.close();
 });
 
-test("@keyboard approvals: oldest first, a approves, r needs a note, keyboard only", async () => {
+// Approvals is a React page now (ui/src/pages/Approvals.tsx): no j/k/a/r chords, so this drives
+// it with Tab/Enter only. The gate invariants stay the same: a send-back needs a note, a decision
+// is recorded in the audit log, and the queue only offers what is still pending.
+test("@keyboard approvals: pending cards in queue order, keyboard-only approve, send-back needs a note", async () => {
   const { ctx, page } = await open(RW, "/approvals");
-  const whos = await page.locator("tbody.item .who span").allTextContents();
-  assert.deepEqual(whos, ["docs-agent", "deploy-agent", "research-agent"]);
-  await page.keyboard.press("j");
-  assert.equal(await page.locator("[data-cur]").count(), 1);
-  await page.keyboard.press("Enter");                       // opens payload
-  assert.ok(await page.locator("tbody.item").first().locator(".item-detail").isVisible());
-  await page.keyboard.press("j");                           // move on: deploy-agent (high risk)
-  await page.keyboard.press("r");                           // send back opens the note
-  const ta = page.locator("tbody.item").nth(1).locator("textarea");
-  assert.ok(await ta.evaluate((e) => e === document.activeElement));
-  await page.keyboard.press("Control+Enter");               // empty note is refused
-  assert.match(await page.locator("tbody.item").nth(1).locator(".err").textContent(), /Add a note/);
-  assert.equal(await page.locator("tbody.item").count(), 3);
-  await page.keyboard.type("Redact the SSN before this leaves.");
-  await page.keyboard.press("Control+Enter");
-  await page.waitForFunction(() => document.querySelectorAll("tbody.item").length === 2);
-  await page.keyboard.press("k"); await page.keyboard.press("k");
-  await page.keyboard.press("a");                           // approve whichever row the cursor is on
-  await page.waitForFunction(() => document.querySelectorAll("tbody.item").length === 1);
-  assert.match(await page.locator("#toasts").textContent(), /Approved .*'s request/);
-  await page.keyboard.press("Escape");
+  const cards = page.locator("ul > li").filter({ has: page.getByRole("button", { name: "Approve" }) });
+  await cards.first().waitFor();
+  const queue = (await (await ctx.request.get(RW + "/api/approvals")).json()).approvals.filter((i) => i.status === "pending").map((i) => i.id);
+  assert.equal(queue.length, 3);
+  const ids = async () => (await cards.locator(".mono").allTextContents()).map((t) => t.split(" ")[0]);
+  assert.deepEqual(await ids(), queue);
+  // second card: Send back with an empty note is refused locally
+  const second = cards.nth(1);
+  await second.getByRole("button", { name: "Send back" }).focus();
+  await page.keyboard.press("Enter");
+  assert.match(await second.getByRole("alert").textContent(), /Add a note/);
+  assert.equal(await cards.count(), 3);
+  await second.getByPlaceholder(/Note for send-back/).fill("Redact the SSN before this leaves.");
+  await page.keyboard.press("Tab"); // note -> Send back
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((n) => [...document.querySelectorAll("main ul > li")].filter((li) => li.querySelector("button") && /Approve/.test(li.textContent)).length === n, 2);
+  assert.deepEqual(await ids(), [queue[0], queue[2]]);
+  // approve the first remaining card from the keyboard
+  await cards.first().getByRole("button", { name: "Approve" }).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((n) => [...document.querySelectorAll("main ul > li")].filter((li) => li.querySelector("button") && /Approve/.test(li.textContent)).length === n, 1);
+  assert.deepEqual(await ids(), [queue[2]]);
   const audit = await (await ctx.request.get(RW + "/api/audit?f=decisions")).text();
   assert.match(audit, /approved/); assert.match(audit, /sent back/);
   await ctx.close();
 });
 
 test("@keyboard no pointer needed to start a run: c, confirm page, Tab to Run", async () => {
-  const { ctx, page } = await open(RW, "/runs");
+  const { ctx, page } = await open(RW, runPath(RW));
   await Promise.all([page.waitForURL(/runs\/new/), page.keyboard.press("c")]);
   assert.match(await page.locator("main").textContent(), /Boots real microVMs/);
   await page.locator("#go").focus();
@@ -161,10 +172,9 @@ test("@keyboard no pointer needed to start a run: c, confirm page, Tab to Run", 
 });
 
 test("@log virtualized viewer: line numbers, 5,000-line DOM cap, reaches the last line", async () => {
-  const { ctx, page } = await open(RO, "/runs");
-  const hrefs = await page.locator("tbody tr a").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
+  const { ctx, page } = await open(RO, "/runs/new");
   let big;
-  for (const h of hrefs) { await page.goto(RO + h); if ((await page.locator("#log").getAttribute("data-lines")) === "12001") { big = h; break; } }
+  for (const r of matrixRuns(RO)) { const h = "/runs/" + r.id; await page.goto(RO + h); if ((await page.locator("#log").getAttribute("data-lines")) === "12001") { big = h; break; } }
   assert.ok(big, "fixture run with 12,001 lines");
   const nodes = () => page.locator("#log .ln").count();
   assert.ok((await nodes()) > 0 && (await nodes()) <= 5000);
@@ -180,12 +190,12 @@ test("@log virtualized viewer: line numbers, 5,000-line DOM cap, reaches the las
 });
 
 test("no horizontal page scroll at 390px and theme toggle persists", async () => {
-  for (const route of ROUTES) {
+  for (const route of [...SERVER_ROUTES, ...SPA_PAGES]) {
     const { ctx, page } = await open(RO, route, { w: 390, h: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), route);
     await ctx.close();
   }
-  const { ctx, page } = await open(RO, "/overview", {});
+  const { ctx, page } = await open(RO, "/runs/new", {});
   await page.keyboard.press("Control+k");
   await page.keyboard.type("theme");
   await page.keyboard.press("Enter");
