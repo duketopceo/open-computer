@@ -1,10 +1,18 @@
+import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
+import { engine, errorKind, placement } from "@/lib/friendly";
 import { Dot, StateWord } from "./primitives";
 
 export function RunView({ run }: { run: RunDetail }) {
   const states = count(run);
   const active = run.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED");
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [active]);
   return (
     <div className="mx-auto w-full max-w-3xl animate-fade-up">
       <header className="mb-6">
@@ -50,7 +58,7 @@ function SubTaskRow({ s }: { s: SubTask }) {
         <div className="flex items-baseline justify-between gap-3">
           <p className="truncate text-sm font-medium text-ink">{s.title || s.subtask}</p>
           <div className="flex shrink-0 items-center gap-2">
-            <span className="mono text-muted">{s.engine || "—"}</span>
+            {engine(s.engine) && <span className="mono text-muted">{engine(s.engine)}</span>}
             {took && (
               <span className="mono text-muted" title={live ? "Running for" : "Run time"}>
                 {took}
@@ -63,23 +71,46 @@ function SubTaskRow({ s }: { s: SubTask }) {
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
           <span className="mono">{s.route || "route —"}</span>
           <span>·</span>
-          <span className="mono">{s.placement || "placement —"}</span>
+          <span className="mono">{placement(s.placement)}</span>
           {s.pii && <span className="text-violet-600">· private</span>}
         </p>
-        {s.state === "DONE" && s.result && (
-          <pre className="mt-2 overflow-x-auto rounded-lg bg-canvas p-3 text-xs leading-relaxed text-ink/90">
-            {s.result}
-          </pre>
-        )}
+        {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "FAILED" && (
           <p className="mt-1 text-xs text-red-600">
-            {s.error_kind ?? "failed"}: {s.error}
+            {errorKind(s.error_kind)}: {s.error}
             {s.hint ? ` — ${s.hint}` : ""}
           </p>
         )}
         {s.thinking && <Thinking text={s.thinking} className="mt-2" />}
       </div>
     </li>
+  );
+}
+
+const MARKUP_RE = /<\/?(html|head|body|div|span|svg|script|style|table|section|article|template)\b/i;
+const JSONISH_RE = /^\s*[[{]/;
+
+function isHeavy(text: string): boolean {
+  const lines = text.split("\n");
+  return lines.length > 8 || MARKUP_RE.test(text) || JSONISH_RE.test(text);
+}
+
+function StepResult({ text }: { text: string }) {
+  if (!isHeavy(text)) {
+    return (
+      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink/90">{text}</p>
+    );
+  }
+  const lines = text.split("\n").length;
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer select-none text-xs text-muted hover:text-ink">
+        Output — {lines} lines
+      </summary>
+      <pre className="mt-1 max-h-72 overflow-auto rounded-lg bg-canvas p-3 text-xs leading-relaxed text-ink/90">
+        {text}
+      </pre>
+    </details>
   );
 }
 
