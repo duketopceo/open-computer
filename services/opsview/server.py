@@ -294,17 +294,20 @@ GET_ROUTES = [
     (r"/api/agent-jobs", "g_api_agent_jobs"),
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
     (r"/api/approvals", "g_api_approvals"),
-    (r"/work", "g_work"),
-    (r"/overview", "g_overview"),
+    (r"/api/overview", "g_api_overview"),
+    (r"/api/skills", "g_api_skills"),
+    (r"/api/automations", "g_api_automations"),
+    (r"/work", "g_work_redirect"),
+    (r"/overview", "g_spa_route"),
     (r"/sandboxes", "g_spa_route"),
     (r"/sandboxes/(?P<id>[^/]+)", "g_spa_route"),
     (r"/devices", "g_spa_route"),
-    (r"/goals", "g_goals"),
-    (r"/goals/new", "g_goal_new"),
-    (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal"),
-    (r"/skills", "g_skills"),
-    (r"/automations", "g_automations"),
-    (r"/runs", "g_runs"),
+    (r"/goals", "g_spa_route"),
+    (r"/goals/new", "g_goal_new_redirect"),
+    (r"/goals/(?P<id>goal_[0-9a-f]{8})", "g_goal_redirect"),
+    (r"/skills", "g_spa_route"),
+    (r"/automations", "g_spa_route"),
+    (r"/runs", "g_spa_route"),
     (r"/runs/new", "g_run_new"),
     (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
     (r"/approvals", "g_spa_route"),
@@ -673,8 +676,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(502, {"error": f"groq unreachable: {type(e).__name__}"})
         self._send(200, out, "application/json", {"Cache-Control": "no-store"})
 
-    def g_work(self, qs):
-        self._page("work", views.page_work(self._csrf()), sub="Goals, plans, results — the workplace")
+    def g_work_redirect(self, qs):
+        self._redirect("/")
+
+    def g_goal_new_redirect(self, qs):
+        self._redirect("/")
+
+    def g_goal_redirect(self, qs, id):
+        if goalruns.get_run(id) is None:
+            return self._json(404, {"error": "not found"})
+        self._redirect(f"/#{id}")
 
     def g_overview(self, qs):
         now = time.time()
@@ -682,6 +693,21 @@ class Handler(BaseHTTPRequestHandler):
         audit = list(reversed(read_ndjson(audit_path())))[:8]
         body = views.page_overview(q.pending(), runstore.list_runs(), audit, day_spend(), daily_cap(), now)
         self._page("overview", body, sub="What needs you, and what is running")
+
+    def g_api_overview(self, qs):
+        q = ApprovalQueue(approvals_path())
+        audit = list(reversed(read_ndjson(audit_path())))[:8]
+        self._json(
+            200,
+            {
+                "pending_approvals": q.pending(),
+                "runs": runstore.list_runs(),
+                "audit": audit,
+                "spend": day_spend(),
+                "cap": daily_cap(),
+                "now": time.time(),
+            },
+        )
 
     def g_api_sandboxes(self, qs):
         self._json(200, consoleapi.sandboxes_payload(fleet_state()))
@@ -738,6 +764,13 @@ class Handler(BaseHTTPRequestHandler):
             views.page_automations(self._csrf(), automations.list_automations(), time.time()),
             sub="Goals on a cadence — durable Temporal schedules",
         )
+
+    def g_api_skills(self, qs):
+        self._json(200, {"skills": capabilities.collect()})
+
+    def g_api_automations(self, qs):
+        items = automations.list_automations()
+        self._json(200, {"enabled": items is not None, "automations": items or []})
 
     def g_api_router(self, qs):
         self._json(

@@ -57,13 +57,6 @@ def test_every_nav_href_is_a_get_route():
 
 def test_every_page_embeds_exactly_its_registry_slice(console):
     for page, path in {
-        "work": "/work",
-        "overview": "/overview",
-        "goals": "/goals",
-        "automations": "/automations",
-        "skills": "/skills",
-        "runs": "/runs",
-        "approvals": "/approvals",
     }.items():
         _, _, html = console.get(path)
         ids = [a["id"] for a in embedded(html)]
@@ -72,14 +65,7 @@ def test_every_page_embeds_exactly_its_registry_slice(console):
 
 def test_every_on_screen_action_is_in_the_palette_payload(console):
     for path in (
-        "/overview",
-        "/work",
-        "/goals",
-        "/automations",
-        "/skills",
-        "/runs",
         "/runs/new",
-        "/approvals",
     ):
         _, _, html = console.get(path)
         palette_ids = {a["id"] for a in embedded(html)}

@@ -385,3 +385,37 @@ export function decideQueueItem(
 ): Promise<{ ok: boolean }> {
   return postJson(`/api/approvals/${encodeURIComponent(id)}/${verb}`, { hash, note });
 }
+
+// ---- Overview ----
+
+export interface OverviewPayload {
+  pending_approvals: ApprovalItem[];
+  runs: Record<string, unknown>[];
+  audit: Record<string, unknown>[];
+  spend: number;
+  cap: number;
+  now: number;
+}
+
+export const getOverview = () => json<OverviewPayload>("/api/overview");
+
+// ---- Skills + Automations ----
+
+export interface Skill { [k: string]: unknown }
+export interface Automation {
+  id: string;
+  goal: string;
+  every_minutes: number;
+  paused: boolean;
+  next_run?: number;
+  last_run?: number;
+  state?: string;
+}
+
+export const getSkills = () => json<{ skills: Skill[] }>("/api/skills");
+export const getAutomations = () =>
+  json<{ enabled: boolean; automations: Automation[] }>("/api/automations");
+export const autoAction = (id: string, verb: "pause" | "trigger" | "delete") =>
+  postJson(`/automations/${encodeURIComponent(id)}/${verb}`, {});
+export const newAutomation = (goal: string, every_minutes: number) =>
+  postJson("/automations", { goal, every_minutes });

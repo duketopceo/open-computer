@@ -569,7 +569,7 @@ def test_the_page_renders_for_a_goal_and_embeds_the_workspace_actions(wsx):
 
 
 def test_the_workspace_does_not_shadow_the_console_goals_pages(wsx):
-    assert wsx.get("/goals")[0] == 200 and wsx.get("/goals/new")[0] == 200
+    assert wsx.get("/goals")[0] == 200 and wsx.get("/goals/new")[0] == 302  # SPA list + composer redirect
     _, _, html = wsx.get("/workspace")
     assert 'data-page="workspace"' in html and 'data-page="goals"' not in html
 

@@ -32,14 +32,9 @@ def post_json(console, path, data, cookie=None, token=None):
     return console.request("POST", path, body=json.dumps(data), headers=headers, cookie=cookie is None)
 
 
-def test_work_page_renders_the_three_panes(console):
-    status, _, html = console.get("/work")
-    assert status == 200
-    for pane in ('id="w-rail"', 'id="w-main"', 'id="w-inspect"', 'name="goal"', 'class="composer"'):
-        assert pane in html
-    assert "/static/work.js" in html
-    _, _, other = console.get("/goals")
-    assert "/static/work.js" not in other  # only the work page loads it
+def test_work_page_redirects_to_the_react_shell(console):
+    status, headers, _ = console.get("/work")
+    assert status == 302 and headers["Location"] == "/"
 
 
 def test_frag_work_payload_shape(console):
@@ -95,10 +90,10 @@ def test_goal_json_rejects_empty(console, submitted):
 def test_first_loopback_page_csrf_posts_cleanly(console):
     """The first loopback response mints the session cookie — its csrf token
     must be bound to that minted cookie, or the first POST 403s."""
-    status, headers, html = console.get("/work", cookie=False)
+    status, headers, body = console.get("/api/session", cookie=False)
     assert status == 200
     cookie = headers["Set-Cookie"].split(";", 1)[0]
-    token = re.search(r'name="csrf-token" content="([0-9a-f]+)"', html).group(1)
+    token = json.loads(body)["csrf"]
     status, _, body = post_json(console, "/goals", {"goal": "probe"}, cookie=cookie, token=token)
     assert status == 200 and json.loads(body).get("needs_confirm"), body
 
