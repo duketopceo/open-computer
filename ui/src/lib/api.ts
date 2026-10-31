@@ -410,13 +410,30 @@ export interface ApprovalItem {
   ts: number;
   age_s: number;
   status: string;
-  kind?: string;
-  payload?: Record<string, unknown>;
+  /** Who asked (agent name) and the session it ran in. */
+  who?: string;
+  session?: string;
+  /** What the agent wants to send, in its own words. */
+  what?: string;
+  model?: string;
+  /** Destination host the payload leaves this box for. */
+  egress?: string;
+  est_cost?: number;
+  /** PII categories the gate found in the payload; empty when clean. */
+  pii?: string[];
   payload_hash?: string;
-  reason?: string;
+  payload_bytes?: number;
+  payload?: Record<string, unknown>;
   note?: string;
   decided_by?: string;
   decided_ts?: number;
+}
+
+/** Same rule the old server-rendered page used: PII is high, real spend is elevated. */
+export function approvalRisk(i: ApprovalItem): { level: "high" | "elevated" | "low"; why: string } {
+  if (i.pii && i.pii.length) return { level: "high", why: "PII: " + i.pii.join(", ") };
+  if ((i.est_cost ?? 0) >= 0.05) return { level: "elevated", why: "High spend" };
+  return { level: "low", why: "No PII, within budget" };
 }
 
 export const getApprovals = () => json<{ approvals: ApprovalItem[] }>("/api/approvals");

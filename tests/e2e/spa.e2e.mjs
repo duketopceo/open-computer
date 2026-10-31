@@ -971,3 +971,97 @@ for (const scheme of ["light", "dark"]) {
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Approvals card: who asked, what leaves, where to, cost, PII risk and the payload hash,
+// plus the j/k/a/r chords. /api/approvals is intercepted so the data is deterministic.
+// ---------------------------------------------------------------------------
+const AP_NOW = () => Date.now() / 1000;
+const APPROVAL_ITEMS = () => [
+  { id: "ap_aaaa1111", ts: AP_NOW() - 120, age_s: 120, status: "pending", who: "docs-agent", session: "sess-4f21",
+    what: "Summarise the v0.3 changelog", model: "gpt-4o-mini", egress: "api.openai.com", est_cost: 0.0042, pii: [],
+    payload_hash: "a".repeat(64), payload_bytes: 321, payload: { prompt: "changelog text", egress: "api.openai.com" } },
+  { id: "ap_bbbb2222", ts: AP_NOW() - 60, age_s: 60, status: "pending", who: "research-agent", session: "",
+    what: "Draft the customer reply", model: "claude", egress: "openrouter.ai", est_cost: 0.07, pii: ["email", "ssn"],
+    payload_hash: "b".repeat(64), payload_bytes: 99, payload: { prompt: "reply to jo@example.com" } },
+  { id: "ap_cccc3333", ts: AP_NOW() - 30, age_s: 30, status: "pending", who: "deploy-agent", what: "Plan the rollout",
+    model: "m", egress: "api.example.com", est_cost: 0, pii: [], payload_hash: "c".repeat(64), payload_bytes: 10, payload: {} },
+];
+function approvalsApi(items = APPROVAL_ITEMS()) {
+  const posts = [];
+  return {
+    posts,
+    routes: {
+      "**/api/approvals": (r) => r.fulfill(json(200, { approvals: items.filter((i) => !posts.some((p) => p.id === i.id)).map((i) => i) })),
+      "**/api/approvals/*/*": async (r) => {
+        const m = new URL(r.request().url()).pathname.match(/approvals\/([^/]+)\/([^/]+)$/);
+        posts.push({ id: m[1], verb: m[2], body: r.request().postDataJSON() });
+        await r.fulfill(json(200, { ok: true }));
+      },
+    },
+  };
+}
+
+test("@approvals card shows who asked, what leaves, where to, cost, PII risk and the payload hash", async () => {
+  const { ctx, page } = await openAt("/approvals", { routes: approvalsApi().routes });
+  const cards = page.locator("li[data-approval]");
+  await cards.first().waitFor();
+  assert.equal(await cards.count(), 3);
+  const a = cards.nth(0), b = cards.nth(1);
+  const textA = await a.innerText();
+  for (const needle of ["Summarise the v0.3 changelog", "docs-agent", "sess-4f21", "api.openai.com", "$0.0042", "Low risk", "No PII", "aaaaaaaaaaaa", "321 bytes"]) assert.ok(textA.includes(needle), `card A shows ${needle}`);
+  assert.ok(!textA.includes("Approval request"), "no generic placeholder title");
+  const textB = await b.innerText();
+  for (const needle of ["research-agent", "openrouter.ai", "$0.07", "High risk", "PII: email, ssn", "bbbbbbbbbbbb"]) assert.ok(textB.includes(needle), `card B shows ${needle}`);
+  await b.getByText("Show the payload").click();
+  assert.match(await b.getByLabel("Payload for ap_bbbb2222").innerText(), /jo@example\.com/);
+  await ctx.close();
+});
+
+test("@approvals @keyboard j/k move, a approves the selected card with its hash, r focuses the note, ctrl+enter sends back", async () => {
+  const api = approvalsApi();
+  const { ctx, page } = await openAt("/approvals", { routes: api.routes });
+  const cards = page.locator("li[data-approval]");
+  await cards.first().waitFor();
+  const current = () => page.locator("li[aria-current=true]").getAttribute("data-approval");
+  assert.equal(await current(), "ap_aaaa1111");
+  await page.keyboard.press("j");
+  assert.equal(await current(), "ap_bbbb2222");
+  await page.keyboard.press("j"); await page.keyboard.press("j"); // clamps at the last card
+  assert.equal(await current(), "ap_cccc3333");
+  await page.keyboard.press("k");
+  assert.equal(await current(), "ap_bbbb2222");
+  // r focuses this card's note; typing letters there must not trigger chords
+  await page.keyboard.press("r");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Note for send-back on ap_bbbb2222");
+  await page.keyboard.type("jak Redact the SSN");
+  assert.equal(await current(), "ap_bbbb2222");
+  assert.equal(api.posts.length, 0);
+  await page.keyboard.press("Control+Enter");
+  await cards.nth(2).waitFor({ state: "detached" });
+  assert.deepEqual(api.posts, [{ id: "ap_bbbb2222", verb: "send-back", body: { hash: "b".repeat(64), note: "jak Redact the SSN" } }]);
+  assert.equal(await cards.count(), 2);
+  // focus left the removed input; `a` approves the selected card, bound to that card's hash
+  // selection stays on the same slot, so the next card is selected; k goes back to the first
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  assert.equal(await current(), "ap_cccc3333");
+  await page.keyboard.press("k");
+  assert.equal(await current(), "ap_aaaa1111");
+  await page.keyboard.press("a");
+  await page.waitForFunction(() => document.querySelectorAll("li[data-approval]").length === 1);
+  assert.equal(api.posts[1].id, "ap_aaaa1111");
+  assert.equal(api.posts[1].verb, "approve");
+  assert.equal(api.posts[1].body.hash, "a".repeat(64));
+  await ctx.close();
+});
+
+for (const w of [1440, 390]) {
+  test(`@a11y approvals card with PII risk and payload open: axe 0 violations, no horizontal scroll at ${w}px`, async () => {
+    const { ctx, page } = await openAt("/approvals", { w, routes: approvalsApi().routes });
+    await page.locator("li[data-approval]").first().waitFor();
+    await page.locator("li[data-approval]").nth(1).getByText("Show the payload").click();
+    assert.deepEqual(await axeViolations(page), [], `approvals @${w}`);
+    assert.ok(await noHScroll(page), `approvals @${w} scrolls horizontally`);
+    await ctx.close();
+  });
+}

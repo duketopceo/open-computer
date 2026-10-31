@@ -139,7 +139,7 @@ test("@keyboard approvals: pending cards in queue order, keyboard-only approve, 
   await cards.first().waitFor();
   const queue = (await (await ctx.request.get(RW + "/api/approvals")).json()).approvals.filter((i) => i.status === "pending").map((i) => i.id);
   assert.equal(queue.length, 3);
-  const ids = async () => (await cards.locator(".mono").allTextContents()).map((t) => t.split(" ")[0]);
+  const ids = async () => cards.evaluateAll((els) => els.map((el) => el.getAttribute("data-approval")));
   assert.deepEqual(await ids(), queue);
   // second card: Send back with an empty note is refused locally
   const second = cards.nth(1);
