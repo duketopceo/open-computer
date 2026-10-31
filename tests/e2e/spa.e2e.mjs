@@ -813,3 +813,161 @@ for (const scheme of ["light", "dark"]) {
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Effort composer: one goal box, a Low/Medium/High pick that chooses the model and the
+// per-run budget, and every other knob behind a single Advanced disclosure. /api/effort is
+// the real fixture route unless a test overrides it; every POST /goals is intercepted.
+
+const EFFORT = {
+  default: "low",
+  max_budget: 1,
+  models: ["google/gemini-2.5-flash", "deepseek/deepseek-v4-pro", "x-ai/grok-4.7"],
+  levels: [
+    { id: "low", label: "Low", blurb: "Quick and cheap.", model: "google/gemini-2.5-flash", budget: 0.1 },
+    { id: "medium", label: "Medium", blurb: "Harder tasks.", model: "deepseek/deepseek-v4-pro", budget: 0.3 },
+    { id: "high", label: "High", blurb: "Most capable allowed.", model: "x-ai/grok-4.7", budget: 1 },
+  ],
+};
+
+function goalApi() {
+  const posts = [];
+  return {
+    posts,
+    routes: {
+      "**/api/effort": (r) => r.fulfill(json(200, EFFORT)),
+      "**/goals": (r) => {
+        const body = JSON.parse(r.request().postData() || "{}");
+        posts.push(body);
+        if (body.confirm !== "1") {
+          const lv = EFFORT.levels.find((l) => l.id === (body.effort ?? "low"));
+          return r.fulfill(json(200, { needs_confirm: true, cap: 1, effort: lv.id, model: body.model ?? lv.model, budget: body.budget ?? lv.budget }));
+        }
+        return r.fulfill(json(200, { run: "g_e2e01" }));
+      },
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+    },
+  };
+}
+
+const goalBox = (page) => page.getByRole("textbox", { name: "Describe a goal" });
+const runBtn = (page) => page.getByRole("button", { name: "Run", exact: true });
+
+test("@flow effort: server default is selected, Advanced is closed, and the caption names the model and budget", async () => {
+  const api = goalApi();
+  const { ctx, page } = await open({ routes: api.routes });
+  await page.getByRole("radio", { name: "Low" }).waitFor({ state: "attached" });
+  assert.ok(await page.getByRole("radio", { name: "Low" }).isChecked());
+  assert.equal(await page.getByRole("radio").count(), 3);
+  assert.equal(await page.getByRole("button", { name: "Advanced" }).getAttribute("aria-expanded"), "false");
+  assert.equal(await page.getByLabel("Model").count(), 0);
+  await page.getByText("up to $0.10 per run").waitFor();
+  assert.ok(await page.getByText("google/gemini-2.5-flash").first().isVisible());
+  await ctx.close();
+});
+
+test("@flow effort: High is sent with the goal, shown on the confirm card, and kept when confirming", async () => {
+  const api = goalApi();
+  const { ctx, page } = await open({ routes: api.routes });
+  await goalBox(page).fill("say hi");
+  await page.locator("label", { hasText: "High" }).click(); // the visible label, as a user clicks it
+  await page.getByText("up to $1.00 per run").waitFor();
+  await runBtn(page).click();
+  const card = page.getByRole("heading", { name: "Run this?" }).locator("xpath=..");
+  await card.waitFor();
+  assert.deepEqual(api.posts[0], { goal: "say hi", effort: "high" }); // no model or budget unless Advanced was used
+  const text = await card.innerText();
+  assert.match(text, /high/i);
+  assert.match(text, /x-ai\/grok-4\.7/);
+  assert.match(text, /up to \$1\.00 for this run/);
+  await page.getByRole("button", { name: "Run it" }).click();
+  await page.getByText("<$0.0001").first().waitFor();
+  assert.deepEqual(api.posts[1], { goal: "say hi", effort: "high", confirm: "1" });
+  await ctx.close();
+});
+
+test("@flow effort: keyboard only: arrow keys change the level and Enter in the box submits it", async () => {
+  const api = goalApi();
+  const { ctx, page } = await open({ routes: api.routes });
+  await page.getByRole("radio", { name: "Low" }).focus();
+  await page.keyboard.press("ArrowRight");
+  assert.ok(await page.getByRole("radio", { name: "Medium" }).isChecked());
+  await goalBox(page).fill("say hi");
+  await goalBox(page).press("Enter");
+  await page.getByRole("heading", { name: "Run this?" }).waitFor();
+  assert.equal(api.posts[0].effort, "medium");
+  await ctx.close();
+});
+
+test("@flow effort: Advanced holds a model and a budget; both are sent, and an over-cap budget blocks Run", async () => {
+  const api = goalApi();
+  const { ctx, page } = await open({ routes: api.routes });
+  await goalBox(page).fill("say hi");
+  const adv = page.getByRole("button", { name: "Advanced" });
+  await adv.click();
+  assert.equal(await adv.getAttribute("aria-expanded"), "true");
+  await page.getByLabel("Budget for this run, dollars").fill("5");
+  await page.getByRole("alert").filter({ hasText: "up to $1.00" }).waitFor();
+  assert.ok(await runBtn(page).isDisabled(), "a budget above the daily cap cannot be submitted");
+  await page.getByLabel("Budget for this run, dollars").fill("0.25");
+  await page.getByLabel("Model").selectOption("deepseek/deepseek-v4-pro");
+  await adv.click(); // collapsed, the override is still in force and says so
+  await page.getByText("· changed").waitFor();
+  await runBtn(page).click();
+  await page.getByRole("heading", { name: "Run this?" }).waitFor();
+  assert.deepEqual(api.posts[0], { goal: "say hi", effort: "low", model: "deepseek/deepseek-v4-pro", budget: 0.25 });
+  await ctx.close();
+});
+
+test("@errors effort: if the effort list cannot load, Run still works with the server default and says so", async () => {
+  const api = goalApi();
+  const { ctx, page } = await open({ routes: { ...api.routes, "**/api/effort": (r) => r.fulfill(json(500, { error: "boom" })) } });
+  await page.getByText("Effort levels unavailable").waitFor();
+  assert.equal(await page.getByRole("radio").count(), 0);
+  await goalBox(page).fill("say hi");
+  await runBtn(page).click();
+  await page.getByRole("heading", { name: "Run this?" }).waitFor();
+  assert.deepEqual(api.posts[0], { goal: "say hi" });
+  await ctx.close();
+});
+
+test("@flow effort: a run shows its effort, model and spend, and a budget pause is stated, not silent", async () => {
+  const withEffort = (effort) => ({ ...RUN, effort });
+  for (const [effort, paused] of [
+    [{ id: "medium", model: "deepseek/deepseek-v4-pro", budget: 0.3, spent: 0.0123, paused: false }, false],
+    [{ id: "low", model: "google/gemini-2.5-flash", budget: 0.1, spent: 0.1, paused: true }, true],
+  ]) {
+    const { ctx, page } = await open({
+      routes: {
+        "**/api/runs": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, withEffort(effort))),
+      },
+    });
+    await page.getByText(`effort ${effort.id} · ${effort.model}`).waitFor();
+    assert.equal(await page.getByRole("status").filter({ hasText: "Paused · budget" }).count(), paused ? 1 : 0);
+    if (paused) assert.ok((await page.getByRole("status").filter({ hasText: "Nothing was cancelled" }).innerText()).includes("$0.10"));
+    await ctx.close();
+  }
+});
+
+for (const scheme of ["light", "dark"]) {
+  for (const w of [1440, 390]) {
+    test(`@a11y effort composer axe: 0 violations at ${w}px, ${scheme}, closed and with Advanced open`, async () => {
+      const api = goalApi();
+      const { ctx, page } = await open({ w, scheme, routes: api.routes });
+      await page.getByRole("radio", { name: "Low" }).waitFor({ state: "attached" });
+      const scan = async (label) => {
+        await page.evaluate(AXE);
+        const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+        assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${w} ${scheme} ${label}`);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no horizontal scroll ${label}`);
+      };
+      await scan("closed");
+      await page.getByRole("button", { name: "Advanced" }).click();
+      await scan("advanced open");
+      await page.getByLabel("Budget for this run, dollars").fill("9"); // error state
+      await scan("budget error");
+      await ctx.close();
+    });
+  }
+}

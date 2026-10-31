@@ -25,7 +25,18 @@ export function RunView({ run }: { run: RunDetail }) {
           </span>
           <span className="mono text-muted">origin {run.origin}</span>
           {run.device_id && <span className="mono text-muted">device {run.device_id}</span>}
+          {run.effort && (
+            <span className="mono text-muted">
+              effort {run.effort.id} · {run.effort.model} · {cost(run.effort.spent)} of {cost(run.effort.budget)}
+            </span>
+          )}
         </div>
+        {run.effort?.paused && (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">
+            <span className="mono uppercase tracking-wider">Paused · budget</span> This run reached its{" "}
+            {cost(run.effort.budget)} budget. Nothing was cancelled; the remaining steps stay queued.
+          </p>
+        )}
         {run.plan_thinking && <Thinking text={run.plan_thinking} className="mt-3" />}
       </header>
 

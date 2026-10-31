@@ -1,6 +1,6 @@
 # Roadmap
 
-One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-066` (there is no OC-056). Phases P0-P6 and
+One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-067` (there is no OC-056). Phases P0-P6 and
 the exit criteria below are the plan; this file is the status board and is updated by the PR that
 changes a unit's state. Anything contradicting `main` here is a bug in this file.
 
@@ -119,6 +119,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-064 | P6 | Remote HTTPS MCP with auth (prerequisite for public directories) | open |
 | OC-065 | P6 | Anthropic directory submission (claude.ai/directory/manage) | open |
 | OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open |
+| OC-067 | P3 | Effort composer: one goal box with a Low / Medium / High picker that chooses the model and a hard per-run budget (tier models from `TIER_MODELS`, budget clamped to `OC_DAILY_CAP`, no premium and never High by default), model and budget behind one Advanced disclosure, effort shown on the run page. Plan: `docs/plans/2026-10-31-001-feat-effort-composer-plan.md` | partial: composer, `GET /api/effort`, per-run ledger cap, resume keeps model and cap, e2e + axe (PR pending review); open: a resume-after-budget-pause control, folding agent jobs and Automations into the same box, folding `OC_TASK_CAP`/`OC_RUN_CAP` into the effort table |
 
 ## Landed since 2026-10-14
 
@@ -162,6 +163,7 @@ Plans in `docs/plans/` mapped to one board. Status verified against main.
 | Device plane | 2026-10-16-001, 2026-10-19-002 | mailbox, parked steps, transports shipped | — |
 | Observability + cost telemetry | 2026-10-28-001 | stages 1–2 live (#72, #73; Glitchtip + tallyline) | stage 3 sink, 4–5 |
 | Agent orchestrator | 2026-10-29-001, 2026-10-30-001 | merged (#77, #79, #80, #81) | — |
+| Effort composer | 2026-10-31-001 | OC-067 in review | decisions in the plan (default level, budgets, resume control, agent jobs) |
 | Unified UI shell | 2026-10-30-001 | PR #83 (legible output, friendly labels, live ticker) | U1 port operator pages → React, U2 step activity, U3 onboarding |
 | Run resilience | 2026-10-30-002 | planned (PR #87) | R1 transient retry + R2 requeue-on-outage ← **next** |
 
