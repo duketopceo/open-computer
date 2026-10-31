@@ -119,7 +119,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-064 | P6 | Remote HTTPS MCP with auth (prerequisite for public directories) | open |
 | OC-065 | P6 | Anthropic directory submission (claude.ai/directory/manage) | open |
 | OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open |
-| OC-067 | P3 | Effort composer: one goal box with a Low / Medium / High picker that chooses the model and a hard per-run budget (tier models from `TIER_MODELS`, budget clamped to `OC_DAILY_CAP`, no premium and never High by default), model and budget behind one Advanced disclosure, effort shown on the run page. Plan: `docs/plans/2026-10-31-001-feat-effort-composer-plan.md` | partial: composer, `GET /api/effort`, per-run ledger cap, resume keeps model and cap, e2e + axe (PR pending review); open: a resume-after-budget-pause control, folding agent jobs and Automations into the same box, folding `OC_TASK_CAP`/`OC_RUN_CAP` into the effort table |
+| OC-067 | P3 | Effort composer: one goal box with a Low / Medium / High picker that chooses the model and a hard per-run budget (tier models from `TIER_MODELS`, budget clamped to `OC_DAILY_CAP`, no premium and never High by default), model and budget behind one Advanced disclosure, effort shown on the run page. Plan: `docs/plans/2026-10-31-001-feat-effort-composer-plan.md` | partial: composer, `GET /api/effort`, per-run ledger cap, resume keeps model and cap, e2e + axe (#95, in review); open: a resume-after-budget-pause control, folding agent jobs and Automations into the same box, folding `OC_TASK_CAP`/`OC_RUN_CAP` into the effort table |
 
 ## Landed since 2026-10-14
 
