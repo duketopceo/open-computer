@@ -358,3 +358,30 @@ export async function decideApproval(
     note,
   });
 }
+
+// ---- Approvals queue ----
+
+export interface ApprovalItem {
+  id: string;
+  ts: number;
+  age_s: number;
+  status: string;
+  kind?: string;
+  payload?: Record<string, unknown>;
+  payload_hash?: string;
+  reason?: string;
+  note?: string;
+  decided_by?: string;
+  decided_ts?: number;
+}
+
+export const getApprovals = () => json<{ approvals: ApprovalItem[] }>("/api/approvals");
+
+export function decideQueueItem(
+  id: string,
+  verb: "approve" | "send-back",
+  hash?: string,
+  note?: string,
+): Promise<{ ok: boolean }> {
+  return postJson(`/api/approvals/${encodeURIComponent(id)}/${verb}`, { hash, note });
+}

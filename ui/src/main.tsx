@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { RouterProvider, matchRoute, useRouter } from "./lib/router";
+import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
 import Devices from "./pages/Devices";
 import NotFound from "./pages/NotFound";
@@ -21,6 +22,7 @@ const ROUTES: Row[] = [
   { path: "/sandboxes/:id", page: (p) => <SandboxDetail id={p.id} /> },
   { path: "/router", page: () => <Router /> },
   { path: "/audit", page: () => <Audit /> },
+  { path: "/approvals", page: () => <Approvals /> },
 ];
 
 function Routes() {
