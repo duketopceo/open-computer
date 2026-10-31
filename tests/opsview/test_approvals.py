@@ -2,7 +2,6 @@
 `a` approves, `r` sends back with a required note, every decision audited."""
 
 import json
-import re
 
 from services.gate.audit import AuditLog
 from services.gate.gate import Gate

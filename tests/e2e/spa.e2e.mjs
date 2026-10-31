@@ -168,6 +168,12 @@ const PAGES = [
   ["/router", "Router"],
   ["/audit", "Audit"],
   ["/audit?f=blocked&q=gpt", "Audit"],
+  // Slices 1-4 of the React move: these used to be server-rendered and axe-checked in console.e2e.mjs.
+  ["/overview", "Overview"],
+  ["/runs", "Runs"],
+  ["/approvals", "Approvals"],
+  ["/skills", "Skills"],
+  ["/automations", "Automations"],
   ["/no-such-page", "Not found"],
 ];
 

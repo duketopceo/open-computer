@@ -105,6 +105,11 @@ def wsx(tmp_path, monkeypatch):
     monkeypatch.setenv("OC_WORKSPACE_DIR", str(tmp_path / "ws"))
     monkeypatch.setenv("OC_AUDIT", str(tmp_path / "audit.ndjson"))
     monkeypatch.setenv("OC_APPROVALS", str(tmp_path / "approvals.ndjson"))
+    # A stub UI build: /goals is an SPA route, so this test must not depend on a local `pnpm build`.
+    dist = tmp_path / "ui-stub-dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text('<!doctype html><div id="root"></div>')
+    monkeypatch.setattr(server, "UI_DIST", dist)
     monkeypatch.setattr(server.Handler, "auth", FakeAuth())
     routes.reset()
     srv = server.make_server(0)
