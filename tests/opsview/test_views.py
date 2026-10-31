@@ -32,20 +32,13 @@ def test_status_is_glyph_plus_word_never_color_alone():
         assert "<svg" in s and f"<span>{word}</span>" in s
 
 
-def test_empty_states_say_what_will_appear(tmp_path, monkeypatch, console):
-    monkeypatch.setenv("OC_APPROVALS", str(tmp_path / "x.ndjson"))
-    monkeypatch.setenv("OC_RUNS_DIR", str(tmp_path / "runs"))
-    _, _, html = console.get("/approvals")
-    assert "Nothing waiting on you" in html and "what leaves, where it goes" in html
-    _, _, html = console.get("/runs")
-    assert "No runs yet" in html and "New matrix run" in html
-
-
 def test_log_viewer_embeds_lines_for_windowing_and_a_noscript_tail(console):
-    _, _, html = console.get("/runs")
-    big = re.findall(r'href="(/runs/run_[0-9a-f]+)"', html)
+    from services.opsview import runs as runs_mod
+
+    hrefs = [f"/runs/{r['id']}" for r in runs_mod.list_runs()]
+    # list page is the React shell now; run detail stays server-rendered
     found = False
-    for href in dict.fromkeys(big):
+    for href in dict.fromkeys(hrefs):
         _, _, page = console.get(href)
         if 'data-lines="12001"' in page:
             found = True

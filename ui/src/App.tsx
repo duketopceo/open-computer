@@ -98,6 +98,16 @@ export default function App() {
   }, [link, jobsActive, refreshJobs]);
 
   useEffect(() => {
+    const fromHash = () => {
+      const id = location.hash.replace(/^#/, "");
+      if (id) setSelected(id);
+    };
+    fromHash();
+    addEventListener("hashchange", fromHash);
+    return () => removeEventListener("hashchange", fromHash);
+  }, []);
+
+  useEffect(() => {
     session()
       .then(setSess)
       .catch(noteFailure);

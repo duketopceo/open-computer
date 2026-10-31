@@ -4,6 +4,8 @@ Submission is patched — these tests never call a model or spawn a worker.
 The run-page render is exercised against a registry populated on disk.
 """
 
+import json
+
 import pytest
 
 from services.opsview import goalruns, server
@@ -64,8 +66,10 @@ def test_run_list_and_detail_read_disk(console, monkeypatch, tmp_path):
         time.sleep(0.05)
     assert [s["state"] for s in got["subtasks"]] == ["DONE", "DONE"]
     assert got["worker_failures"] == []
-    status, _, html = console.get("/goals")
-    assert status == 200 and rid in html and "Do two things" in html and "DONE" in html
+    status, _, body = console.get("/api/runs")
+    runs = json.loads(body)["runs"]
+    row = next(r for r in runs if r["run"] == rid)
+    assert row["goal"] == "Do two things" and row["states"]["DONE"] == 2
     status, _, html = console.get(f"/goals/{rid}")
     assert status == 200 and "out:p2" in html and "first" in html
 
@@ -126,8 +130,9 @@ def test_failed_decompose_renders_visible_run(console, monkeypatch, tmp_path):
     assert listing[0]["run"] == rid and listing[0]["states"]["FAILED"] == 1
     status, _, html = console.get(f"/goals/{rid}")
     assert status == 200 and "planner endpoint unreachable" in html
-    status, _, html = console.get("/goals")
-    assert "Will fail" in html and "FAILED" in html
+    status, _, body = console.get("/api/runs")
+    row = next(r for r in json.loads(body)["runs"] if r["run"] == rid)
+    assert row["goal"] == "Will fail" and row["states"]["FAILED"] == 1
 
 
 def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):

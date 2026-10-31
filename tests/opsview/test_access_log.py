@@ -55,7 +55,7 @@ def test_route_is_a_template_not_the_raw_path_and_query_never_logged(console, li
     console.get("/runs?secret_param=sk-or-v1-0123456789abcdef0123456789abcdef&q=private-words")
     console.get("/no/such/page/ap_12345678")
     rows = access(lines(2))
-    assert [r["route"] for r in rows] == ["g_runs", "other"]
+    assert [r["route"] for r in rows] == ["spa/runs", "other"]
     raw = json.dumps(rows)
     assert "private-words" not in raw and "sk-or-v1" not in raw and "ap_12345678" not in raw
 

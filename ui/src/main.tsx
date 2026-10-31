@@ -7,6 +7,7 @@ import Audit from "./pages/Audit";
 import Devices from "./pages/Devices";
 import NotFound from "./pages/NotFound";
 import Router from "./pages/Router";
+import Runs from "./pages/Runs";
 import SandboxDetail from "./pages/SandboxDetail";
 import Sandboxes from "./pages/Sandboxes";
 import "./index.css";
@@ -23,6 +24,8 @@ const ROUTES: Row[] = [
   { path: "/router", page: () => <Router /> },
   { path: "/audit", page: () => <Audit /> },
   { path: "/approvals", page: () => <Approvals /> },
+  { path: "/runs", page: () => <Runs /> },
+  { path: "/goals", page: () => <Runs /> },
 ];
 
 function Routes() {
