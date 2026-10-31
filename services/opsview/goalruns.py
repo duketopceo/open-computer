@@ -19,6 +19,7 @@ from typing import Callable
 
 from oc.fsproto import adapter as fs_adapter
 from services.orchestrator import Orchestrator
+from services.orchestrator.runcfg import create_ledger, effort_row, ledger_for, model_of
 from services.orchestrator.thinking import PLAN, ThinkingLog, join_thoughts
 from services.placement import place_live
 
@@ -170,11 +171,25 @@ def get_run(run_id: str) -> dict | None:
     }
     if PLAN in thoughts:
         out["plan_thinking"] = join_thoughts(thoughts[PLAN])
+    chosen = effort_row(rows)
+    if chosen is not None:
+        out["effort"] = _effort_view(d, run_id, chosen)
     if failed is not None:
         out["error"] = failed.get("error", "")
         out["error_kind"] = failed.get("kind", "")
         out["hint"] = failed.get("hint", "")
     return out
+
+
+def _effort_view(run_dir: Path, run_id: str, row: dict) -> dict:
+    """What the run was started with, plus live spend. `paused` means the budget stopped new work (nothing cancelled)."""
+    view = {"id": row.get("effort"), "model": row.get("model"), "budget": row.get("budget"), "spent": 0.0, "paused": False}
+    ledger = ledger_for(run_dir)
+    if ledger is not None:
+        st = ledger.state(run_id)
+        view["spent"] = round(st.spend, 6)
+        view["paused"] = st.state == "paused_cap"
+    return view
 
 
 def submit(
@@ -185,12 +200,21 @@ def submit(
     by: str = "",
     origin: str = "cloud",
     device_id: str | None = None,
+    effort: str | None = None,
+    model: str | None = None,
+    budget: float | None = None,
 ) -> str:
-    """Create a run dir, submit, and drive it on a daemon thread."""
+    """Create a run dir, submit, and drive it on a daemon thread.
+
+    With `budget`, the run gets a cost ledger whose hard cap pauses it (nothing cancelled) and an
+    `effort_set` audit row recording the effort, model and budget it was started with."""
     rid = "goal_" + uuid.uuid4().hex[:8]
     run_dir = runs_dir() / rid
     run_dir.mkdir(parents=True, exist_ok=True)
-    orch = Orchestrator(run_dir, place_fn=place_live)
+    ledger = create_ledger(run_dir, rid, budget, by or "owner") if budget is not None else None
+    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger)
+    if budget is not None:
+        orch.audit.append({"event": "effort_set", "run": rid, "effort": effort, "model": model, "budget": budget})
     with _lock:
         _live[rid] = orch
     try:
@@ -225,12 +249,15 @@ def _start_drive(orch: Orchestrator, rid: str, wfn) -> None:
     threading.Thread(target=_drive, args=(orch, rid, wfn), daemon=True, name=f"oc-goal-{rid}").start()
 
 
-def resume(wfn) -> int:
+def resume(wfn, wfn_for_model: Callable[[str], Callable[[dict], object]] | None = None) -> int:
     """Re-drive runs left non-terminal by a process restart. Count resumed.
 
     Orchestrator.recover rebuilds in-memory state from plan.json + audit
     rows; runs with no plan (pre-plan or mid-decompose crash) are left
     literal on disk — reported, never fabricated.
+
+    A run started with an effort resumes with its own model (`wfn_for_model`) and its own cost ledger,
+    so a restart never changes what it may spend.
     """
     base = runs_dir()
     if not base.exists():
@@ -240,7 +267,7 @@ def resume(wfn) -> int:
         if not d.is_dir():
             continue
         try:
-            orch = Orchestrator(d, place_fn=place_live)
+            orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d))
             if not orch.recover(d.name):
                 continue
             res = orch.results(d.name)
@@ -255,7 +282,9 @@ def resume(wfn) -> int:
                 continue  # Temporal owns (or just re-adopted) the drive loop
             with _lock:
                 _live[d.name] = orch
-            _start_drive(orch, d.name, wfn)
+            model = model_of(_audit_rows(d))
+            run_wfn = wfn_for_model(model) if wfn_for_model and model else wfn
+            _start_drive(orch, d.name, run_wfn)
             n += 1
         except Exception:
             continue  # a corrupt run stays literal on disk

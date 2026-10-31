@@ -15,7 +15,7 @@ from services.opsview import goalruns, server
 def submitted(monkeypatch):
     rec = []
 
-    def fake(goal, who):
+    def fake(goal, who, plan):
         rec.append((goal, who))
         return "goal_ab12cd34"
 

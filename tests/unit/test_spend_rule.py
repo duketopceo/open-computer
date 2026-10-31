@@ -33,3 +33,11 @@ def test_default_orchestrator_model_is_not_premium():
 
     assert DEFAULT_ORCHESTRATOR_MODEL == "deepseek/deepseek-v4-pro"
     assert not PREMIUM.match(DEFAULT_ORCHESTRATOR_MODEL)
+
+
+def test_no_effort_level_or_override_is_premium_and_default_is_not_the_top():
+    from services.opsview import effort
+
+    assert [m for m in effort.models() if PREMIUM.match(m)] == []
+    assert [lv.id for lv in effort.LEVELS if PREMIUM.match(lv.model)] == []
+    assert effort.FALLBACK_DEFAULT != effort.LEVELS[-1].id

@@ -36,7 +36,7 @@ from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError
 from services.agents.approvals import ApprovalError
 from services.opsview.agentgrants import GrantError
-from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, goalruns
+from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -258,15 +258,24 @@ def _route(q: str) -> dict:
     }
 
 
-def _submit_goal(goal: str, who: str) -> str:
-    """Spending path behind POST /goals confirm. Tests patch this."""
-    return goalruns.submit(goal, goal_engines.decompose_engine(), goal_engines.work_fn(), by=who)
+def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
+    """Spending path behind POST /goals confirm. Tests patch this. The plan's model drives the planner and
+    every cloud step; its budget is a hard per-run cap."""
+    return goalruns.submit(
+        goal,
+        goal_engines.decompose_engine(plan.model),
+        goal_engines.work_fn(plan.model),
+        by=who,
+        effort=plan.effort,
+        model=plan.model,
+        budget=plan.budget,
+    )
 
 
 def _resume_goals() -> None:
     """Re-drive goal runs orphaned by a restart. Fails soft — disk is truth."""
     try:
-        n = goalruns.resume(goal_engines.work_fn())
+        n = goalruns.resume(goal_engines.work_fn(), goal_engines.work_fn)
         log.info("goal runs resumed", count=n) if n else log.debug("no goal runs to resume")
     except Exception as e:
         log.error("goal run resume failed", error=type(e).__name__)
@@ -289,6 +298,7 @@ GET_ROUTES = [
     (r"/", "g_spa"),
     (r"/assets/(?P<file>[^/]+)", "g_asset"),
     (r"/api/session", "g_api_session"),
+    (r"/api/effort", "g_api_effort"),
     (r"/api/runs", "g_api_runs"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
     (r"/api/agent-jobs", "g_api_agent_jobs"),
@@ -608,6 +618,9 @@ class Handler(BaseHTTPRequestHandler):
     def g_api_session(self, qs):
         self._json(200, {"csrf": self._csrf(), "identity": self._identity() or "", "cap": daily_cap()})
 
+    def g_api_effort(self, qs):
+        self._json(200, effort.catalog(daily_cap()))
+
     def g_api_runs(self, qs):
         self._json(200, {"runs": goalruns.list_runs()})
 
@@ -853,14 +866,23 @@ class Handler(BaseHTTPRequestHandler):
             if self._wants_json():
                 return self._json(400, {"error": "A goal is required (max 4000 chars)."})
             return self._page("goals", views.page_goal_new(self._csrf(), "A goal is required (max 4000 chars)."), 400)
+        try:
+            plan = effort.resolve(body.get("effort"), body.get("model"), body.get("budget"), daily_cap())
+        except ValueError as e:
+            if self._wants_json():
+                return self._json(422, {"error": str(e)})
+            return self._page("goals", views.page_goal_new(self._csrf(), str(e)), 422)
         if body.get("confirm") != "1":
             if self._wants_json():
-                return self._json(200, {"needs_confirm": True, "cap": daily_cap()})
+                return self._json(
+                    200,
+                    {"needs_confirm": True, "cap": daily_cap(), "effort": plan.effort, "model": plan.model, "budget": plan.budget},
+                )
             return self._page(
                 "goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()), sub="Confirm before it runs"
             )
         try:
-            rid = _submit_goal(goal, who)
+            rid = _submit_goal(goal, who, plan)
         except Exception as e:
             if self._wants_json():
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})
