@@ -293,6 +293,7 @@ GET_ROUTES = [
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
     (r"/api/agent-jobs", "g_api_agent_jobs"),
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
+    (r"/api/approvals", "g_api_approvals"),
     (r"/work", "g_work"),
     (r"/overview", "g_overview"),
     (r"/sandboxes", "g_spa_route"),
@@ -306,7 +307,7 @@ GET_ROUTES = [
     (r"/runs", "g_runs"),
     (r"/runs/new", "g_run_new"),
     (r"/runs/(?P<id>run_[0-9a-f]{8})", "g_run"),
-    (r"/approvals", "g_approvals"),
+    (r"/approvals", "g_spa_route"),
     (r"/router", "g_spa_route"),
     (r"/audit", "g_spa_route"),
     (r"/api/devices", "g_api_devices"),
@@ -325,6 +326,8 @@ POST_ROUTES = [
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
     (r"/api/router/test", "p_api_router_test"),
+    (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_api_approve"),
+    (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_api_sendback"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_sendback"),
     (r"/automations", "p_automations"),
@@ -604,6 +607,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def g_api_runs(self, qs):
         self._json(200, {"runs": goalruns.list_runs()})
+
+    def g_api_approvals(self, qs):
+        items = ApprovalQueue(approvals_path()).items()
+        for it in items:
+            it["age_s"] = round(time.time() - it["ts"], 1)
+        self._json(200, {"approvals": items})
+
+    def p_api_approve(self, who, body, id):
+        self._decide(who, body, id, True)
+
+    def p_api_sendback(self, who, body, id):
+        self._decide(who, body, id, False)
 
     def g_api_run(self, qs, id):
         r = goalruns.get_run(id)
