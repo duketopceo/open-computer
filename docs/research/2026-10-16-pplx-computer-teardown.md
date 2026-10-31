@@ -137,7 +137,7 @@ cite the former as fact in `fs-protocol-spec.md`.
 |---|---|---|---|
 | `services/execplane/` CubeSandbox adapter | partial: make_sandbox + exec only | SPACE native API or ECW | **Replace.** Two calls drive execution (`make_sandbox`, `exec`); `_CubeSandbox.close()` also does a best-effort `_sb.kill()`, though no caller is shown to use it. The surface is still tiny, so switching cost is low and only grows as callers adopt more of it. |
 | OC-030 pause/resume/snapshot/clone/rollback | open | SPACE pause / suspend / wake / fork, `rollback` named in egress docs | **Adopt.** Stop designing; wrap. |
-| OC-031 cold-boot + aarch64 verdict | open | SPACE: x86_64 + KVM only, no macOS | **Decide.** M1 Max is out for SPACE. Keep CubeVM only if an aarch64 dev loop matters more than parity. |
+| OC-031 cold-boot + aarch64 verdict | open | SPACE: x86_64 + KVM only, no macOS | **Decide.** personal dev machine is out for SPACE. Keep CubeVM only if an aarch64 dev loop matters more than parity. |
 | OC-032/033 credential boundary v1/v2 | partial / open | `network_credential_rules` + gateway header injection | **Adopt v2 directly.** v1 placeholder scheme becomes unnecessary. |
 | R2 egress deny-by-default | shipped, test fixed | `egress_default_action = DENY`, exact domains, no wildcards in profiles | **Keep rule, swap enforcement.** Conformance checks should target SPACE's policy objects. |
 | OpenShell (Landlock + seccomp + credential substitution) | research/adopt | Overlaps SPACE gateway and VM isolation | **Drop or defer.** Two policy engines for one boundary is more surface, not more safety. |

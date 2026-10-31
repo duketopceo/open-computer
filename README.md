@@ -89,8 +89,7 @@ in [#74](https://github.com/duketopceo/open-computer/pull/74) but is not built y
 - [#79](https://github.com/duketopceo/open-computer/pull/79): job trail rows are redacted and size-capped before
   the console serves them.
 
-#75 to #77 landed on `main` together as one squash commit (`4356ff5`). Review fixes for the run sandbox lifecycle are in open PR [#80](https://github.com/duketopceo/open-computer/pull/80). Later slices (sandbox launcher, job resume,
-a console submit and approve view, a live acceptance run) are listed in
+#75 to #77 landed on `main` together as one squash commit (`4356ff5`). Review fixes for the run sandbox lifecycle merged in [#80](https://github.com/duketopceo/open-computer/pull/80). The sandbox launcher, job resume and a console approve view have also merged; the remaining slices (a live acceptance run, production planner wiring) are listed in
 `docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md`.
 
 ## Install and quick start
@@ -115,6 +114,10 @@ uv run python -m services.opsview.server
 The console reads `OPENROUTER_API_KEY` if you want it to make real model calls. Add `--extra space` to
 `uv sync` if you plan to use the optional SPACE sandbox backend (`OC_EXECPLANE_BACKEND=space`; the default is
 `cube`).
+
+Behind your own domain, set `OC_RP_PARENT=example.com` (your domain) so one passkey covers `oc.example.com` and its other
+subdomains. Unset, each host gets its own passkey. Set it before the first enrolment: changing it later orphans passkeys
+enrolled under the old value.
 
 Live rows need `CUBE_API_URL` and `CUBE_API_KEY` for a local CubeSandbox; they boot real microVMs, so run
 them by hand, never in CI. The first runnable command (`oc run "<goal>"`) is OC-039.

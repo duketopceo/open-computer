@@ -8,7 +8,7 @@ external_source: cloudflare/computer (github.com/cloudflare/computer) @ b6291175
 
 ## Goal Capsule
 
-Compare Cloudflare's `computer` (browser + code-exec + storage bundled as one agent tool surface on Workers) against open-computer's model (ops-side console, oc.shippedit.dev, host :8791). Deliverable: a design-diff doc naming what their tool-shape does that ours doesn't — and what ours gives them nothing for.
+Compare Cloudflare's `computer` (browser + code-exec + storage bundled as one agent tool surface on Workers) against open-computer's model (ops-side console, oc.example.com, host :8791). Deliverable: a design-diff doc naming what their tool-shape does that ours doesn't — and what ours gives them nothing for.
 
 ## Product Contract
 
@@ -23,7 +23,7 @@ cloudflare/computer is the *agent-facing* side: bundle a browser, filesystem, an
 
 ### Requirements
 
-1. Enumerate their agent-facing primitives (exact tool calls an agent gets) vs open-computer's operator-facing primitives (what oc.shippedit.dev exposes).
+1. Enumerate their agent-facing primitives (exact tool calls an agent gets) vs open-computer's operator-facing primitives (what oc.example.com exposes).
 2. Diff tables: session model, sandboxing story, persistence/snapshots, per-action cost (Workers pricing model vs local host), what the *agent* sees vs what the *operator* sees.
 3. Policy boundary diff: egress control, credential handling (where secrets live, whether guests ever see them), human approval, and audit — vs our PolicyEngine/AuditLog/deny-by-default model. Their platform isolates; ours gates. Name the difference explicitly.
 4. Pay attention to their constraint choice: ephemeral Workers isolates vs a persistent real machine — that's the core architectural fork.

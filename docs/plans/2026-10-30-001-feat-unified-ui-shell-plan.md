@@ -4,7 +4,7 @@
 
 Two UIs ship today and users see both:
 
-- **React shell** (ui/, oc.shippedit.dev) — Work/Goals/Runs, dark sidebar,
+- **React shell** (ui/, oc.example.com) — Work/Goals/Runs, dark sidebar,
   the "good" UI.
 - **Python opsview** (services/opsview/views.py) — Devices, Sandboxes,
   Approvals, Router, Audit, Overview, Automations, Skills — a different

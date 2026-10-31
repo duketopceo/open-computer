@@ -87,7 +87,7 @@ itself authenticates.
   from the authenticated credential, not a form field — self-approval
   stays structurally impossible.
 - **rp_id nuance**: passkeys are origin-scoped — a credential enrolled on
-  `oc.shippedit.dev` won't assert on `omarchy-max.tailaf1559.ts.net`.
+  `oc.example.com` won't assert on `dev-host.your-tailnet.ts.net`.
   Both origins get their own enrollment (register once per origin — the
   app detects unenrolled-authed-perimeter and offers enrollment).
 
@@ -146,8 +146,8 @@ T-4191 subtask-3  frontier — claude-opus     [diff ▾]  a=approve r=reject
 T-4192 subtask-1  egress +pypi.org           [diff ▾]  a=approve r=reject
 
 DECIDED (20)
-07:41 approved  frontier — gpt-5.2        by luke@m1   2.1s
-07:40 rejected  egress +raw.github…       by luke@m1
+07:41 approved  frontier — gpt-5.2        by operator@host   2.1s
+07:40 rejected  egress +raw.github…       by operator@host
 07:38 BLOCKED   pii prefilter — ssn       auto
 ```
 

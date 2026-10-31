@@ -7,7 +7,7 @@ passkey-gated, task-centric, every view behind a real backend.
 ## Ordering
 
 ```
-F-AUTH (passkey gate)   — urgent: oc.shippedit.dev is live but bare
+F-AUTH (passkey gate)   — urgent: oc.example.com is live but bare
 F1 shell + ops views    — no new backend deps
 U5 placement ─┐
               ├─► U6 orchestrator ──► U7 Khan+Temporal
@@ -28,13 +28,13 @@ The app authenticates itself; perimeter stacks on top.
   page only
 - Enrollment: app refuses non-loopback bind until ≥1 credential;
   enrollment allowed on loopback or behind verified perimeter
-- rp_id per origin — `oc.shippedit.dev` and the tailnet host get
+- rp_id per origin — `oc.example.com` and the tailnet host get
   separate enrollments; app offers enrollment when perimeter-authed but
   credential-less
 - Approver identity = authenticated credential handle (records into gate
   audit); self-approval stays structurally impossible
 
-Done when: `oc.shippedit.dev` serves the ceremony page to strangers,
+Done when: `oc.example.com` serves the ceremony page to strangers,
 asserts with the platform passkey, session survives reload, and a
 non-enrolled origin offers enrollment only behind the perimeter.
 

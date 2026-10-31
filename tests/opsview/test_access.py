@@ -8,7 +8,7 @@ from services.opsview import server
 
 
 def test_access_identity_mints_session(console, monkeypatch):
-    monkeypatch.setattr(server, "access_identity", lambda tok: "luke@bartlettroofs.com")
+    monkeypatch.setattr(server, "access_identity", lambda tok: "operator@example.com")
     status, headers, _ = console.get(
         "/", cookie=False, headers={"Host": "remote.test", "Cookie": "CF_Authorization=tok123"}
     )
@@ -18,7 +18,7 @@ def test_access_identity_mints_session(console, monkeypatch):
 
 def test_access_session_round_trips(console, monkeypatch):
     """The minted cookie authenticates subsequent requests — no upstream call."""
-    monkeypatch.setattr(server, "access_identity", lambda tok: "luke@bartlettroofs.com")
+    monkeypatch.setattr(server, "access_identity", lambda tok: "operator@example.com")
     remote = {"Host": "remote.test"}
     status, headers, _ = console.get("/", cookie=False, headers={**remote, "Cookie": "CF_Authorization=tok123"})
     assert status == 200
@@ -58,10 +58,10 @@ def test_access_identity_unit(monkeypatch):
 
     def fake_open(req, timeout):
         assert req.headers["Cookie"] == "CF_Authorization=tok123"
-        return FakeResp(b'{"id":"u1","email":"Luke@BartlettRoofs.com"}')
+        return FakeResp(b'{"id":"u1","email":"Operator@Example.com"}')
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_open)
-    assert server.access_identity("tok123") == "luke@bartlettroofs.com"
+    assert server.access_identity("tok123") == "operator@example.com"
     assert server.access_identity("") is None
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: (_ for _ in ()).throw(OSError("down")))

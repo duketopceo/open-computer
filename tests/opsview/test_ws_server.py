@@ -191,7 +191,7 @@ def test_heartbeat_while_a_run_waits_on_a_human(wsx):
 def test_unauthenticated_stream_is_refused(wsx):
     # loopback is a trusted surface (auto-mints a local session) — an
     # unauthenticated request must come from a non-loopback host
-    s, h, _ = wsx.get("/goals/g_research01/events", cookie=False, headers={"Host": "oc.shippedit.dev"})
+    s, h, _ = wsx.get("/goals/g_research01/events", cookie=False, headers={"Host": "oc.example.com"})
     assert s == 302 and h["Location"] == "/login"
 
 
@@ -281,7 +281,7 @@ def test_every_workspace_post_needs_csrf_session_and_same_origin(wsx):
         assert s == 403, p
         # a truly unauthenticated request (non-loopback host) is refused outright
         s, _, _ = wsx.request(
-            "POST", p, body="{}", headers={"Content-Type": "application/json", "Host": "oc.shippedit.dev"}, cookie=False
+            "POST", p, body="{}", headers={"Content-Type": "application/json", "Host": "oc.example.com"}, cookie=False
         )
         assert s == 401, p
     assert routes.ws().log.goals() == []

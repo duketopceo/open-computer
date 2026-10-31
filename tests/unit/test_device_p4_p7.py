@@ -470,26 +470,26 @@ def test_p7_device_intake_direct_submit_and_offline_spool_flush(tmp_path: Path):
     # 1. Online voice intake -> submits directly to Orchestrator with origin='device'
     direct = intake.submit_goal(
         "Find my latest tax PDF and summarize it",
-        device_id="omarchy-laptop",
+        device_id="dev-laptop",
         origin="device",
         trigger="voice",
     )
     assert direct["status"] == "submitted" and not direct["queued"]
     assert direct["run_id"]
-    assert orch.run_meta(direct["run_id"]) == {"origin": "device", "device_id": "omarchy-laptop"}
+    assert orch.run_meta(direct["run_id"]) == {"origin": "device", "device_id": "dev-laptop"}
     assert intake.pending() == []
 
     # 2. Go offline -> hotkey and voice goals persist to offline_goals.json
     intake.set_online(False)
     sp1 = intake.submit_goal(
         "Clean up Downloads folder",
-        device_id="omarchy-laptop",
+        device_id="dev-laptop",
         origin="device",
         trigger="hotkey",
     )
     sp2 = intake.submit_goal(
         "Draft reply to latest email",
-        device_id="omarchy-laptop",
+        device_id="dev-laptop",
         origin="device",
         trigger="voice",
     )
@@ -516,7 +516,7 @@ def test_p7_device_intake_direct_submit_and_offline_spool_flush(tmp_path: Path):
     ]
     for f in flushed:
         assert f["status"] == "submitted" and f["run_id"]
-        assert orch.run_meta(f["run_id"]) == {"origin": "device", "device_id": "omarchy-laptop"}
+        assert orch.run_meta(f["run_id"]) == {"origin": "device", "device_id": "dev-laptop"}
 
     assert restarted_intake.pending() == []
     assert json.loads(spool_file.read_text(encoding="utf-8")) == []

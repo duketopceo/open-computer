@@ -21,7 +21,7 @@ No watchOS in phase one.
 
 ### Why now / verified context
 
-- The workplace console (oc.shippedit.dev) is live: goals → subtasks →
+- The workplace console (oc.example.com) is live: goals → subtasks →
   route → place → gate → sandbox → audit, Temporal durable drive, approval
   queue with hash-bound decisions, passkey + Cloudflare Access perimeter.
 - The one latency that matters in the system is **human**: a run parked
@@ -36,7 +36,7 @@ No watchOS in phase one.
 - **Notification actions** (Approve / Reject / Needs-info) that work from
   the notification itself — same hash-bound decision the console makes.
 - App: passkey sign-in via `ASAuthorizationPlatformPublicKeyCredential`
-  against `oc.shippedit.dev` (associated domains + the AASA file served
+  against `oc.example.com` (associated domains + the AASA file served
   by opsview), approval queue list, run detail.
 - Server side (new `services/push/`): device-token registry, APNs JWT
   (.p8 key in omaseal `apple/apns-key`), gate→push hook emitting

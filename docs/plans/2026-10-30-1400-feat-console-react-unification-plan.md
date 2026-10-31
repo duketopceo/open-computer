@@ -15,11 +15,11 @@ execution: code
 
 ## Goal Capsule
 
-- **Objective:** An operator opening oc.shippedit.dev sees one product: one look, one nav, every console page reachable and deep-linkable inside it.
+- **Objective:** An operator opening oc.example.com sees one product: one look, one nav, every console page reachable and deep-linkable inside it.
 - **Means:** Move every page into the React SPA in `ui/`; the Python server keeps serving JSON under `/api/` plus the SPA shell (KTD1, KTD2).
 - **Authority:** the owner decision of 2026-10-30 (unify; retire old pages in the PR that ships their replacement). Safety properties in R7 outrank convenience.
 - **Stop conditions:** stop and report if a ported page cannot keep a GET side-effect free, if a POST cannot stay CSRF-protected, or if the concurrent `feat/orchestrator-resume-console` work forces edits to `/work`, `/goals*`, `/runs*`, `/approvals` or `/api/agent-jobs*` in PR 1.
-- **Execution profile:** code; PR 1 ships through `ce-work` then review, no deploy to oc.shippedit.dev.
+- **Execution profile:** code; PR 1 ships through `ce-work` then review, no deploy to oc.example.com.
 - **Ships:** Luke merges; nothing here merges or deploys.
 
 ---
@@ -318,7 +318,7 @@ Run from the worktree root unless noted.
 
 - Global: U1-U7 complete; Verification Contract green locally and in CI on the final head; `/work`, `/goals*`, `/runs*`, `/approvals`, `/api/agent-jobs*` and agent-job UI untouched (`git diff --stat` shows none of their handlers or `AgentJobs` files); ROADMAP OC-053 updated; abandoned-attempt code removed from the diff.
 - Per unit: its test scenarios exist and pass; retired code is deleted, not commented out.
-- Not done: merge, deploy to oc.shippedit.dev (Luke's).
+- Not done: merge, deploy to oc.example.com (Luke's).
 
 ## Sources
 

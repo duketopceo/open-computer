@@ -141,14 +141,14 @@ the table rows keep their last verified state. Read [docs/FEATURES.md](docs/FEAT
 
 ## Open work
 
-As of 2026-10-30 none of the pull requests listed above are open; the only open PR is [#80](https://github.com/duketopceo/open-computer/pull/80), review fixes for the run sandbox lifecycle and dependency outputs. #75, #76 and #77 landed on `main` together as
+As of 2026-10-31 the pull requests listed above are all merged. The review fixes for the run sandbox lifecycle and dependency outputs landed in [#80](https://github.com/duketopceo/open-computer/pull/80). #75, #76 and #77 landed on `main` together as
 one squash commit (`4356ff5`). What is still to do:
 
 - **Observability Stage 3:** build the optional Postgres or Supabase sink from the merged plan. Open questions are
   in the plan's "Needs the maintainer" section. Later stages: vendor-neutral export recipes and console cost
   views read from the store (see the [plan](docs/plans/2026-10-28-001-feat-observability-and-cost-telemetry-plan.md)).
-- **Agent orchestrator, later slices:** sandbox launcher (sandbox-placed steps fail closed today), job resume,
-  console submit and approve view and a React trail view, production planner wiring, and a live acceptance run.
+- **Agent orchestrator, later slices:** a React trail view, production planner wiring, and a live acceptance run
+  (the sandbox launcher, job resume and a console approve view have merged: #84, #86).
   See [docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md](docs/plans/2026-10-29-001-feat-agent-orchestrator-plan.md).
 - **Goal runs end to end:** the fixes in #75 have not yet been confirmed by a real live run.
 ## Program tracks (post-MVP, 2026-10-30)
@@ -163,9 +163,9 @@ Plans in `docs/plans/` mapped to one board. Status verified against main.
 | Device plane | 2026-10-16-001, 2026-10-19-002 | mailbox, parked steps, transports shipped | — |
 | Observability + cost telemetry | 2026-10-28-001 | stages 1–2 live (#72, #73; Glitchtip + tallyline) | stage 3 sink, 4–5 |
 | Agent orchestrator | 2026-10-29-001, 2026-10-30-001 | merged (#77, #79, #80, #81) | — |
-| Effort composer | 2026-10-31-001 | OC-067 in review | decisions in the plan (default level, budgets, resume control, agent jobs) |
-| Unified UI shell | 2026-10-30-001 | PR #83 (legible output, friendly labels, live ticker) | U1 port operator pages → React, U2 step activity, U3 onboarding |
-| Run resilience | 2026-10-30-002 | planned (PR #87) | R1 transient retry + R2 requeue-on-outage ← **next** |
+| Effort composer | 2026-10-31-001 | OC-067 merged (#95) | decisions in the plan (default level, budgets, resume control, agent jobs) |
+| Unified UI shell | 2026-10-30-001, 2026-10-30-003 | merged: legible output (#83), React shell + pages (#85, #92, #93), Approvals card fields (#96) | finish the full move per 2026-10-30-003 (misc ops pages, cutover), U2 step activity, U3 onboarding |
+| Run resilience | 2026-10-30-002 | R1 + R2 merged (#89), R3 merged (#90) | R4 approval affordance for blocked egress ← **next**, then R5 planner determinism |
 
 ## Product direction (owner, 2026-10-11)
 
