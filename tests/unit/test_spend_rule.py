@@ -41,3 +41,24 @@ def test_no_effort_level_or_override_is_premium_and_default_is_not_the_top():
     assert [m for m in effort.models() if PREMIUM.match(m)] == []
     assert [lv.id for lv in effort.LEVELS if PREMIUM.match(lv.model)] == []
     assert effort.FALLBACK_DEFAULT != effort.LEVELS[-1].id
+
+
+def test_catalog_entries_are_not_premium_and_flagged_ones_are_never_a_default_place():
+    from services.opsview import effort
+    from services.router import model_catalog as mc
+    from services.orchestrator import engines
+    from services.agents.loop import DEFAULT_ORCHESTRATOR_MODEL
+
+    cat = mc.CATALOG
+    assert [e.id for e in cat.entries if PREMIUM.match(e.id)] == []  # covers z-ai/glm-5.3-flash (P16)
+    flagged = {e.id for e in cat.entries if e.above_ceiling}
+    in_default_places = {
+        DEFAULT_ORCHESTRATOR_MODEL,
+        mc.DEFAULT_WORKER_MODEL,
+        engines.work_fn.__defaults__[0],
+        *cat.presets.values(),
+        *(lv.model for lv in effort.LEVELS),
+        *effort.models(),
+        *(m for ms in TIER_MODELS.values() for m in ms),
+    }
+    assert flagged & in_default_places == set()

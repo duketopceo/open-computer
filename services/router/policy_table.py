@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+from .model_catalog import CATALOG, LOCAL_MODELS
+
 ROUTES = {
     "launch": "open, start, or close an application and nothing else",
     "tool": "a desktop/system action — window ops, workspace switch, type text, screenshot, notify, run a command, find files",
@@ -43,13 +45,9 @@ QUESTIONS = {
     },
 }
 
-# tier -> candidate models the placement layer may bind to
-TIER_MODELS = {
-    "local": ["typesafe/jev-1.13", "local/ollama"],
-    "cheap": ["google/gemini-2.5-flash", "deepseek/deepseek-v4.1-flash"],
-    "mid": ["deepseek/deepseek-v4-pro", "x-ai/grok-4.7"],
-    "frontier": ["x-ai/grok-4.7"],  # price ceiling; premium models are never a default
-}
+# tier -> candidate models the placement layer may bind to. The cloud tiers come from the curated catalog
+# (services/router/model_catalog.json); only the local tier is a separate list (gated by OC_LOCAL_MODELS).
+TIER_MODELS = {"local": list(LOCAL_MODELS), **CATALOG.tier_models()}
 
 _KW = [
     (re.compile(r"\b(agent|spawn|delegate|background)\b", re.I), "agent"),

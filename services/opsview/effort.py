@@ -1,8 +1,9 @@
 """Effort levels: one pick that chooses the model and the per-run budget.
 
 The composer shows Low / Medium / High instead of a list of settings. Each level names a router tier
-(`services.router.policy_table.TIERS`); the model is that tier's first candidate in `TIER_MODELS`, so the
-spend rule (ROADMAP.md, enforced by tests/unit/test_spend_rule.py) governs it. The per-run budget is a
+(`services.router.policy_table.TIERS`); the model is the level's preset in the curated catalog
+(`services/router/model_catalog.json`), so the spend rule (ROADMAP.md, enforced by tests/unit/test_spend_rule.py
+and the catalog loader) governs it. The per-run budget is a
 hard cap on a `CostLedger` that pauses the run, and is never above the daily cap (`OC_DAILY_CAP`).
 
 The optional advanced override (a model from the three below, a smaller or larger budget) goes through
@@ -14,7 +15,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from services.router.policy_table import TIER_MODELS
+from services.router.model_catalog import CATALOG
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class Level:
 
     @property
     def model(self) -> str:
-        return TIER_MODELS[self.tier][0]
+        return CATALOG.preset(self.id)
 
 
 LEVELS: tuple[Level, ...] = (
