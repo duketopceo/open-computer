@@ -149,7 +149,7 @@ export default function App() {
 
   // Poll: runs rail + selected run. Fast while a run is active, slow when idle;
   // backs off while the link is down, stops once the session is gone.
-  const active = !!run?.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED" || s.state === "QUEUED");
+  const active = !!run?.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED" || s.state === "QUEUED" || s.state === "AWAITING-APPROVAL");
   useEffect(() => {
     if (link === "auth") return;
     const ms = pollMs(link, active);

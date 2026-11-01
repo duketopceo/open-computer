@@ -50,9 +50,25 @@ temporary infra outage is not a step failure.
 
 ### R4 — Approval affordance for blocked egress
 
-Blocked `needs_egress` steps should surface an "Approve host" action:
-the gate already exists (`/approvals`), the run view just needs a link
-that pre-fills the host. Turns a dead run into a one-click continue.
+Shipped. Two parts:
+
+- **Default allowlist.** `services/execplane/egress_defaults.py` lists the public hosts goal runs
+  reach as a matter of course (DuckDuckGo and Google search, GitHub, `raw.githubusercontent.com`,
+  OpenRouter). `OC_EGRESS_ALLOW` (comma-separated exact hostnames) adds the owner's own domains; no
+  personal domain is hardcoded. `PolicyEngine.allowed_egress()` merges defaults with human grants, and
+  both placement and the sandbox-create binding read it, so a default host is audited as
+  `default:builtin` / `default:env`, never as a human decision. `approved_egress()` still returns
+  human grants only.
+- **One up-front approval.** After the planner returns, the orchestrator collects every host the plan
+  needs that nothing approves and raises ONE Approvals queue item listing them all
+  (`services/orchestrator/egress.py`). Steps that need those hosts are held and show
+  `AWAITING-APPROVAL` ("waiting for approval to reach …") with a link to `/approvals`; they never
+  show FAILED while the card is open. Approving applies the grant to the S5 policy first, then records
+  the decision (`ApprovalQueue.decide(before_approve=…)`), and the drive loop dispatches the held
+  steps. Sending the card back grants nothing; the steps then block with the usual placement reason.
+  Only plain public hostnames are ever put to a human (no IP literals, localhost or wildcards).
+  `OC_EGRESS_APPROVAL_WAIT_S` (default 86400) bounds how long a drive thread waits; a restart re-drives
+  the run from disk.
 
 ### R5 — Planner determinism for common goals
 

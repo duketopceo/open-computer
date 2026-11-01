@@ -19,6 +19,7 @@ from typing import Callable
 
 from oc.fsproto import adapter as fs_adapter
 from services.orchestrator import Orchestrator
+from services.orchestrator.egress import live_egress, requested_hosts
 from services.orchestrator.runcfg import create_ledger, effort_row, ledger_for, model_of
 from services.orchestrator.thinking import PLAN, ThinkingLog, join_thoughts
 from services.placement import place_live
@@ -59,6 +60,36 @@ def _task_state(run_dir: Path, tid: str) -> str:
     return "QUEUED"
 
 
+def _held_steps(run_dir: Path, rows: list[dict]) -> list[dict]:
+    """Planned steps still waiting on the run's up-front egress approval: not dispatched, not failed.
+
+    Empty unless the run asked for an approval and the queue still shows it pending (read from disk, so a
+    restarted console renders the same words)."""
+    from services.gate.queue import ApprovalQueue, default_approvals_path
+
+    req = next((r for r in rows if r.get("event") == "egress_approval_requested"), None)
+    plan = run_dir / "plan.json"
+    if req is None or not plan.exists():
+        return []
+    try:
+        item = ApprovalQueue(default_approvals_path()).get(req.get("approval", ""))
+    except OSError:
+        return []  # an unreadable queue must not take the run list down
+    if item is None or item["status"] != "pending":
+        return []
+    sent = {r.get("subtask") for r in rows if r.get("event") == "dispatch"}
+    hosts = set(req.get("hosts") or [])
+    try:
+        subs = json.loads(plan.read_text())
+    except ValueError:
+        return []
+    return [
+        {"sub": s, "approval": req["approval"], "hosts": sorted(hosts & set(requested_hosts(s)))}
+        for s in subs
+        if s["id"] not in sent and hosts & set(requested_hosts(s))
+    ]
+
+
 def list_runs() -> list[dict]:
     """Recent runs, newest first — literal disk state only."""
     base = runs_dir()
@@ -81,7 +112,9 @@ def list_runs() -> list[dict]:
                 st = _task_state(d, r["task"])
                 states[st] = states.get(st, 0) + 1
         undispatched = (submit or {}).get("subtasks", 0) - sum(states.values())
-        states["QUEUED"] += max(0, undispatched)
+        held = len(_held_steps(d, rows))
+        states["AWAITING-APPROVAL"] += min(held, max(0, undispatched))
+        states["QUEUED"] += max(0, undispatched - held)
         anchor = submit or failed
         out.append(
             {
@@ -158,6 +191,18 @@ def get_run(run_id: str) -> dict | None:
         if tid in thoughts:
             rec["thinking"] = join_thoughts(thoughts[tid])
         subs.append(rec)
+    for h in _held_steps(d, rows):
+        subs.append(
+            {
+                "subtask": h["sub"]["id"],
+                "title": h["sub"]["title"],
+                "state": "AWAITING-APPROVAL",
+                "placement": "-",
+                "reason": "waiting for approval to reach " + ", ".join(h["hosts"]),
+                "approval": h["approval"],
+                "hosts": h["hosts"],
+            }
+        )
     out = {
         "run": run_id,
         "goal": (submit or failed or {}).get("goal", ""),
@@ -212,7 +257,7 @@ def submit(
     run_dir = runs_dir() / rid
     run_dir.mkdir(parents=True, exist_ok=True)
     ledger = create_ledger(run_dir, rid, budget, by or "owner") if budget is not None else None
-    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger)
+    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger, egress=live_egress())
     if budget is not None:
         orch.audit.append({"event": "effort_set", "run": rid, "effort": effort, "model": model, "budget": budget})
     with _lock:
@@ -233,13 +278,22 @@ def submit(
     return rid
 
 
+def egress_wait_s() -> float:
+    """How long a run waits on its up-front egress approval before the drive stops (a restart re-drives it)."""
+    try:
+        v = float(os.environ.get("OC_EGRESS_APPROVAL_WAIT_S", 86400))
+    except ValueError:
+        return 86400.0
+    return v if 0 < v < float("inf") else 86400.0
+
+
 def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object]) -> None:
     try:
         for _ in range(400):
             res = orch.results(rid)
             if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
                 break
-            if not orch.work(wfn):
+            if not orch.work(wfn) and not orch.wait_for_egress(rid, timeout=egress_wait_s()):
                 break
     except Exception:
         pass  # the audit rows + task files on disk remain the truth
@@ -267,7 +321,7 @@ def resume(wfn, wfn_for_model: Callable[[str], Callable[[dict], object]] | None 
         if not d.is_dir():
             continue
         try:
-            orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d))
+            orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d), egress=live_egress())
             if not orch.recover(d.name):
                 continue
             res = orch.results(d.name)

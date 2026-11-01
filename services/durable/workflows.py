@@ -15,9 +15,10 @@ from temporalio.common import RetryPolicy
 
 # Activity impls live in services/durable/activities.py (sandbox-safe passthrough).
 with workflow.unsafe.imports_passed_through():
-    from .activities import run_status, submit_goal, work_sweep  # noqa: F401
+    from .activities import HELD, run_status, submit_goal, work_sweep  # noqa: F401
 
 TASK_QUEUE = "oc-goals"
+HELD_POLL_S = 60  # how often a run waiting on an egress approval re-checks it
 
 
 @dataclass
@@ -52,6 +53,10 @@ class GoalRunWorkflow:
                 start_to_close_timeout=timedelta(seconds=300),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
+            if n == HELD:
+                # waiting on a human's egress approval: sleep in the workflow, holding no activity thread
+                await workflow.sleep(timedelta(seconds=HELD_POLL_S))
+                continue
             if n == 0:
                 # nothing pending: terminal or dep-blocked — literal either way
                 return await workflow.execute_activity(

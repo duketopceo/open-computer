@@ -14,14 +14,18 @@ from pathlib import Path
 from temporalio import activity
 
 from services.orchestrator import Orchestrator
+from services.orchestrator.egress import live_egress
 from services.orchestrator.engines import decompose_engine, work_fn as _engine_work_fn
 from services.orchestrator.runcfg import ledger_for, model_of
 from services.placement import place_live
 
 
+HELD = -1  # work_sweep result: steps are waiting on the run's egress approval (not finished, not failed)
+
+
 def _recover(run_dir: str) -> tuple[Orchestrator, str | None]:
     """Fresh-process view of a run: plan.json + audit rows on disk."""
-    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger_for(run_dir))
+    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger_for(run_dir), egress=live_egress())
     rid = next(
         (r["run"] for r in reversed(orch.audit.rows()) if r.get("event") == "run_submit"),
         None,
@@ -34,10 +38,16 @@ def _recover(run_dir: str) -> tuple[Orchestrator, str | None]:
 @activity.defn
 def work_sweep(run_dir: str) -> int:
     """One sweep: claim pending, execute, tombstone, dispatch unblocked.
-    Returns completed-task count (0 = nothing pending)."""
-    orch, _ = _recover(run_dir)
+    Returns completed-task count (0 = nothing pending), or HELD while steps wait on an egress approval."""
+    orch, rid = _recover(run_dir)
     model = model_of(orch.audit.rows())  # a run started with an effort keeps its model across workers
-    return len(orch.work(_engine_work_fn(model) if model else _engine_work_fn()))
+    done = orch.work(_engine_work_fn(model) if model else _engine_work_fn())
+    if not done and rid:
+        if orch.wait_for_egress(rid, timeout=0):  # decided since the sweep began: held steps dispatched now
+            return 1
+        if orch.egress_pending(rid):
+            return HELD  # never block an activity thread on a human: the workflow sleeps and sweeps again
+    return len(done)
 
 
 @activity.defn
@@ -52,7 +62,7 @@ def submit_goal(goal: str, by: str) -> dict:
     goals = Path(os.environ.get("OC_GOALS_DIR", str(Path.home() / ".local/share/oc/goals")))
     run_dir = goals / rid
     run_dir.mkdir(parents=True, exist_ok=True)
-    orch = Orchestrator(run_dir, place_fn=place_live)
+    orch = Orchestrator(run_dir, place_fn=place_live, egress=live_egress())
     orch.submit(goal, decompose_engine(), run_id=rid)
     orch.audit.append({"event": "goal_by", "run": rid, "by": by})
     return {"run_dir": str(run_dir), "run_id": rid}

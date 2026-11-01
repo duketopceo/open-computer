@@ -86,6 +86,14 @@ function SubTaskRow({ s }: { s: SubTask }) {
           {s.pii && <span className="text-accent">· private</span>}
         </p>
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
+        {s.state === "AWAITING-APPROVAL" && (
+          <p className="mt-1 text-xs text-accent">
+            {s.reason}.{" "}
+            <a href="/approvals" className="font-medium underline underline-offset-2">
+              Review the approval
+            </a>
+          </p>
+        )}
         {s.state === "FAILED" && (
           <p className="mt-1 text-xs text-urgent">
             {errorKind(s.error_kind)}: {s.error}

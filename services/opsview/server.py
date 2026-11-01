@@ -33,9 +33,9 @@ from urllib.parse import parse_qs, urlparse
 
 from oc.obs import bind, get_logger
 from services.gate.gate import Gate
-from services.gate.queue import ApprovalQueue, QueueError
+from services.gate.queue import ApprovalQueue, QueueError, default_approvals_path
 from services.agents.approvals import ApprovalError
-from services.opsview.agentgrants import GrantError
+from services.opsview.agentgrants import GrantError, grant_run_hosts
 from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns
 from services.opsview import runs as runstore
 from services.opsview import views
@@ -137,7 +137,7 @@ def audit_path() -> Path:
 
 
 def approvals_path() -> Path:
-    return Path(os.environ.get("OC_APPROVALS", "/tmp/oc-audit/approvals.ndjson"))
+    return default_approvals_path()
 
 
 def oc_root() -> Path:
@@ -949,18 +949,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def _decide(self, who, body, id, approve: bool):
         gate = Gate(audit_path())
+        queue = ApprovalQueue(approvals_path(), gate)
+        item = queue.get(id)
+        # An approved run-level egress request grants its hosts first; a refused grant leaves it pending.
+        grant = grant_run_hosts if item is not None and (item.get("payload") or {}).get("kind") == "egress" else None
         try:
-            res = ApprovalQueue(approvals_path(), gate).decide(
+            res = queue.decide(
                 id,
                 approve=approve,
                 by=who,
                 note=str(body.get("note", "")),
                 expect_hash=str(body["hash"]) if body.get("hash") else None,
+                before_approve=grant,
             )
-        except QueueError as e:
+        except (QueueError, GrantError) as e:
+            status = e.status if isinstance(e, QueueError) else 500
             if self._wants_json():
-                return self._json(e.status, {"error": str(e)})
-            return self._page("approvals", f'<p class="err" role="alert">{views.e(str(e))}</p>', e.status)
+                return self._json(status, {"error": str(e)})
+            return self._page("approvals", f'<p class="err" role="alert">{views.e(str(e))}</p>', status)
         if self._wants_json():
             return self._json(200, {"ok": True, **res})
         self._redirect("/approvals", 303)

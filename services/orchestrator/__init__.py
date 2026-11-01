@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from services.router import adapter as router_adapter
 from .collect import collect_run, task_state
 from .decompose import DEP_OUTPUT_CAP, DecomposeError, decompose
 from .dispatch import dispatch
+from .egress import EgressApproval, requested_hosts
 from .runner import WorkResult, run_once
 from .thinking import PLAN, ThinkingLog, join_thoughts
 
@@ -48,7 +50,8 @@ __all__ = [
 class Orchestrator:
     """goal -> dispatched subtask DAG -> collected results."""
 
-    def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None, devices=None):
+    def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None, devices=None,
+                 egress: EgressApproval | None = None):
         root = Path(root)
         self.root = root
         self.fs = fs_adapter(root / "run")
@@ -66,6 +69,8 @@ class Orchestrator:
         self._tid_by_sub: dict[str, dict[str, str]] = {}  # run_id -> sid -> tid
         self._run_meta: dict[str, dict] = {}  # run_id -> {"origin": ..., "device_id": ...}
         self._chat: dict[str, str] = {}  # run_id -> chat id (OpenRouter session / per-chat cost views)
+        self.egress = egress  # up-front approval for hosts the plan needs (R4); None = steps just block
+        self._egress_req: dict[str, dict] = {}  # run_id -> {"approval": id, "hosts": [...]}
 
     def drain_parked(self, *, now: float | None = None) -> list[dict]:
         """Drain tasks queued in `device/parked` into eligible `device/<device_id>` mailboxes."""
@@ -151,8 +156,82 @@ class Orchestrator:
         tmp = self.root / "plan.json.tmp"
         tmp.write_text(json.dumps(subs))
         os.replace(tmp, self.root / "plan.json")
+        self._request_egress(run_id, goal, subs)
         self.dispatch_ready(run_id)
         return run_id
+
+    def _request_egress(self, run_id: str, goal: str, subs: list[dict]) -> None:
+        """Raise ONE approval for every unapproved host the plan needs. Never fails the run: an unreachable
+        queue leaves the steps to block with the placement reason, as before."""
+        if self.egress is None:
+            return
+        try:
+            hosts = self.egress.unapproved(subs)
+            if not hosts:
+                return
+            aid = self.egress.request(run_id, goal, hosts)
+        except Exception as e:  # noqa: BLE001 - approvals are best-effort; the placement block is the fallback
+            log.error("egress approval could not be requested", **error_fields(e))
+            return
+        try:
+            self.audit.append({"event": "egress_approval_requested", "run": run_id, "approval": aid, "hosts": hosts})
+        except Exception as e:  # noqa: BLE001 - without the audit row a restart cannot rebuild the hold: close the card
+            log.error("egress approval not recorded; closing it", approval=aid, **error_fields(e))
+            self._cancel_egress(aid)
+            return
+        self._egress_req[run_id] = {"approval": aid, "hosts": hosts}
+        log.info("egress approval requested", approval=aid, hosts=hosts)
+
+    def _cancel_egress(self, approval_id: str) -> None:
+        try:
+            self.egress.cancel(approval_id)
+        except Exception as e:  # noqa: BLE001 - already decided or queue unreadable: nothing more to close
+            log.warning("egress approval not closed", approval=approval_id, **error_fields(e))
+
+    def _egress_hold(self, run_id: str) -> tuple[bool, list[str]]:
+        """(card still pending, hosts that still need that card). Another run's approval may have granted some
+        of the hosts since, so a pending card can have no hosts left to wait for."""
+        req = self._egress_req.get(run_id)
+        if req is None or self.egress is None:
+            return False, []
+        try:
+            if self.egress.status(req["approval"]) != "pending":
+                return False, []
+            live = self.egress.unapproved([{"needs_egress": True, "egress_hosts": req["hosts"]}])
+            return True, [h for h in req["hosts"] if h in live]
+        except Exception as e:  # noqa: BLE001 - keep holding: a step placed now would be tombstoned FAILED for good
+            log.error("egress approval status unreadable; holding steps", **error_fields(e))
+            return True, list(req["hosts"])
+
+    def egress_pending(self, run_id: str) -> list[str]:
+        """Hosts still waiting on a human decision for this run (empty once approved, denied or absent)."""
+        return self._egress_hold(run_id)[1]
+
+    def _close_unneeded_egress(self, run_id: str, subs: dict, tids: dict) -> None:
+        """No undispatched step needs the card any more (a dep failed, or the hosts were granted elsewhere):
+        close it so a late approval cannot grant hosts nothing is waiting for."""
+        pending, hosts = self._egress_hold(run_id)
+        if not pending:
+            return
+        waiting = {h for sid, s in subs.items() if sid not in tids for h in requested_hosts(s)}
+        if not waiting & set(hosts):
+            self._cancel_egress(self._egress_req[run_id]["approval"])
+
+    def wait_for_egress(self, run_id: str, timeout: float = 86400.0, poll: float = 2.0,
+                        sleep=time.sleep, clock=time.monotonic) -> bool:
+        """Block while the run's egress approval is pending, then dispatch the steps it was holding.
+
+        True when that dispatched something (the caller should sweep again); False when the run never asked
+        for an approval, nothing was left to dispatch, or `timeout` passed with no decision. A decision that
+        landed between the caller's last sweep and this call still dispatches — it is not missed."""
+        if run_id not in self._egress_req:
+            return False
+        deadline = clock() + timeout
+        while self.egress_pending(run_id):
+            if clock() >= deadline:
+                return False
+            sleep(poll)
+        return bool(self.dispatch_ready(run_id))
 
     def recover(self, run_id: str) -> bool:
         """Rebuild run state from disk so a restarted process can re-drive it.
@@ -178,6 +257,8 @@ class Orchestrator:
                 }
                 if r.get("chat"):
                     self._chat[run_id] = r["chat"]
+            elif r.get("event") == "egress_approval_requested" and r.get("run") == run_id:
+                self._egress_req[run_id] = {"approval": r["approval"], "hosts": list(r.get("hosts") or [])}
             elif r.get("event") == "dispatch" and r.get("run") == run_id:
                 self.dispatches[run_id].append(r)
                 self._tid_by_sub[run_id][r["subtask"]] = r["task"]
@@ -277,6 +358,7 @@ class Orchestrator:
         subs = self._subtasks[run_id]
         sent = self.dispatches[run_id]
         tids = self._tid_by_sub[run_id]
+        held = set(self.egress_pending(run_id))
         out = []
         progressed = True
         while progressed:
@@ -286,6 +368,8 @@ class Orchestrator:
                     continue  # dispatched already, or dep not dispatched yet
                 states = [self._dep_state(tids[d]) for d in sub["deps"]]
                 if all(st == "done" for st in states):
+                    if held & set(requested_hosts(sub)):
+                        continue  # waiting for the run's egress approval — not failed, retried next sweep
                     with_deps = self._with_dep_results(sub, tids)
                     if with_deps is None:
                         continue  # a dep's output isn't collectable yet — hold
@@ -311,6 +395,7 @@ class Orchestrator:
                 sent.append(rec)
                 out.append(rec)
                 progressed = True
+        self._close_unneeded_egress(run_id, subs, tids)
         return out
 
     def work(self, work_fn, agent: str = "worker", ttl: float = 60) -> list[str]:

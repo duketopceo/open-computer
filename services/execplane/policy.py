@@ -78,7 +78,7 @@ class PolicyEngine:
             raise PolicyDenied(f"policy change must be human-approved, got {approved_by!r}")
         self._applied.append({"id": proposal.id, "change": proposal.change, "ts": time.time()})
         data = json.dumps(self._applied, indent=2).encode()
-        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
         tmp.write_bytes(data)
         fd = os.open(tmp, os.O_RDONLY)
         os.fsync(fd)
@@ -102,6 +102,16 @@ class PolicyEngine:
         for entry in applied:
             for host in entry.get("change", {}).get("add_egress", []):
                 grants.setdefault(host, []).append(entry["id"])
+        return grants
+
+    def allowed_egress(self) -> dict[str, list[str]]:
+        """Every host a sandbox may reach: human grants (approved_egress) plus the built-in defaults and
+        OC_EGRESS_ALLOW (ids `default:*`, see egress_defaults). Placement and the create binding read this one set."""
+        from .egress_defaults import default_egress
+
+        grants = default_egress()
+        for host, ids in self.approved_egress().items():
+            grants.setdefault(host, []).extend(ids)
         return grants
 
 
@@ -129,7 +139,7 @@ def bind_egress(
     audit = AuditLog(
         audit_path or os.environ.get("OC_AUDIT") or engine.path.parent / "execplane-audit.ndjson"
     )
-    approved = engine.approved_egress()
+    approved = engine.allowed_egress()
     base = {"event": "execplane.sandbox_create", "backend": backend, "allowlist": list(allowlist)}
 
     def record(outcome: str, **kw) -> None:

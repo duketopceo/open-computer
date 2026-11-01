@@ -55,8 +55,8 @@ def place_live(subtask: dict, **kw):
 
 
 def approved_egress(policy_path=None) -> tuple[str, ...]:
-    """Hosts a human granted via PolicyEngine.add_egress — read at dispatch
-    time so a grant takes effect on the next step, not the next restart."""
+    """Hosts a step may reach: human grants plus the built-in defaults and OC_EGRESS_ALLOW — read at
+    dispatch time so a grant takes effect on the next step, not the next restart."""
     import os
     from pathlib import Path
 
@@ -65,4 +65,4 @@ def approved_egress(policy_path=None) -> tuple[str, ...]:
     if policy_path is None:
         root = Path(os.environ.get("OC_EXECPLANE_DIR", str(Path.home() / ".local/share/oc/execplane")))
         policy_path = root / "policy.json"
-    return tuple(PolicyEngine(policy_path).approved_egress())
+    return tuple(PolicyEngine(policy_path).allowed_egress())
