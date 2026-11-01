@@ -100,8 +100,9 @@ Flight Strip still governs the CLI, the approval TUI and the Developer area in S
 - **Depth and texture, CSS only:** a base canvas, a grain layer (inline SVG noise, 3-4% opacity), a soft radial glow behind the
   composer (accent at about 6%), a faint vignette, a translucent sidebar over the canvas, two shadow tiers, 1 px hairline borders.
   No image assets. Honour `prefers-reduced-motion` and `prefers-reduced-transparency`.
-- **Dark tokens (starting point, contrast-checked in the PR):** canvas `#0E1113`, surface `#161A1D`, raised `#1C2125`, ink `#E9ECEE`,
-  muted `#9AA5AD`, accent `#4CC27A`-family teal for "this is yours to act on".
+- **Tokens:** superseded 2026-10-31 by plan KTD11 (`docs/plans/2026-10-31-003-feat-chat-agent-product-plan.md`): the console shares
+  Tallyline's Silver Lining neutral tokens from `services/opsview/static/silver-lining.css`, dark and light, system default with a
+  toggle. The earlier charcoal and teal starting point is retired.
 - **Threads:** the owner's messages are compact; the agent's answer is a document-style block, not a bubble. Steps, tool calls and
   subagent work are collapsed cards that show real model, cost and time. Approvals are cards that show who asks, what leaves,
   where, cost, PII and the payload hash.

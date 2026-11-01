@@ -1,6 +1,6 @@
 # Roadmap
 
-One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-085` (there is no OC-056). Phases P0-P6 and
+One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-091` (there is no OC-056). Phases P0-P6 and
 the exit criteria below are the plan; this file is the status board and is updated by the PR that
 changes a unit's state. Anything contradicting `main` here is a bug in this file.
 
@@ -129,7 +129,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-069 | P3 | Run page truth: no false "private" label, show the served model | open |
 | OC-070 | P3 | Thread store, `/api/threads` and SSE stream, legacy runs read-through | open |
 | OC-071 | P3 | OpenRouter client: tool calling and streaming | open |
-| OC-072 | P3 | App shell: Perplexity-style nav, light and dark themes with texture, mobile | open |
+| OC-072 | P3 | App shell: Perplexity-style sidebar (New, Computer, Automations, Artifacts, Plugins; Pinned, Projects, Recents), texture, mobile | open |
 | OC-073 | P3 | Orchestrator turn loop: user-picked model, tools, budgets, approvals, steer, interrupt | open |
 | OC-074 | P3 | Built-in tools: sandbox, files, artifacts, ask the owner | open |
 | OC-075 | P3 | Web search and fetch tools | open |
@@ -139,10 +139,16 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-079 | P3 | Thread view: streaming chat, step and tool cards, inline approvals | open |
 | OC-080 | P3 | Settings and the Developer area | open |
 | OC-081 | P3 | Artifacts page | open |
-| OC-082 | P4 | MCP client and Connectors | open |
+| OC-082 | P4 | MCP client and the Plugins page (connectors and skills) | open |
 | OC-083 | P4 | Browser tool (builds on OC-045) | open |
 | OC-084 | P4 | Automations post to threads; retire the goal-run DAG | open |
 | OC-085 | P2 | `oc` CLI chat and threads (absorbs OC-039) | open |
+| OC-086 | P3 | Silver Lining neutral tokens as the one console theme (dark, light, system default plus toggle) | open |
+| OC-087 | P3 | Curated model catalog: orchestrator and worker pickers, ceiling and spend-rule test | open |
+| OC-088 | P3 | Home composer: Search or Computer mode, model and reasoning picker, worker picker, attach, chips | open |
+| OC-089 | P3 | Finish the React move: run pages ported, cutover, operator pages under Developer | open |
+| OC-090 | P3 | Projects, pinned threads, notifications bell and thread search | open |
+| OC-091 | P3 | Usage view from the cost ledger | open |
 
 ## Landed since 2026-10-14
 
@@ -187,7 +193,7 @@ Plans in `docs/plans/` mapped to one board. Status verified against main.
 | Observability + cost telemetry | 2026-10-28-001 | stages 1–2 live (#72, #73; Glitchtip + tallyline) | stage 3 sink, 4–5 |
 | Agent orchestrator | 2026-10-29-001, 2026-10-30-001 | merged (#77, #79, #80, #81) | — |
 | Effort composer | 2026-10-31-001 | OC-067 merged (#95) | folded into the chat product below |
-| Chat agent product | 2026-10-31-003 | planned (OC-068..OC-085) | Phase 0: OC-068 routing truth, OC-069 run page truth; then threads. Supersedes the nav and direction of 2026-10-31-002 (#97) |
+| Chat agent product | 2026-10-31-003 | planned (OC-068..OC-091) | Phase 0: OC-068 routing truth, OC-069 run page truth; then tokens, catalog and React move (OC-086, 087, 089), the shell, home composer, then threads. Supersedes the nav and direction of 2026-10-31-002 (#97) |
 | Unified UI shell | 2026-10-30-001, 2026-10-30-003 | merged: legible output (#83), React shell + pages (#85, #92, #93), Approvals card fields (#96) | finish the full move per 2026-10-30-003 (misc ops pages, cutover), U2 step activity, U3 onboarding |
 | Run resilience | 2026-10-30-002 | R1 + R2 merged (#89), R3 merged (#90) | R4 approval affordance for blocked egress ← **next**, then R5 planner determinism |
 

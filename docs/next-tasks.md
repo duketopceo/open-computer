@@ -20,7 +20,7 @@ The heaviest next tasks from `docs/plans/2026-10-31-003-feat-chat-agent-product-
 
 5. **App shell, nav, themes, texture, mobile (OC-072, U5).**
    - Files: new `ui/src/components/AppShell.tsx`, `ThreadList.tsx`, `ui/src/lib/theme.ts`; `ui/src/App.tsx`, `ui/src/main.tsx`, `ui/src/lib/nav.ts`, `ui/src/index.css`, `ui/tailwind.config.ts`; delete `ui/src/components/Sidebar.tsx`.
-   - Test: `tests/e2e/spa.e2e.mjs` and `console.e2e.mjs`: six nav entries, Cmd+K palette, 390 px layout, light and dark axe contrast, every old URL still resolves. Attach screenshots (light, dark, mobile) to the PR.
+   - Test: `tests/e2e/spa.e2e.mjs` and `console.e2e.mjs`: five primary nav entries (New, Computer, Automations, Artifacts, Plugins), Cmd+K palette, 390 px layout, light and dark axe contrast, every old URL still resolves. Attach screenshots (light, dark, mobile) to the PR.
 
 6. **Orchestrator turn loop (OC-073, U6).** The core of the product.
    - Files: new `services/threads/{loop,context,driver,policy}.py`; extract shared trail, approvals, replay and lease code out of `services/agents/` rather than copying it.
@@ -33,3 +33,8 @@ The heaviest next tasks from `docs/plans/2026-10-31-003-feat-chat-agent-product-
 8. **Thread view (OC-079, U12).** Streaming chat with collapsible step, tool and approval cards, steer and stop.
    - Files: new `ui/src/pages/Thread.tsx`, `ui/src/components/{MessageList,StepCard,ToolCard,ApprovalCard}.tsx`, `ui/src/lib/stream.ts`; `ui/src/components/Composer.tsx`.
    - Test: new `tests/e2e/thread.e2e.mjs`: streaming, reload rebuilds, steer, stop, approve and deny through the CSRF-checked routes, cap top-up banner, keyboard path, axe, 390 px.
+
+9. **UI-only units that need no thread backend (OC-086, OC-087, OC-089; plan U19, U20, U22).** Land these first for visible progress.
+   - U19: re-sync `services/opsview/static/silver-lining.css` from Tallyline's generated output and make the SPA use it (dark and light). Test: `tests/opsview/test_tokens.py`, both-mode axe at 390 and 1440.
+   - U20: `services/router/model_catalog.{json,py}` plus `tests/unit/test_model_catalog.py`; extend `tests/unit/test_spend_rule.py` to the catalog.
+   - U22: port `/runs/new` and `/runs/<id>`, route `/developer/...`, delete `console.css` and the `page_*` renderers; keep `tests/opsview/test_routing.py`, `test_get_side_effects.py` and `test_csrf.py` green.
