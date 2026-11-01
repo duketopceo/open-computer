@@ -72,7 +72,7 @@ def _canon(raw: dict, i: int) -> dict:
         "needs_sandbox": bool(raw.get("needs_sandbox", False)),
         "needs_egress": bool(raw.get("needs_egress", False)),
         "egress_hosts": [
-            h for h in (raw.get("egress_hosts") or []) if isinstance(h, str) and h.strip()
+            h.strip().lower() for h in (raw.get("egress_hosts") or []) if isinstance(h, str) and h.strip()
         ],
     }
     for k in (*DEVICE_NEEDS, "device_id", "capability", "kind", "app", "action"):

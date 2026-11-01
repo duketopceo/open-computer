@@ -18,6 +18,7 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from oc.obs import get_logger
@@ -26,6 +27,11 @@ from .gate import Gate, payload_hash  # noqa: F401  (payload_hash re-exported: t
 from .pii import scan
 
 log = get_logger("gate")
+
+
+def default_approvals_path() -> Path:
+    """The console's approvals file: OC_APPROVALS, else the audit dir."""
+    return Path(os.environ.get("OC_APPROVALS", "/tmp/oc-audit/approvals.ndjson"))
 
 
 class QueueError(Exception):
@@ -137,7 +143,10 @@ class ApprovalQueue:
         by: str,
         note: str = "",
         expect_hash: str | None = None,
+        before_approve: Callable[[dict], None] | None = None,
     ) -> dict:
+        """`before_approve(item)` runs for an approval only after the request is verified pending and hash-matched,
+        before anything is written: if it raises, the item stays pending and no approval exists."""
         assert self.gate is not None, "deciding needs a Gate"
         item = self.get(item_id)
         if item is None:
@@ -150,6 +159,8 @@ class ApprovalQueue:
         if not approve and not note:
             raise QueueError("Add a note so the agent knows what to change.", 422)
         payload = item["payload"]
+        if approve and before_approve is not None:
+            before_approve(item)
         try:
             if approve:
                 self.gate.grant(payload, by=by, approval_id=item_id, note=note)
