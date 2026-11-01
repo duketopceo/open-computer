@@ -1,0 +1,17 @@
+[Unit]
+Description=Open Computer private deployment runner bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/oc-private-runner/bridge.env
+ExecStart=%h/bin/oc-private-runner-bridge
+Restart=always
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

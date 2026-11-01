@@ -13,6 +13,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The deploy controller requires these three job names verbatim.
 jobs:
   python:
     name: python (ruff, pytest not live)
@@ -61,3 +62,14 @@ jobs:
         env:
           OC_PYTHON: uv run --locked python
         run: npm test
+
+  production-approval:
+    name: production approval
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [python, console-e2e]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Record approved commit
+        run: echo "Approved commit $GITHUB_SHA for production"

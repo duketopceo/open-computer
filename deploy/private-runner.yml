@@ -1,0 +1,47 @@
+# Install as .github/workflows/approved-deploy.yml in the PRIVATE control repo.
+# OC_CONTROLLER_SHA must be the full, reviewed commit containing the controller.
+name: approved deployment
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, oc-production]
+    timeout-minutes: 120
+    steps:
+      - name: Validate controller pin
+        env:
+          CONTROLLER_SHA: ${{ vars.OC_CONTROLLER_SHA }}
+        run: |
+          set -euo pipefail
+          [[ "$CONTROLLER_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "OC_CONTROLLER_SHA must be a full, reviewed commit SHA" >&2
+            exit 1
+          }
+      - name: Check out the pinned controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: duketopceo/open-computer
+          ref: ${{ vars.OC_CONTROLLER_SHA }}
+          path: controller
+          persist-credentials: false
+      - name: Request an approved deployment
+        env:
+          CONTROLLER_SHA: ${{ vars.OC_CONTROLLER_SHA }}
+          OC_DEPLOY_SSH_TARGET: ${{ vars.OC_DEPLOY_SSH_TARGET }}
+          OC_DEPLOY_KNOWN_HOSTS: ${{ vars.OC_DEPLOY_KNOWN_HOSTS }}
+          OC_DEPLOY_PUBLIC_KEY: ${{ vars.OC_DEPLOY_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$(git -C controller rev-parse HEAD)" == "$CONTROLLER_SHA" ]]
+          bash controller/deploy/private-deploy-ssh.sh
