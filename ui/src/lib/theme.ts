@@ -31,7 +31,3 @@ export function setTheme(theme: Theme): void {
     /* storage blocked: applies for this page only */
   }
 }
-
-export function nextTheme(cur: Theme): Theme {
-  return cur === "system" ? "light" : cur === "light" ? "dark" : "system";
-}
