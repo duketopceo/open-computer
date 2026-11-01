@@ -59,6 +59,18 @@ shrinks to those.
    PR (no dual-serve drift). Final PR deletes `views.py`'s
    silver-lining chrome + `console.css`.
 
+## Status (2026-10-31)
+
+| Slice | State |
+|---|---|
+| 1 Approvals | done (#92; card fields and j/k/a/r restored in #96) |
+| 2 Runs | list done (#93); `/runs/new` (matrix runner) and `/runs/<run_id>` still server-rendered |
+| 3 Goals | done (#93): `/goals` in React, `/goals/new` and `/goals/<id>` redirect into it |
+| 4 Overview | done (#93) |
+| 5 Automations + Skills | done (#93, CI fix #94) |
+| 6 Misc ops surfaces | `/fleet`, `/matrix`, `/gate`, `/ops` redirect into React routes; `/work` redirects; `/run` and `/route` are POST-only legacy; `/login`, `/enroll`, `/workspace` stay server-rendered |
+| 7 Cutover | open: the old `page_*` renderers are still in `views.py` (`page_work` has no caller), and the silver-lining chrome and `console.css` are not yet deleted |
+
 ## Constraints
 
 - No behavior changes to the gate, placement, or audit semantics —
