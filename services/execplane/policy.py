@@ -78,7 +78,7 @@ class PolicyEngine:
             raise PolicyDenied(f"policy change must be human-approved, got {approved_by!r}")
         self._applied.append({"id": proposal.id, "change": proposal.change, "ts": time.time()})
         data = json.dumps(self._applied, indent=2).encode()
-        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
         tmp.write_bytes(data)
         fd = os.open(tmp, os.O_RDONLY)
         os.fsync(fd)

@@ -71,7 +71,10 @@ def _held_steps(run_dir: Path, rows: list[dict]) -> list[dict]:
     plan = run_dir / "plan.json"
     if req is None or not plan.exists():
         return []
-    item = ApprovalQueue(default_approvals_path()).get(req.get("approval", ""))
+    try:
+        item = ApprovalQueue(default_approvals_path()).get(req.get("approval", ""))
+    except OSError:
+        return []  # an unreadable queue must not take the run list down
     if item is None or item["status"] != "pending":
         return []
     sent = {r.get("subtask") for r in rows if r.get("event") == "dispatch"}
@@ -281,7 +284,7 @@ def egress_wait_s() -> float:
         v = float(os.environ.get("OC_EGRESS_APPROVAL_WAIT_S", 86400))
     except ValueError:
         return 86400.0
-    return v if v > 0 else 86400.0
+    return v if 0 < v < float("inf") else 86400.0
 
 
 def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object]) -> None:

@@ -173,20 +173,49 @@ class Orchestrator:
         except Exception as e:  # noqa: BLE001 - approvals are best-effort; the placement block is the fallback
             log.error("egress approval could not be requested", **error_fields(e))
             return
+        try:
+            self.audit.append({"event": "egress_approval_requested", "run": run_id, "approval": aid, "hosts": hosts})
+        except Exception as e:  # noqa: BLE001 - without the audit row a restart cannot rebuild the hold: close the card
+            log.error("egress approval not recorded; closing it", approval=aid, **error_fields(e))
+            self._cancel_egress(aid)
+            return
         self._egress_req[run_id] = {"approval": aid, "hosts": hosts}
-        self.audit.append({"event": "egress_approval_requested", "run": run_id, "approval": aid, "hosts": hosts})
         log.info("egress approval requested", approval=aid, hosts=hosts)
+
+    def _cancel_egress(self, approval_id: str) -> None:
+        try:
+            self.egress.cancel(approval_id)
+        except Exception as e:  # noqa: BLE001 - already decided or queue unreadable: nothing more to close
+            log.warning("egress approval not closed", approval=approval_id, **error_fields(e))
+
+    def _egress_hold(self, run_id: str) -> tuple[bool, list[str]]:
+        """(card still pending, hosts that still need that card). Another run's approval may have granted some
+        of the hosts since, so a pending card can have no hosts left to wait for."""
+        req = self._egress_req.get(run_id)
+        if req is None or self.egress is None:
+            return False, []
+        try:
+            if self.egress.status(req["approval"]) != "pending":
+                return False, []
+            live = self.egress.unapproved([{"needs_egress": True, "egress_hosts": req["hosts"]}])
+            return True, [h for h in req["hosts"] if h in live]
+        except Exception as e:  # noqa: BLE001 - keep holding: a step placed now would be tombstoned FAILED for good
+            log.error("egress approval status unreadable; holding steps", **error_fields(e))
+            return True, list(req["hosts"])
 
     def egress_pending(self, run_id: str) -> list[str]:
         """Hosts still waiting on a human decision for this run (empty once approved, denied or absent)."""
-        req = self._egress_req.get(run_id)
-        if req is None or self.egress is None:
-            return []
-        try:
-            return req["hosts"] if self.egress.status(req["approval"]) == "pending" else []
-        except Exception as e:  # noqa: BLE001 - unreadable queue: stop holding, let placement decide
-            log.error("egress approval status unreadable", **error_fields(e))
-            return []
+        return self._egress_hold(run_id)[1]
+
+    def _close_unneeded_egress(self, run_id: str, subs: dict, tids: dict) -> None:
+        """No undispatched step needs the card any more (a dep failed, or the hosts were granted elsewhere):
+        close it so a late approval cannot grant hosts nothing is waiting for."""
+        pending, hosts = self._egress_hold(run_id)
+        if not pending:
+            return
+        waiting = {h for sid, s in subs.items() if sid not in tids for h in requested_hosts(s)}
+        if not waiting & set(hosts):
+            self._cancel_egress(self._egress_req[run_id]["approval"])
 
     def wait_for_egress(self, run_id: str, timeout: float = 86400.0, poll: float = 2.0,
                         sleep=time.sleep, clock=time.monotonic) -> bool:
@@ -366,6 +395,7 @@ class Orchestrator:
                 sent.append(rec)
                 out.append(rec)
                 progressed = True
+        self._close_unneeded_egress(run_id, subs, tids)
         return out
 
     def work(self, work_fn, agent: str = "worker", ttl: float = 60) -> list[str]:

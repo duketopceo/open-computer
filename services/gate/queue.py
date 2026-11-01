@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -27,6 +28,9 @@ from .gate import Gate, payload_hash  # noqa: F401  (payload_hash re-exported: t
 from .pii import scan
 
 log = get_logger("gate")
+
+
+_DECIDE_LOCK = threading.Lock()  # process-wide: the console builds a new ApprovalQueue per request
 
 
 def default_approvals_path() -> Path:
@@ -148,36 +152,37 @@ class ApprovalQueue:
         """`before_approve(item)` runs for an approval only after the request is verified pending and hash-matched,
         before anything is written: if it raises, the item stays pending and no approval exists."""
         assert self.gate is not None, "deciding needs a Gate"
-        item = self.get(item_id)
-        if item is None:
-            raise QueueError("No such approval.", 404)
-        if item["status"] != "pending":
-            raise QueueError(f"Already {item['status'].replace('_', ' ')}.", 409)
-        if expect_hash is not None and expect_hash != item["payload_hash"]:
-            raise QueueError("The request changed since you opened it. Reload and review it again.", 409)
-        note = note.strip()
-        if not approve and not note:
-            raise QueueError("Add a note so the agent knows what to change.", 422)
-        payload = item["payload"]
-        if approve and before_approve is not None:
-            before_approve(item)
-        try:
-            if approve:
-                self.gate.grant(payload, by=by, approval_id=item_id, note=note)
-            else:
-                self.gate.deny(payload, by=by, approval_id=item_id, note=note)
-        except ValueError as e:
-            raise QueueError(str(e), 409) from e
-        self._append(
-            {
-                "event": "decision",
-                "id": item_id,
-                "ts": time.time(),
-                "decision": "approved" if approve else "sent_back",
-                "by": by,
-                "note": note,
-            }
-        )
+        with _DECIDE_LOCK:  # check-pending, optional grant and decision are one step: no half-granted send-back
+            item = self.get(item_id)
+            if item is None:
+                raise QueueError("No such approval.", 404)
+            if item["status"] != "pending":
+                raise QueueError(f"Already {item['status'].replace('_', ' ')}.", 409)
+            if expect_hash is not None and expect_hash != item["payload_hash"]:
+                raise QueueError("The request changed since you opened it. Reload and review it again.", 409)
+            note = note.strip()
+            if not approve and not note:
+                raise QueueError("Add a note so the agent knows what to change.", 422)
+            payload = item["payload"]
+            if approve and before_approve is not None:
+                before_approve(item)
+            try:
+                if approve:
+                    self.gate.grant(payload, by=by, approval_id=item_id, note=note)
+                else:
+                    self.gate.deny(payload, by=by, approval_id=item_id, note=note)
+            except ValueError as e:
+                raise QueueError(str(e), 409) from e
+            self._append(
+                {
+                    "event": "decision",
+                    "id": item_id,
+                    "ts": time.time(),
+                    "decision": "approved" if approve else "sent_back",
+                    "by": by,
+                    "note": note,
+                }
+            )
         log.info("approval decided", approval_id=item_id, decision="approved" if approve else "sent_back", by=by)
         return {
             "id": item_id,

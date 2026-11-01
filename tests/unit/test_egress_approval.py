@@ -244,3 +244,128 @@ def test_tampered_or_invalid_payload_grants_nothing(env):
     with pytest.raises(GrantError):  # not an egress request at all
         grant_run_hosts({"payload": {"kind": "other"}, "payload_hash": payload_hash({"kind": "other"})})
     assert not policy_path().exists()
+
+
+def test_audit_failure_closes_the_card_so_it_cannot_be_approved_without_a_hold(env, monkeypatch):
+    o, _ = _orch(env)
+    real = o.audit.append
+
+    def flaky(row):
+        if row.get("event") == "egress_approval_requested":
+            raise OSError("disk full")
+        return real(row)
+
+    monkeypatch.setattr(o.audit, "append", flaky)
+    o.submit("g", lambda p: _plan(_step("a", ["kaggle.com"])))
+    assert _pending(env) == []  # superseded, not left dangling
+    item = next(i for i in _queue(env).items() if i["who"] == "orchestrator")
+    assert item["status"] == "superseded"
+
+
+def test_unreadable_approval_status_keeps_the_step_held_not_failed(env, monkeypatch):
+    o, egress = _orch(env)
+    rid = o.submit("g", lambda p: _plan(_step("a", ["kaggle.com"])))
+    with monkeypatch.context() as m:
+        m.setattr(egress, "status", lambda aid: (_ for _ in ()).throw(OSError("unreadable")))
+        assert o.dispatch_ready(rid) == [] and o.dispatches[rid] == []  # no tombstone: it can still run later
+    _approve(env, _pending(env)[0])
+    assert [d["subtask"] for d in o.dispatch_ready(rid)] == ["a"]
+
+
+def test_card_is_closed_when_a_failed_dep_leaves_nothing_waiting_for_it(env):
+    from services.opsview.agentgrants import policy_path
+
+    o, _ = _orch(env)
+    rid = o.submit("g", lambda p: _plan(_step("a", []), _step("b", ["kaggle.com"], ["a"])))
+    assert len(_pending(env)) == 1  # raised up front, before 'a' ran
+
+    def boom(task):
+        raise RuntimeError("step a broke")
+
+    o.work(boom)  # 'a' fails; 'b' is tombstoned as a dep-fail, so nothing needs the card
+    assert _pending(env) == []
+    item = next(i for i in _queue(env).items() if i["who"] == "orchestrator")
+    assert item["status"] == "superseded"
+    with pytest.raises(QueueError):  # a late approval is refused and grants nothing
+        _queue(env).decide(item["id"], approve=True, by="luke@test", expect_hash=item["payload_hash"],
+                           before_approve=grant_run_hosts)
+    assert not policy_path().exists()
+    assert o.results(rid)["b"]["state"] == "FAILED"
+
+
+def test_hosts_granted_by_another_runs_approval_release_this_runs_steps(env):
+    o1, _ = _orch(env, "run1")
+    o1.submit("g", lambda p: _plan(_step("a", ["kaggle.com"])))
+    o2, _ = _orch(env, "run2")
+    rid2 = o2.submit("g", lambda p: _plan(_step("a", ["kaggle.com"])))
+    first = next(i for i in _pending(env) if i["payload"]["run"] != rid2)
+    _approve(env, first)  # the human approves run1's card; kaggle.com is now granted
+    assert [d["subtask"] for d in o2.dispatch_ready(rid2)] == ["a"]  # run2 does not wait for a redundant decision
+    assert _pending(env) == []  # and its now-redundant card is closed
+
+
+def test_device_steps_never_ask_for_sandbox_egress(env):
+    o, _ = _orch(env)
+    step = {**_step("a", ["kaggle.com"]), "needs_local_app": True}
+    o.submit("g", lambda p: _plan(step))
+    assert _pending(env) == []
+
+
+def test_concurrent_approve_and_send_back_never_leave_a_grant_behind_a_send_back(env):
+    import threading
+
+    from services.execplane.policy import PolicyEngine
+    from services.opsview.agentgrants import policy_path
+
+    o, _ = _orch(env)
+    o.submit("g", lambda p: _plan(_step("a", ["kaggle.com"])))
+    item = _pending(env)[0]
+    results: list[str] = []
+
+    def go(approve: bool):
+        try:
+            _queue(env).decide(item["id"], approve=approve, by="luke@test", note="" if approve else "no",
+                               expect_hash=item["payload_hash"], before_approve=grant_run_hosts)
+            results.append("approved" if approve else "sent_back")
+        except QueueError:
+            results.append("refused")
+
+    ts = [threading.Thread(target=go, args=(i % 2 == 0,)) for i in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    decided = [r for r in results if r != "refused"]
+    assert len(decided) == 1  # exactly one decision wins
+    granted = policy_path().exists() and "kaggle.com" in PolicyEngine(policy_path()).approved_egress()
+    assert granted == (decided == ["approved"])
+
+
+def test_approving_an_env_allowed_host_still_records_a_human_grant(env, monkeypatch):
+    from services.execplane.policy import PolicyEngine
+    from services.opsview import agentgrants
+
+    monkeypatch.setenv("OC_EGRESS_ALLOW", "my-project.example.org")
+    agentgrants.grant_host({"host": "my-project.example.org"})
+    monkeypatch.delenv("OC_EGRESS_ALLOW")  # the env entry is removed later: the human grant must survive
+    assert "my-project.example.org" in PolicyEngine(agentgrants.policy_path()).approved_egress()
+
+
+def test_egress_wait_ignores_non_finite_or_bad_values(monkeypatch):
+    for bad in ("inf", "nan", "-5", "0", "soon"):
+        monkeypatch.setenv("OC_EGRESS_APPROVAL_WAIT_S", bad)
+        assert goalruns.egress_wait_s() == 86400.0
+    monkeypatch.setenv("OC_EGRESS_APPROVAL_WAIT_S", "30")
+    assert goalruns.egress_wait_s() == 30.0
+
+
+def test_unreadable_approvals_file_does_not_break_the_run_view(env, monkeypatch):
+    from services.gate import queue as qmod
+
+    rid = goalruns.submit("g", lambda p: _plan(_step("a", ["kaggle.com"])), lambda t: "out", by="t")
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(qmod.ApprovalQueue, "get", lambda self, i: (_ for _ in ()).throw(PermissionError("denied")))
+            assert goalruns.get_run(rid)["subtasks"] == []  # no held rows, but no crash either
+            assert any(r["run"] == rid for r in goalruns.list_runs())
+    finally:
+        _approve(env, _pending(env)[0])
+        goalruns._live.pop(rid, None)

@@ -20,7 +20,7 @@ from services.orchestrator.runcfg import ledger_for, model_of
 from services.placement import place_live
 
 
-_EGRESS_WAIT_S = 240.0  # under work_sweep's 300s start_to_close_timeout
+HELD = -1  # work_sweep result: steps are waiting on the run's egress approval (not finished, not failed)
 
 
 def _recover(run_dir: str) -> tuple[Orchestrator, str | None]:
@@ -38,14 +38,15 @@ def _recover(run_dir: str) -> tuple[Orchestrator, str | None]:
 @activity.defn
 def work_sweep(run_dir: str) -> int:
     """One sweep: claim pending, execute, tombstone, dispatch unblocked.
-    Returns completed-task count (0 = nothing pending)."""
+    Returns completed-task count (0 = nothing pending), or HELD while steps wait on an egress approval."""
     orch, rid = _recover(run_dir)
     model = model_of(orch.audit.rows())  # a run started with an effort keeps its model across workers
     done = orch.work(_engine_work_fn(model) if model else _engine_work_fn())
-    if not done and rid and (orch.wait_for_egress(rid, timeout=_EGRESS_WAIT_S) or orch.egress_pending(rid)):
-        # Steps were held for the run's egress approval (now dispatched, or still waiting): report
-        # progress so the workflow sweeps again instead of ending the run.
-        return 1
+    if not done and rid:
+        if orch.wait_for_egress(rid, timeout=0):  # decided since the sweep began: held steps dispatched now
+            return 1
+        if orch.egress_pending(rid):
+            return HELD  # never block an activity thread on a human: the workflow sleeps and sweeps again
     return len(done)
 
 

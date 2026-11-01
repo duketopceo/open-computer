@@ -251,8 +251,8 @@ def sandbox_work(
     script = re.sub(r"^```\w*\n?|\n?```$", "", script.strip()).strip()
     if not script:
         raise RuntimeError("script planner emitted empty output")
-    # S5: only hosts a human approved ever reach the payload — dispatch
-    # computes the effective set from the placement, empty = deny-all.
+    # S5: only approved hosts (a human grant, a built-in default or OC_EGRESS_ALLOW) ever reach
+    # the payload — dispatch computes the effective set from the placement, empty = deny-all.
     run_id = str(task.get("run") or "")
     hosts = set(task.get("egress_hosts") or [])
     b64 = base64.b64encode(script.encode()).decode()

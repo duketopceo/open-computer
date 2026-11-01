@@ -12,13 +12,17 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from services.gate.queue import ApprovalQueue, default_approvals_path
+from services.placement.rules import needs_device
 
 KIND = "egress"
 WHO = "orchestrator"
 
 
 def requested_hosts(sub: dict) -> list[str]:
-    return [h for h in (sub.get("egress_hosts") or []) if h] if sub.get("needs_egress") else []
+    """Hosts a step asks for. A device step runs on the user's machine and never uses sandbox egress."""
+    if needs_device(sub) or not sub.get("needs_egress"):
+        return []
+    return [h for h in (sub.get("egress_hosts") or []) if h]
 
 
 def is_hold_host(host: str) -> bool:
@@ -57,6 +61,10 @@ class EgressApproval:
             payload=payload,
             session=run_id,
         )
+
+    def cancel(self, approval_id: str) -> None:
+        """Close a card no run can use any more: approving it afterwards is refused (409), so it grants nothing."""
+        self.queue.supersede(approval_id, by=WHO)
 
     def status(self, approval_id: str) -> str:
         """pending | approved | sent_back | superseded | missing."""
