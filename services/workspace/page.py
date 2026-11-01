@@ -11,7 +11,7 @@ import json
 from services.opsview import registry, views
 
 e = views.e
-ASSET_V = "1"
+ASSET_V = "2"
 
 TABS = [
     ("progress", "Progress", "list"),
@@ -89,6 +89,7 @@ def render(h, goal: str | None, code: int = 200) -> str:
 <meta name="csrf-token" content="{e(h._csrf())}">
 <title>{"Not found" if code == 404 else "Workspace"} · open-computer</title>
 <link rel="stylesheet" href="/static/silver-lining.css?v={ASSET_V}">
+<link rel="stylesheet" href="/static/oc-scale.css?v={ASSET_V}">
 <link rel="stylesheet" href="/static/console.css?v={ASSET_V}">
 <link rel="stylesheet" href="/static/ws/workspace.css?v={ASSET_V}">
 <script src="/static/theme-init.js?v={ASSET_V}"></script>

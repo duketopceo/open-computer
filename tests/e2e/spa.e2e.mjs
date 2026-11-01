@@ -1065,3 +1065,37 @@ for (const w of [1440, 390]) {
     await ctx.close();
   });
 }
+
+// ---- Silver Lining tokens (U19): one token file, dark and light, system by default.
+const CANVAS = { dark: "rgb(9, 9, 9)", light: "rgb(245, 245, 245)" };
+const canvasOf = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+
+test("@theme system is the default and follows an emulated scheme change without reload", async () => {
+  const { ctx, page } = await open({ scheme: "light" });
+  assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), null);
+  assert.equal(await canvasOf(page), CANVAS.light);
+  await page.emulateMedia({ colorScheme: "dark" });
+  assert.equal(await canvasOf(page), CANVAS.dark);
+  await ctx.close();
+});
+
+test("@theme a stored dark choice wins over a light system and survives reload", async () => {
+  const { ctx, page } = await open({ scheme: "light", setup: (p) => p.addInitScript(() => localStorage.setItem("oc-theme", "dark")) });
+  assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), "dark");
+  assert.equal(await canvasOf(page), CANVAS.dark);
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await canvasOf(page), CANVAS.dark);
+  await ctx.close();
+});
+
+for (const scheme of ["dark", "light"]) {
+  test(`@theme a server-rendered page and the SPA share the ${scheme} canvas`, async () => {
+    const { ctx, page } = await open({ scheme });
+    const spa = await canvasOf(page);
+    await page.goto(base + "/runs/new", { waitUntil: "networkidle" });
+    const server = await canvasOf(page);
+    assert.equal(spa, CANVAS[scheme]);
+    assert.equal(server, CANVAS[scheme]);
+    await ctx.close();
+  });
+}

@@ -7,7 +7,7 @@ import { NavList } from "./NavList";
 export function Brand() {
   return (
     <span className="flex items-center gap-2">
-      <span className="grid h-6 w-6 place-items-center rounded-md bg-teal text-white">
+      <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-on-accent">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
           <path d="M4 5h16v12H4z M8 9h8M8 12h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -48,11 +48,11 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
     <div className="flex h-full flex-col md:flex-row">
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-20 focus:rounded-lg focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:shadow-card"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-20 focus:rounded-lg focus:bg-surface-1 focus:px-3 focus:py-2 focus:text-sm focus:shadow-card"
       >
         Skip to content
       </a>
-      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-line bg-white/60 md:flex">
+      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-line bg-surface-1 md:flex">
         <div className="px-4 py-4">
           <Brand />
         </div>
@@ -66,20 +66,20 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
         )}
       </aside>
 
-      <header className="flex items-center justify-between border-b border-line bg-white/60 px-4 py-3 md:hidden">
+      <header className="flex items-center justify-between border-b border-line bg-surface-1 px-4 py-3 md:hidden">
         <Brand />
         <button
           type="button"
           aria-expanded={open}
           aria-controls="mobile-nav"
           onClick={() => setOpen((o) => !o)}
-          className="h-9 rounded-lg border border-line bg-white px-3 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+          className="h-9 rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           {open ? "Close menu" : "Menu"}
         </button>
       </header>
       {open && (
-        <div id="mobile-nav" className="border-b border-line bg-white px-2 py-2 md:hidden">
+        <div id="mobile-nav" className="border-b border-line bg-surface-1 px-2 py-2 md:hidden">
           <NavList items={NAV} />
         </div>
       )}

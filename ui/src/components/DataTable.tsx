@@ -8,7 +8,7 @@ export function Table({ caption, head, children }: { caption: string; head: stri
       role="region"
       aria-label={caption}
       tabIndex={0}
-      className="overflow-x-auto rounded-2xl border border-line bg-white shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+      className="overflow-x-auto rounded-2xl border border-line bg-surface-1 shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <table className="w-full min-w-[34rem] text-left text-sm">
         <caption className="sr-only">{caption}</caption>
@@ -43,16 +43,16 @@ export function Time({ ts }: { ts: number }) {
 }
 
 const WORDS: Record<string, { glyph: string; cls: string }> = {
-  online: { glyph: "●", cls: "text-teal" },
-  asleep: { glyph: "◐", cls: "text-amber-700" },
+  online: { glyph: "●", cls: "text-accent" },
+  asleep: { glyph: "◐", cls: "text-attention" },
   offline: { glyph: "○", cls: "text-muted" },
-  allowed: { glyph: "✓", cls: "text-teal" },
-  approved: { glyph: "✓", cls: "text-teal" },
-  blocked: { glyph: "✕", cls: "text-red-700" },
-  "sent back": { glyph: "↩", cls: "text-amber-700" },
+  allowed: { glyph: "✓", cls: "text-accent" },
+  approved: { glyph: "✓", cls: "text-accent" },
+  blocked: { glyph: "✕", cls: "text-urgent" },
+  "sent back": { glyph: "↩", cls: "text-attention" },
   recorded: { glyph: "•", cls: "text-muted" },
-  up: { glyph: "●", cls: "text-teal" },
-  down: { glyph: "✕", cls: "text-red-700" },
+  up: { glyph: "●", cls: "text-accent" },
+  down: { glyph: "✕", cls: "text-urgent" },
 };
 
 /** State as glyph plus word, never colour alone. */
@@ -68,7 +68,7 @@ export function StatusWord({ word }: { word: string }) {
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line bg-white/60 p-6 text-sm">
+    <div className="rounded-2xl border border-dashed border-line bg-surface-1 p-6 text-sm">
       <p className="font-medium text-ink">{title}</p>
       {children && <p className="mt-1 max-w-xl text-muted">{children}</p>}
     </div>

@@ -8,13 +8,18 @@ export default defineConfig({
   plugins: [react()],
   base: "/",
   resolve: {
-    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // One token file feeds the SPA and the server-rendered pages (KTD11).
+      "@tokens": fileURLToPath(new URL("../services/opsview/static", import.meta.url)),
+    },
   },
   build: {
     outDir: "dist",
     emptyOutDir: true,
   },
   server: {
+    fs: { allow: [".."] },
     port: 5173,
     proxy: {
       "/api": "http://localhost:8791",

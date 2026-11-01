@@ -13,7 +13,10 @@ import Router from "./pages/Router";
 import Runs from "./pages/Runs";
 import SandboxDetail from "./pages/SandboxDetail";
 import Sandboxes from "./pages/Sandboxes";
+import { applyTheme, getTheme } from "./lib/theme";
 import "./index.css";
+
+applyTheme(getTheme());
 
 // Route table. `/` is the run-focused App, unchanged; every other page renders
 // inside PageShell. Ported pages are added here (and flipped to `spa: true` in
