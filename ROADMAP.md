@@ -149,6 +149,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-089 | P3 | Finish the React move: run pages ported, cutover, operator pages under Developer | open |
 | OC-090 | P3 | Projects, pinned threads, notifications bell and thread search | open |
 | OC-091 | P3 | Usage view from the cost ledger | open |
+| OC-092 | P3 | Cloudflare-hosted console frontend: Worker serves `ui/dist` and proxies `/api/*` (incl. SSE) to the tunnel, offline screen, Access policy | plan: docs/plans/2026-11-01-001-feat-cloudflare-hosted-frontend-plan.md (awaiting owner OK) |
 
 ## Landed since 2026-10-14
 
