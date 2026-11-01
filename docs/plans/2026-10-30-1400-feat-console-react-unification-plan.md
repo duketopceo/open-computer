@@ -11,6 +11,8 @@ execution: code
 
 **Scope of this document:** the full port plan (all page groups, ordered) plus an implementation-ready breakdown of PR 1 only. Later PRs are listed with their gates but are not planned to unit depth until they are next.
 
+**Status (2026-10-31):** PR 1 shipped as #85. The later port order here was superseded by `docs/plans/2026-10-30-003-feat-react-full-move-plan.md`, which shipped Approvals (#92) and Runs, Goals, Overview, Skills and Automations (#93, #94). Remaining work and its order live in that plan and in ROADMAP.md (OC-053).
+
 ---
 
 ## Goal Capsule
