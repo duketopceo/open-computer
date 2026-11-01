@@ -72,3 +72,11 @@ def test_advanced_override_picks_an_allowed_model_and_a_budget_within_the_cap():
 def test_resolve_refuses_unknown_premium_and_over_cap(args):
     with pytest.raises(ValueError):
         effort.resolve(*args, 1.0)
+
+
+def test_level_models_are_the_catalog_presets_and_none_is_above_the_ceiling():
+    from services.router.model_catalog import CATALOG
+
+    for lv in effort.LEVELS:
+        assert lv.model == CATALOG.preset(lv.id)
+        assert not CATALOG.get(lv.model).above_ceiling

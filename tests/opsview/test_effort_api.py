@@ -161,3 +161,19 @@ def test_resume_without_an_effort_uses_the_plain_worker_and_no_ledger(monkeypatc
     assert goalruns.resume(lambda t: "default", lambda m: pytest.fail("no model recorded")) == 1
     orch, _, wfn = started[0]
     assert wfn({}) == "default" and orch.ledger is None
+
+
+def test_models_endpoint_serves_the_catalog_with_prices_and_the_above_ceiling_mark(console, monkeypatch):
+    from services.router import model_catalog
+
+    monkeypatch.delenv("OC_LOCAL_MODELS", raising=False)
+    status, headers, body = console.get("/api/models")
+    d = json.loads(body)
+    assert status == 200 and headers["Content-Type"].startswith("application/json")
+    assert d["default_orchestrator"] == model_catalog.DEFAULT_ORCHESTRATOR_MODEL
+    assert d["default_worker"] == model_catalog.DEFAULT_WORKER_MODEL
+    by = {m["id"]: m for m in d["orchestrators"]}
+    assert by["x-ai/grok-4.7"]["above_ceiling"] is True and by["x-ai/grok-4.7"]["input_price"] > d["ceiling"]["input"]
+    assert by["deepseek/deepseek-v4-pro"]["above_ceiling"] is False
+    assert d["local"] == []
+    assert console.request("POST", "/api/models", body="{}", headers={TOKEN_HDR: console.csrf()})[0] in (404, 405)

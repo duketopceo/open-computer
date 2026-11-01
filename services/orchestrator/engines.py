@@ -28,6 +28,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from services.router.model_catalog import DEFAULT_WORKER_MODEL
+
 from services.openrouter import OpenRouterError, collect_usage, total_usage
 from services.openrouter import chat as or_chat
 
@@ -230,7 +232,7 @@ def _run_sandbox(plane, run_id: str, hosts: set[str]):
 
 def sandbox_work(
     task: dict,
-    model: str = "z-ai/glm-5.3-flash",
+    model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
     plane=None,
 ) -> str:
@@ -323,7 +325,7 @@ def _chat(url: str, model: str, prompt: str, key: str = "", timeout: float = 60.
 
 
 def decompose_engine(
-    model: str = "z-ai/glm-5.3-flash",
+    model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
 ) -> Callable[[str], str]:
     """Planner: one OpenRouter call, returns raw text for decompose()."""
@@ -368,7 +370,7 @@ def local_work(task: dict) -> str:
 
 
 def work_fn(
-    or_model: str = "z-ai/glm-5.3-flash",
+    or_model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
 ) -> Callable[[dict], str]:
     """The dispatched-task executor. Placement is honored, not decorative."""

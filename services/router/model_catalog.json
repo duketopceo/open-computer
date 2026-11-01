@@ -1,0 +1,13 @@
+{
+  "_note": "Curated model list (plan KTD14). Changed by a reviewed PR or an explicit hand edit, never at runtime. Prices are USD per Mtok from OpenRouter's published list on 2026-10-31 and only gate and display; recorded cost is the provider's. A model above the price ceiling needs `above_ceiling: true` here and is never a default, preset or tier member.",
+  "default_orchestrator": "deepseek/deepseek-v4-pro",
+  "default_worker": "z-ai/glm-5.3-flash",
+  "presets": {"low": "google/gemini-2.5-flash", "medium": "deepseek/deepseek-v4-pro", "high": "deepseek/deepseek-v4-pro"},
+  "models": [
+    {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash", "provider": "Google", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 0.30, "output_price": 2.50, "context": 1048576, "tiers": ["cheap"]},
+    {"id": "deepseek/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "provider": "DeepSeek", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 0.045, "output_price": 0.50, "context": 1048576, "tiers": ["cheap"]},
+    {"id": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro", "provider": "DeepSeek", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 1.60, "output_price": 3.20, "context": 1048576, "tiers": ["mid", "frontier"]},
+    {"id": "x-ai/grok-4.7", "label": "Grok 4.7", "provider": "xAI", "roles": ["orchestrator"], "tools": true, "input_price": 2.00, "output_price": 6.00, "context": 500000, "tiers": [], "above_ceiling": true},
+    {"id": "z-ai/glm-5.3-flash", "label": "GLM 5.3 Flash", "provider": "Z.ai", "roles": ["worker"], "tools": true, "input_price": 0.0147, "output_price": 0.1794, "context": 1048576, "tiers": []}
+  ]
+}

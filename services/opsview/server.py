@@ -42,6 +42,7 @@ from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import engines as goal_engines
+from services.router import model_catalog
 from services.workspace import routes as workspace
 
 log = get_logger("opsview")
@@ -299,6 +300,7 @@ GET_ROUTES = [
     (r"/assets/(?P<file>[^/]+)", "g_asset"),
     (r"/api/session", "g_api_session"),
     (r"/api/effort", "g_api_effort"),
+    (r"/api/models", "g_api_models"),
     (r"/api/runs", "g_api_runs"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
     (r"/api/agent-jobs", "g_api_agent_jobs"),
@@ -620,6 +622,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def g_api_effort(self, qs):
         self._json(200, effort.catalog(daily_cap()))
+
+    def g_api_models(self, qs):
+        self._json(200, model_catalog.payload())
 
     def g_api_runs(self, qs):
         self._json(200, {"runs": goalruns.list_runs()})
