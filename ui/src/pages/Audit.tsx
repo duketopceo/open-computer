@@ -44,7 +44,7 @@ export default function Audit() {
               aria-current={k === f ? "true" : undefined}
               className={cn(
                 "inline-flex h-7 items-center rounded-full border px-3 text-xs font-medium",
-                k === f ? "border-teal/30 bg-teal-soft text-teal" : "border-line text-muted hover:bg-black/5",
+                k === f ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:bg-surface-3",
               )}
             >
               {label}
@@ -62,7 +62,7 @@ export default function Audit() {
             onChange={(e) => setText(e.target.value)}
             maxLength={200}
             placeholder="Filter by text, session or model"
-            className="h-9 w-64 max-w-full rounded-lg border border-line bg-white px-3 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+            className="h-9 w-64 max-w-full rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           />
           <Button type="submit" variant="subtle">
             Filter

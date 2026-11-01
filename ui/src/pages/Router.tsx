@@ -71,7 +71,7 @@ export default function Router() {
             <p className="mt-1 text-sm text-muted">{dest}</p>
 
             {confirm ? (
-              <div className="mt-3 max-w-xl rounded-2xl border border-line bg-white p-4 shadow-card" role="group" aria-labelledby="ct">
+              <div className="mt-3 max-w-xl rounded-2xl border border-line bg-surface-1 p-4 shadow-card" role="group" aria-labelledby="ct">
                 <h3 id="ct" className="font-medium text-ink">
                   Send this to the decider?
                 </h3>
@@ -112,7 +112,7 @@ export default function Router() {
                   maxLength={500}
                   autoComplete="off"
                   placeholder="Describe a task to route"
-                  className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-white px-3 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 />
                 <Button type="submit" variant="primary" disabled={busy || !q.trim()} aria-busy={busy}>
                   Route {data.paid ? `~${money(data.per_route_cost)}` : "$0.00"}
@@ -121,12 +121,12 @@ export default function Router() {
             )}
 
             {failure && (
-              <p className="mt-3 max-w-xl rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+              <p className="mt-3 max-w-xl rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
                 {failure}
               </p>
             )}
             {result && (
-              <div className="mt-3 max-w-xl overflow-hidden rounded-2xl border border-line bg-white shadow-card">
+              <div className="mt-3 max-w-xl overflow-hidden rounded-2xl border border-line bg-surface-1 shadow-card">
                 <table className="w-full text-left text-sm" aria-label="Route result">
                   <tbody className="divide-y divide-line">
                     {(
@@ -155,7 +155,7 @@ export default function Router() {
               <label htmlFor="spend" className="text-xs text-muted">
                 Spent today {money(data.spend)} of {money(data.cap)} daily cap
               </label>
-              <progress id="spend" value={pct} max={1} className="mt-1 block h-2 w-full accent-teal">
+              <progress id="spend" value={pct} max={1} className="mt-1 block h-2 w-full accent-accent">
                 {Math.round(pct * 100)}%
               </progress>
             </div>

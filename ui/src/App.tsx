@@ -241,7 +241,7 @@ export default function App() {
         ) : (
         <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-6 py-10">
           {error && (
-            <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+            <p className="mb-4 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
               {error}
             </p>
           )}
@@ -259,7 +259,7 @@ export default function App() {
             <RunView run={run} />
           ) : selected && runError ? (
             <div className="flex flex-col items-center gap-3 text-center">
-              <p className="text-sm text-red-700" role="alert">
+              <p className="text-sm text-urgent" role="alert">
                 {runError}
               </p>
               <div className="flex gap-2">
@@ -273,7 +273,7 @@ export default function App() {
             </div>
           ) : selected ? (
             <div className="flex flex-col items-center gap-3 text-muted" role="status">
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/30 border-t-teal" />
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-accent" />
               <p className="text-sm">Loading run…</p>
             </div>
           ) : (
@@ -289,7 +289,7 @@ export default function App() {
                   <button
                     key={s.title}
                     onClick={() => setStarter(s.body)}
-                    className="rounded-xl border border-line bg-white p-3 text-left shadow-card transition-transform hover:-translate-y-0.5"
+                    className="rounded-xl border border-line bg-surface-1 p-3 text-left shadow-card transition-transform hover:-translate-y-0.5"
                   >
                     <p className="text-sm font-medium text-ink">{s.title}</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted">{s.body}</p>
@@ -309,7 +309,7 @@ function LinkBanner({ link }: { link: Exclude<Link, "ok"> }) {
   return (
     <div
       role="status"
-      className="sticky top-0 z-10 flex items-center justify-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+      className="sticky top-0 z-10 flex items-center justify-center gap-3 border-b border-attention bg-attention-soft px-4 py-2 text-sm text-attention"
     >
       {link === "auth" ? "Your session expired." : "Connection lost — retrying…"}
       <Button variant="subtle" className="h-7" onClick={() => window.location.reload()}>
@@ -335,9 +335,9 @@ function ConfirmCard({
   onCancel: () => void;
 }) {
   return (
-    <div className="mx-auto w-full max-w-xl animate-fade-up rounded-2xl border border-line bg-white p-5 shadow-card">
+    <div className="mx-auto w-full max-w-xl animate-fade-up rounded-2xl border border-line bg-surface-1 p-5 shadow-card">
       <h2 className="font-display text-xl text-ink">Run this?</h2>
-      <p className="mt-2 text-sm text-ink/90">{goal}</p>
+      <p className="mt-2 text-sm text-ink">{goal}</p>
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
         <dt className="text-muted">Effort</dt>
         <dd className="mono capitalize">{plan.effort}</dd>
@@ -352,7 +352,7 @@ function ConfirmCard({
         private stays local or waits for approval.
       </p>
       {error && (
-        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+        <p className="mt-3 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
           {error}
         </p>
       )}

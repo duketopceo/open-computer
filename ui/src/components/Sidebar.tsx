@@ -23,7 +23,7 @@ export function Sidebar({
   pending: number;
 }) {
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-white/60">
+    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface-1">
       <div className="px-4 py-4">
         <Brand />
       </div>
@@ -34,8 +34,8 @@ export function Sidebar({
           className={cn(
             "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
             view === "runs" && (selected === "" || selected === null)
-              ? "bg-teal-soft text-teal"
-              : "text-ink hover:bg-black/5",
+              ? "bg-accent-soft text-accent"
+              : "text-ink hover:bg-surface-3",
           )}
         >
           <CmdIcon /> Computer
@@ -45,13 +45,13 @@ export function Sidebar({
           aria-current={view === "agents" ? "page" : undefined}
           className={cn(
             "mt-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-            view === "agents" ? "bg-teal-soft text-teal" : "text-ink hover:bg-black/5",
+            view === "agents" ? "bg-accent-soft text-accent" : "text-ink hover:bg-surface-3",
           )}
         >
           <CmdIcon /> Agent jobs
           {pending > 0 && (
             <span
-              className="ml-auto rounded-full bg-violet-100 px-1.5 text-[11px] font-semibold text-violet-800"
+              className="ml-auto rounded-full bg-accent-soft px-1.5 text-[11px] font-semibold text-ink"
               aria-label={`${pending} awaiting approval`}
             >
               {pending}
@@ -74,7 +74,7 @@ export function Sidebar({
                 onClick={() => onSelect(r.run)}
                 className={cn(
                   "mb-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-colors",
-                  view === "runs" && selected === r.run ? "bg-teal-soft text-teal" : "text-ink hover:bg-black/5",
+                  view === "runs" && selected === r.run ? "bg-accent-soft text-accent" : "text-ink hover:bg-surface-3",
                 )}
               >
                 <span className="truncate text-[13px]">{r.goal}</span>

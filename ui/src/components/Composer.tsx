@@ -165,11 +165,11 @@ export function Composer({
       title="Dictate (Groq LPU)"
       className={cn(
         "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-        rec === "recording" ? "bg-red-500 text-white" : "text-muted hover:bg-black/5",
+        rec === "recording" ? "bg-urgent text-on-accent" : "text-muted hover:bg-surface-3",
       )}
     >
       {rec === "transcribing" || rec === "starting" ? (
-        <span className="h-3 w-3 animate-pulse rounded-full border border-muted" />
+        <span className="h-3 w-3 animate-pulse rounded-full border border-line-strong" />
       ) : (
         <MicIcon />
       )}
@@ -178,7 +178,7 @@ export function Composer({
 
   return (
     <div className="w-full max-w-2xl">
-      <div className="rounded-2xl border border-line bg-white p-3 shadow-composer">
+      <div className="rounded-2xl border border-line bg-surface-1 p-3 shadow-composer">
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -226,7 +226,7 @@ export function Composer({
         </p>
       )}
       {err && (
-        <p className="mt-2 text-center text-xs text-red-600" role="alert">
+        <p className="mt-2 text-center text-xs text-urgent" role="alert">
           {err}
         </p>
       )}

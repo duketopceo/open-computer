@@ -52,7 +52,7 @@ export default function Approvals() {
               .reverse()
               .slice(0, 20)
               .map((i) => (
-                <li key={i.id} className="rounded-lg border border-line bg-white px-3 py-2 text-xs">
+                <li key={i.id} className="rounded-lg border border-line bg-surface-1 px-3 py-2 text-xs">
                   <StatusWord word={i.status === "approved" ? "approved" : "sent back"} />{" "}
                   <span className="mono text-muted">{i.id}</span> {i.what || ""}
                   {i.egress ? <> → <span className="mono">{i.egress}</span></> : null} ·{" "}
@@ -90,7 +90,7 @@ function useApprovalChords(count: number, cur: number, setSel: (n: number) => vo
   }, [count, cur, setSel]);
 }
 
-const RISK_STYLE = { high: "text-red-700", elevated: "text-amber-700", low: "text-teal" } as const;
+const RISK_STYLE = { high: "text-urgent", elevated: "text-attention", low: "text-accent" } as const;
 const RISK_GLYPH = { high: "✕", elevated: "▲", low: "✓" } as const;
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
@@ -150,7 +150,7 @@ function Card({
       onClick={onSelect}
       onFocus={onSelect}
       className={
-        "rounded-xl border bg-white p-4 shadow-card " + (selected ? "border-teal ring-2 ring-teal/30" : "border-line")
+        "rounded-xl border bg-surface-1 p-4 shadow-card " + (selected ? "border-accent ring-2 ring-accent" : "border-line")
       }
     >
       <div className="flex items-baseline justify-between gap-3">
@@ -203,7 +203,7 @@ function Card({
           data-act="note"
           aria-label={`Note for send-back on ${item.id}`}
           aria-keyshortcuts="r"
-          className="min-w-48 flex-1 rounded-lg border border-line bg-white px-3 py-1.5 text-sm"
+          className="min-w-48 flex-1 rounded-lg border border-line bg-surface-1 px-3 py-1.5 text-sm"
           placeholder="Note for send-back (what to change)"
           value={note}
           onChange={(e) => setNote(e.target.value)}
@@ -219,7 +219,7 @@ function Card({
         </Button>
       </div>
       {err && (
-        <p className="mt-2 text-xs text-red-600" role="alert">
+        <p className="mt-2 text-xs text-urgent" role="alert">
           {err}
         </p>
       )}

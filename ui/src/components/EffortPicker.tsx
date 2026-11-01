@@ -63,8 +63,8 @@ export function EffortPicker({
                 <span
                   className={cn(
                     "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs font-medium text-muted transition-colors",
-                    "hover:text-ink peer-checked:bg-teal-soft peer-checked:text-teal peer-checked:ring-1 peer-checked:ring-teal/30",
-                    "peer-focus-visible:ring-2 peer-focus-visible:ring-teal/60 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
+                    "hover:text-ink peer-checked:bg-accent-soft peer-checked:text-accent peer-checked:ring-1 peer-checked:ring-accent",
+                    "peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
                   )}
                 >
                   <span aria-hidden className="text-[9px]">
@@ -81,11 +81,11 @@ export function EffortPicker({
           aria-expanded={open}
           aria-controls={`${uid}-adv`}
           onClick={() => setOpen((o) => !o)}
-          className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs font-medium text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60"
+          className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs font-medium text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <span aria-hidden>{open ? "▾" : "▸"}</span>
           Advanced
-          {advanced && !open && <span className="mono text-teal"> · changed</span>}
+          {advanced && !open && <span className="mono text-accent"> · changed</span>}
         </button>
       </div>
 
@@ -106,7 +106,7 @@ export function EffortPicker({
               value={value.model}
               disabled={disabled}
               onChange={(e) => onChange({ ...value, model: e.target.value })}
-              className="mono mt-0.5 h-9 w-full rounded-lg border border-line bg-white px-2 text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+              className="mono mt-0.5 h-9 w-full rounded-lg border border-line bg-surface-1 px-2 text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <option value="">Automatic ({level.model})</option>
               {catalog.models.map((m) => (
@@ -129,9 +129,9 @@ export function EffortPicker({
               placeholder={level.budget.toFixed(2)}
               aria-invalid={budgetBad}
               aria-describedby={`${uid}-budget-help`}
-              className="mono mt-0.5 h-9 w-full rounded-lg border border-line bg-white px-3 text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+              className="mono mt-0.5 h-9 w-full rounded-lg border border-line bg-surface-1 px-3 text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
-            <p id={`${uid}-budget-help`} className={cn("mt-1 text-xs", budgetBad ? "text-red-700" : "text-muted")} role={budgetBad ? "alert" : undefined}>
+            <p id={`${uid}-budget-help`} className={cn("mt-1 text-xs", budgetBad ? "text-urgent" : "text-muted")} role={budgetBad ? "alert" : undefined}>
               {budgetBad
                 ? `Enter an amount above 0 and up to ${usd(catalog.max_budget)}.`
                 : `The run pauses at this amount. Most you can set: ${usd(catalog.max_budget)} (the daily cap).`}

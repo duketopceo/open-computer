@@ -95,14 +95,18 @@ Plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-plan.md`. This section 
 settings). It supersedes the Flight Strip rejects "no gradients, no shadows" and "no chat-bubble UI" for the console only;
 Flight Strip still governs the CLI, the approval TUI and the Developer area in Settings.
 
-- **Look:** a designed light theme and a designed dark theme, picked by `prefers-color-scheme` with a manual override in Settings.
-  The shipped console is light "paper" (`ui/tailwind.config.ts`); it has no dark theme, so a forced-dark browser makes it flat.
+- **Look:** a designed light theme and a designed dark theme, picked by `prefers-color-scheme` with a manual override in Settings
+  (stored as `oc-theme`; `ui/src/lib/theme.ts` and `theme-init.js` set `data-theme`, `system` removes it).
 - **Depth and texture, CSS only:** a base canvas, a grain layer (inline SVG noise, 3-4% opacity), a soft radial glow behind the
   composer (accent at about 6%), a faint vignette, a translucent sidebar over the canvas, two shadow tiers, 1 px hairline borders.
   No image assets. Honour `prefers-reduced-motion` and `prefers-reduced-transparency`.
 - **Tokens:** superseded 2026-10-31 by plan KTD11 (`docs/plans/2026-10-31-003-feat-chat-agent-product-plan.md`): the console shares
   Tallyline's Silver Lining neutral tokens from `services/opsview/static/silver-lining.css`, dark and light, system default with a
-  toggle. The earlier charcoal and teal starting point is retired.
+  toggle. The earlier charcoal and teal starting point is retired. Values (dark / light): canvas `#090909` / `#f5f5f5`, surfaces
+  `#0f0f0f` to `#252525` dark, accent Azure `#339fee` / `#005fba`. `silver-lining.css` is a plain copy of Tallyline's generated
+  file from its main branch (`packages/silver-lining/scripts/sync-open-computer.ts`); never hand-edit it. Open Computer's own
+  scale tokens (type, space, radius, density, motion) and the `--color-*-soft` aliases live in `oc-scale.css`. The SPA imports
+  both through the `@tokens` Vite alias and `ui/tailwind.config.ts` maps its colour names to the `--sl-*` variables.
 - **Threads:** the owner's messages are compact; the agent's answer is a document-style block, not a bubble. Steps, tool calls and
   subagent work are collapsed cards that show real model, cost and time. Approvals are cards that show who asks, what leaves,
   where, cost, PII and the payload hash.

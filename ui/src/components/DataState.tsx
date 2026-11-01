@@ -15,7 +15,7 @@ export function DataState({
 }) {
   if (error) {
     return (
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
         <span>{error}</span>
         <Button variant="subtle" className="h-7" onClick={onRetry}>
           Retry
@@ -26,7 +26,7 @@ export function DataState({
   if (loading && !hasData) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted" role="status">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/30 border-t-teal" aria-hidden />
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-accent" aria-hidden />
         Loading…
       </p>
     );

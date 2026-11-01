@@ -143,7 +143,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-083 | P4 | Browser tool (builds on OC-045) | open |
 | OC-084 | P4 | Automations post to threads; retire the goal-run DAG | open |
 | OC-085 | P2 | `oc` CLI chat and threads (absorbs OC-039) | open |
-| OC-086 | P3 | Silver Lining neutral tokens as the one console theme (dark, light, system default plus toggle) | open |
+| OC-086 | P3 | Silver Lining neutral tokens as the one console theme (dark, light, system default plus toggle) | done (vendored from Tallyline main 43d2675; `oc-scale.css` holds the scale) |
 | OC-087 | P3 | Curated model catalog: orchestrator and worker pickers, ceiling and spend-rule test | open |
 | OC-088 | P3 | Home composer: Search or Computer mode, model and reasoning picker, worker picker, attach, chips | open |
 | OC-089 | P3 | Finish the React move: run pages ported, cutover, operator pages under Developer | open |

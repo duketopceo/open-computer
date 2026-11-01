@@ -10,10 +10,10 @@ export const Button = forwardRef<
     <button
       ref={ref}
       className={cn(
-        "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40 disabled:opacity-50",
-        variant === "primary" && "bg-teal text-white hover:bg-teal/90",
-        variant === "ghost" && "text-ink hover:bg-black/5",
-        variant === "subtle" && "border border-line bg-white text-ink hover:bg-black/[.03]",
+        "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50",
+        variant === "primary" && "bg-accent text-on-accent hover:bg-accent-hover",
+        variant === "ghost" && "text-ink hover:bg-surface-3",
+        variant === "subtle" && "border border-line bg-surface-1 text-ink hover:bg-surface-2",
         className,
       )}
       {...props}
@@ -23,11 +23,11 @@ export const Button = forwardRef<
 
 const STATE_STYLE: Record<TaskState, string> = {
   QUEUED: "text-muted",
-  LEASED: "text-amber-600",
-  RUNNING: "text-amber-600",
-  DONE: "text-teal",
-  FAILED: "text-red-600",
-  "AWAITING-APPROVAL": "text-violet-600",
+  LEASED: "text-attention",
+  RUNNING: "text-attention",
+  DONE: "text-accent",
+  FAILED: "text-urgent",
+  "AWAITING-APPROVAL": "text-accent",
 };
 
 export function StateWord({ state }: { state: TaskState }) {
@@ -40,19 +40,19 @@ export function StateWord({ state }: { state: TaskState }) {
 
 export function Dot({ state }: { state: TaskState }) {
   const color: Record<TaskState, string> = {
-    QUEUED: "bg-muted/40",
-    LEASED: "bg-amber-500",
-    RUNNING: "bg-amber-500",
-    DONE: "bg-teal",
-    FAILED: "bg-red-500",
-    "AWAITING-APPROVAL": "bg-violet-500",
+    QUEUED: "bg-surface-4",
+    LEASED: "bg-attention",
+    RUNNING: "bg-attention",
+    DONE: "bg-accent",
+    FAILED: "bg-urgent-soft0",
+    "AWAITING-APPROVAL": "bg-accent",
   };
   return <span className={cn("inline-block h-1.5 w-1.5 rounded-full", color[state])} />;
 }
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-2xl border border-line bg-white shadow-card", className)}>
+    <div className={cn("rounded-2xl border border-line bg-surface-1 shadow-card", className)}>
       {children}
     </div>
   );
@@ -63,7 +63,7 @@ export function Chip({ children, active }: { children: ReactNode; active?: boole
     <span
       className={cn(
         "inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-medium",
-        active ? "border-teal/30 bg-teal-soft text-teal" : "border-line text-muted",
+        active ? "border-accent bg-accent-soft text-accent" : "border-line text-muted",
       )}
     >
       {children}
@@ -75,13 +75,13 @@ export function Chip({ children, active }: { children: ReactNode; active?: boole
 // means submitted but no runner is configured, so it says so.
 const AGENT_STATUS: Record<AgentStatus, { label: string; style: string }> = {
   queued: { label: "queued · not running", style: "text-muted" },
-  running: { label: "running", style: "text-amber-700" },
-  finished: { label: "finished", style: "text-teal" },
-  stalled: { label: "stalled", style: "text-amber-700" },
-  rejected: { label: "rejected", style: "text-red-700" },
-  budget_exhausted: { label: "budget exhausted", style: "text-red-700" },
-  max_rounds: { label: "max rounds", style: "text-amber-700" },
-  failed: { label: "failed", style: "text-red-700" },
+  running: { label: "running", style: "text-attention" },
+  finished: { label: "finished", style: "text-accent" },
+  stalled: { label: "stalled", style: "text-attention" },
+  rejected: { label: "rejected", style: "text-urgent" },
+  budget_exhausted: { label: "budget exhausted", style: "text-urgent" },
+  max_rounds: { label: "max rounds", style: "text-attention" },
+  failed: { label: "failed", style: "text-urgent" },
 };
 
 export function AgentStatusWord({ status }: { status: AgentStatus }) {

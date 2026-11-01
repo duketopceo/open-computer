@@ -11,7 +11,7 @@ export default function SandboxDetail({ id }: { id: string }) {
   const { data, error, loading, reload } = useFetch(getSandboxes, []);
   const row = data?.sandboxes.find((s) => sandboxId(s) === id);
   const back = (
-    <Link href="/sandboxes" className="text-sm font-medium text-teal underline underline-offset-2">
+    <Link href="/sandboxes" className="text-sm font-medium text-accent underline underline-offset-2">
       Back to sandboxes
     </Link>
   );
@@ -30,7 +30,7 @@ export default function SandboxDetail({ id }: { id: string }) {
       )}
       {row && (
         <div className="space-y-3">
-          <div className="overflow-x-auto rounded-2xl border border-line bg-white shadow-card">
+          <div className="overflow-x-auto rounded-2xl border border-line bg-surface-1 shadow-card">
             <table className="w-full text-left text-sm">
               <caption className="sr-only">Sandbox {id}</caption>
               <tbody className="divide-y divide-line">
