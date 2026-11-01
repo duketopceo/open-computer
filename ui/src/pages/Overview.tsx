@@ -61,7 +61,7 @@ function Stat({ label, value, sub, href }: { label: string; value: string; sub?:
     </>
   );
   return (
-    <div className="rounded-xl border border-line bg-white p-4 shadow-card">
+    <div className="rounded-xl border border-line bg-surface-1 p-4 shadow-card">
       {href ? (
         <a href={href} className="block hover:opacity-80">
           {inner}

@@ -47,7 +47,7 @@ export default function Sandboxes() {
           {rows.map((s) => (
             <tr key={sandboxId(s)}>
               <Td mono>
-                <Link href={`/sandboxes/${encodeURIComponent(sandboxId(s))}`} className="text-teal underline underline-offset-2">
+                <Link href={`/sandboxes/${encodeURIComponent(sandboxId(s))}`} className="text-accent underline underline-offset-2">
                   {sandboxId(s)}
                 </Link>
               </Td>

@@ -1,19 +1,36 @@
 import type { Config } from "tailwindcss";
 
-// open-computer console — Perplexity Computer–shaped design tokens.
-// Light "paper" canvas, teal accent, serif display for the ask, sans for
-// the machinery. States are always text (never a spinner pretending).
+// open-computer console: Tallyline Silver Lining tokens (KTD11). Colour names map to the
+// --sl-* variables from services/opsview/static/silver-lining.css (imported in src/index.css),
+// so server-rendered pages and the SPA share one palette in dark, light and system modes.
+// Tailwind opacity modifiers do not work on these; use the -soft and -hover variants.
 const config: Config = {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        canvas: "#faf9f6",
-        ink: "#1a1a18",
-        muted: "#6b6b64",
-        line: "#e7e4dc",
-        teal: "#0f766e",
-        "teal-soft": "#f0fdfa",
+        canvas: "var(--sl-canvas)",
+        "surface-1": "var(--sl-surface-1)",
+        "surface-2": "var(--sl-surface-2)",
+        "surface-3": "var(--sl-surface-3)",
+        "surface-4": "var(--sl-surface-4)",
+        ink: "var(--sl-ink)",
+        "ink-muted": "var(--sl-ink-muted)",
+        muted: "var(--sl-ink-subtle)",
+        "ink-tertiary": "var(--sl-ink-tertiary)",
+        line: "var(--sl-lining)",
+        "line-faint": "var(--sl-lining-faint)",
+        "line-strong": "var(--sl-lining-strong)",
+        accent: "var(--sl-accent)",
+        "accent-hover": "var(--sl-accent-hover)",
+        "accent-soft": "var(--sl-accent-soft)",
+        "on-accent": "var(--sl-on-accent)",
+        urgent: "var(--sl-status-urgent)",
+        "urgent-soft": "var(--sl-status-urgent-soft)",
+        attention: "var(--sl-status-attention)",
+        "attention-soft": "var(--sl-status-attention-soft)",
+        healthy: "var(--sl-status-healthy)",
+        "healthy-soft": "var(--sl-status-healthy-soft)",
       },
       fontFamily: {
         sans: [
@@ -33,9 +50,9 @@ const config: Config = {
         ],
       },
       boxShadow: {
-        card: "0 1px 2px rgba(16,24,40,.04), 0 8px 24px -12px rgba(16,24,40,.12)",
+        card: "0 1px 2px var(--sl-scrim), 0 8px 24px -12px var(--sl-overlay)",
         composer:
-          "0 1px 2px rgba(16,24,40,.05), 0 12px 40px -16px rgba(16,24,40,.18)",
+          "0 1px 2px var(--sl-scrim), 0 12px 40px -16px var(--sl-overlay)",
       },
       keyframes: {
         "fade-up": {

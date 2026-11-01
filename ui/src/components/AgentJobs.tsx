@@ -140,15 +140,15 @@ export function AgentJobs({
             No agent jobs yet. Submit a goal above to start one.
           </p>
         ) : (
-          <ul className="divide-y divide-line rounded-2xl border border-line bg-white shadow-card">
+          <ul className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
             {jobs.map((j) => (
               <li key={j.job}>
                 <button
                   onClick={() => setSelected(j.job)}
                   aria-current={selected === j.job ? "true" : undefined}
                   className={cn(
-                    "flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors first:rounded-t-2xl last:rounded-b-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40",
-                    selected === j.job ? "bg-teal-soft" : "hover:bg-black/[.03]",
+                    "flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors first:rounded-t-2xl last:rounded-b-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                    selected === j.job ? "bg-accent-soft" : "hover:bg-surface-2",
                   )}
                 >
                   <span className="text-sm font-medium text-ink">{j.goal}</span>
@@ -159,7 +159,7 @@ export function AgentJobs({
                     </span>
                     <span className="mono text-muted">{rel(j.started)}</span>
                     {j.awaiting_approval && (
-                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800">
+                      <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold text-ink">
                         awaiting approval
                       </span>
                     )}
@@ -190,7 +190,7 @@ export function AgentJobs({
 
 function InlineRetry({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+    <div className="flex items-center gap-3 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent">
       <p role="alert" className="min-w-0 flex-1">
         {message}
       </p>
@@ -274,7 +274,7 @@ function SubmitForm({
           readOnly={!!step}
           rows={3}
           placeholder="Describe a long-horizon goal"
-          className="mt-1 w-full resize-y rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+          className="mt-1 w-full resize-y rounded-lg border border-line bg-surface-1 px-3 py-2 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         />
         <div className="mt-2 flex flex-wrap items-end gap-3">
           <div>
@@ -288,7 +288,7 @@ function SubmitForm({
               onChange={(e) => setBudget(e.target.value)}
               readOnly={!!step}
               placeholder="25"
-              className="mt-0.5 h-9 w-28 rounded-lg border border-line bg-white px-3 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40"
+              className="mt-0.5 h-9 w-28 rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
           </div>
           <p className="pb-2 text-xs text-muted">Default $25 per working day.</p>
@@ -332,7 +332,7 @@ function SubmitForm({
       )}
 
       {error && (
-        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+        <p className="mt-3 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
           {error}
         </p>
       )}
@@ -378,7 +378,7 @@ function JobDetail({
           No events yet. The trail fills in as the job runs.
         </p>
       ) : (
-        <ol className="divide-y divide-line rounded-2xl border border-line bg-white shadow-card">
+        <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
           {detail.events.map((row) => (
             <TrailItem key={`${row.seq}-${row.event}`} row={row} />
           ))}
@@ -486,7 +486,7 @@ function ApprovalCard({
           revert();
         }
       }}
-      className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4"
+      className="rounded-2xl border border-accent bg-accent-soft p-4"
     >
       <div className="flex items-baseline justify-between gap-3">
         <h4 id={titleId} className="text-sm font-semibold text-ink">
@@ -494,7 +494,7 @@ function ApprovalCard({
         </h4>
         <span className="mono text-muted">hash {a.hash.slice(0, 12)}</span>
       </div>
-      <pre className="mono mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-white p-3 text-ink/90">
+      <pre className="mono mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-surface-1 p-3 text-ink">
         {JSON.stringify(a.detail, null, 2)}
       </pre>
 
@@ -525,7 +525,7 @@ function ApprovalCard({
       )}
 
       {error && (
-        <div className="mt-3 flex items-center gap-3 text-sm text-red-700">
+        <div className="mt-3 flex items-center gap-3 text-sm text-urgent">
           <p role="alert" className="min-w-0 flex-1">
             {error}
           </p>

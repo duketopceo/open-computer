@@ -1,0 +1,55 @@
+/* open-computer scale tokens: typography, spacing, radius, density, motion, plus the few colour
+   aliases console.css needs that Tallyline's generated silver-lining.css does not define.
+   Colours here only alias --sl-* tokens; never add a raw colour. Loaded after silver-lining.css. */
+
+:root {
+  /* soft fills (Tallyline generates --sl-* only; console.css reads the --color-* names) */
+  --color-accent-soft: var(--sl-accent-soft);
+  --color-urgent-soft: var(--sl-status-urgent-soft);
+  --color-attention-soft: var(--sl-status-attention-soft);
+  --color-healthy-soft: var(--sl-status-healthy-soft);
+  --color-neutral-soft: var(--sl-status-neutral-soft);
+  --shadow-overlay: 0 8px 28px var(--sl-overlay), 0 0 0 1px var(--sl-lining-strong);
+
+  /* typography */
+  --font-ui: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-micro: 11px;
+  --text-caption: 12px;
+  --text-body: 13px;
+  --text-body-lg: 14px;
+  --text-title: 15px;
+  --text-headline: 17px;
+  --text-display: 24px;
+
+  /* spacing (4px grid) */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-64: 64px;
+
+  /* radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-pill: 9999px;
+
+  /* density + layout */
+  --row-compact: 32px;
+  --row: 36px;
+  --row-comfortable: 40px;
+  --sidebar-width: 232px;
+  --header-height: 48px;
+  --palette-width: 640px;
+
+  /* motion */
+  --duration-fast: 90ms;
+  --duration-base: 140ms;
+  --duration-overlay: 200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0.38, 0.9);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}

@@ -62,7 +62,7 @@ function NewForm({ onDone }: { onDone: () => void }) {
     }
   }
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-white p-3 shadow-card">
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface-1 p-3 shadow-card">
       <input
         className="min-w-56 flex-1 rounded-lg border border-line px-3 py-1.5 text-sm"
         placeholder="Goal to run on a schedule"
@@ -82,7 +82,7 @@ function NewForm({ onDone }: { onDone: () => void }) {
       <Button onClick={submit} disabled={busy}>
         {busy ? "Creating…" : "Create"}
       </Button>
-      {err && <p className="w-full text-xs text-red-600">{err}</p>}
+      {err && <p className="w-full text-xs text-urgent">{err}</p>}
     </div>
   );
 }

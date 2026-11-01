@@ -32,7 +32,7 @@ export function RunView({ run }: { run: RunDetail }) {
           )}
         </div>
         {run.effort?.paused && (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">
+          <p className="mt-3 rounded-lg border border-attention bg-attention-soft px-3 py-2 text-sm text-attention" role="status">
             <span className="mono uppercase tracking-wider">Paused · budget</span> This run reached its{" "}
             {cost(run.effort.budget)} budget. Nothing was cancelled; the remaining steps stay queued.
           </p>
@@ -40,17 +40,17 @@ export function RunView({ run }: { run: RunDetail }) {
         {run.plan_thinking && <Thinking text={run.plan_thinking} className="mt-3" />}
       </header>
 
-      <ol className="divide-y divide-line rounded-2xl border border-line bg-white shadow-card">
+      <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
         {run.subtasks.map((s) => (
           <SubTaskRow key={s.subtask} s={s} />
         ))}
       </ol>
 
       {run.error && (
-        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="mt-4 rounded-2xl border border-urgent bg-urgent-soft p-4 text-sm text-urgent">
           <p className="font-medium">{run.error_kind ?? "failed"}</p>
           <p>{run.error}</p>
-          {run.hint && <p className="mt-1 text-red-600/80">{run.hint}</p>}
+          {run.hint && <p className="mt-1 text-urgent">{run.hint}</p>}
         </div>
       )}
     </div>
@@ -83,11 +83,11 @@ function SubTaskRow({ s }: { s: SubTask }) {
           <span className="mono">{s.route || "route —"}</span>
           <span>·</span>
           <span className="mono">{placement(s.placement)}</span>
-          {s.pii && <span className="text-violet-600">· private</span>}
+          {s.pii && <span className="text-accent">· private</span>}
         </p>
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "FAILED" && (
-          <p className="mt-1 text-xs text-red-600">
+          <p className="mt-1 text-xs text-urgent">
             {errorKind(s.error_kind)}: {s.error}
             {s.hint ? ` — ${s.hint}` : ""}
           </p>
@@ -109,7 +109,7 @@ function isHeavy(text: string): boolean {
 function StepResult({ text }: { text: string }) {
   if (!isHeavy(text)) {
     return (
-      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink/90">{text}</p>
+      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink">{text}</p>
     );
   }
   const lines = text.split("\n").length;
@@ -118,7 +118,7 @@ function StepResult({ text }: { text: string }) {
       <summary className="cursor-pointer select-none text-xs text-muted hover:text-ink">
         Output — {lines} lines
       </summary>
-      <pre className="mt-1 max-h-72 overflow-auto rounded-lg bg-canvas p-3 text-xs leading-relaxed text-ink/90">
+      <pre className="mt-1 max-h-72 overflow-auto rounded-lg bg-canvas p-3 text-xs leading-relaxed text-ink">
         {text}
       </pre>
     </details>

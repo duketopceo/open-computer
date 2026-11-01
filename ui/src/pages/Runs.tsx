@@ -27,7 +27,7 @@ export default function Runs() {
             {runs.map((r) => (
               <tr key={r.run}>
                 <Td>
-                  <a className="text-teal underline-offset-2 hover:underline" href={`/#${r.run}`}>
+                  <a className="text-accent underline-offset-2 hover:underline" href={`/#${r.run}`}>
                     {r.goal.length > 80 ? r.goal.slice(0, 80) + "…" : r.goal}
                   </a>
                   <div className="mono text-xs text-muted">{r.run}</div>
