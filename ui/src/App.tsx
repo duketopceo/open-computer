@@ -2,6 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import {
   ApiError,
   errorMessage,
+  archiveRun,
+  clearFinishedRuns,
+  deleteRun,
   getRun,
   listAgentJobs,
   listRuns,
@@ -63,7 +66,7 @@ export default function App() {
 
   const refreshRuns = useCallback(
     () =>
-      listRuns().then((r) => {
+      listRuns(true).then((r) => {
         setRuns(r);
         noteSuccess();
         return r;
@@ -203,6 +206,41 @@ export default function App() {
     setConfirm(null);
   }
 
+  // Cleanup: each call refreshes the rail and, if the open run is gone, drops back to the composer.
+  function afterCleanup(removed: string[]) {
+    if (selected && removed.includes(selected)) setSelected(null);
+    refreshRuns().catch(noteFailure);
+  }
+
+  function onDelete(id: string) {
+    setError("");
+    deleteRun(id)
+      .then(() => afterCleanup([id]))
+      .catch((e) => {
+        noteFailure(e);
+        setError(errorMessage(e, "Could not delete the run."));
+      });
+  }
+
+  function onArchive(id: string, archived: boolean) {
+    archiveRun(id, archived)
+      .then(() => afterCleanup(archived ? [id] : []))
+      .catch((e) => {
+        noteFailure(e);
+        setError(errorMessage(e, "Could not archive the run."));
+      });
+  }
+
+  function onClear() {
+    const gone = runs.filter((r) => r.finished).map((r) => r.run);
+    clearFinishedRuns()
+      .then(() => afterCleanup(gone))
+      .catch((e) => {
+        noteFailure(e);
+        setError(errorMessage(e, "Could not clear finished runs."));
+      });
+  }
+
   function select(id: string) {
     setSelected(id);
     setStarter(undefined);
@@ -217,6 +255,9 @@ export default function App() {
         identity={sess?.identity ?? ""}
         view={view}
         onAgents={() => setView("agents")}
+        onDelete={onDelete}
+        onArchive={onArchive}
+        onClear={onClear}
         pending={(jobs ?? []).reduce((n, j) => n + (j.pending || 0), 0)}
         onSelect={(id) => {
           if (submitting) return;

@@ -23,6 +23,9 @@ export interface RunSummary {
   subtasks: number;
   states: Record<TaskState, number>;
   ts: number;
+  archived?: boolean;
+  /** Nothing left that could still progress, and nothing is driving it: safe to remove. */
+  finished?: boolean;
 }
 
 export interface SubTask {
@@ -146,9 +149,14 @@ export async function csrf(): Promise<string> {
   return s.csrf;
 }
 
-export async function listRuns(): Promise<RunSummary[]> {
-  return (await json<{ runs?: RunSummary[] }>("/api/runs")).runs ?? [];
+export async function listRuns(withArchived = false): Promise<RunSummary[]> {
+  return (await json<{ runs?: RunSummary[] }>(withArchived ? "/api/runs?archived=1" : "/api/runs")).runs ?? [];
 }
+
+export const deleteRun = (id: string) => postJson<{ ok: true }>(`/api/runs/${encodeURIComponent(id)}/delete`, {});
+export const archiveRun = (id: string, archived: boolean) =>
+  postJson<{ ok: true }>(`/api/runs/${encodeURIComponent(id)}/archive`, { archived });
+export const clearFinishedRuns = () => postJson<{ cleared: number }>("/api/runs/clear", { confirm: true });
 
 export async function getRun(id: string): Promise<RunDetail> {
   return json<RunDetail>(`/api/runs/${encodeURIComponent(id)}`);

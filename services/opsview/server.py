@@ -339,6 +339,9 @@ POST_ROUTES = [
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})/approvals/(?P<aid>ag_[0-9a-f]{8})/approve", "p_agent_approve"),
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})/approvals/(?P<aid>ag_[0-9a-f]{8})/deny", "p_agent_deny"),
     (r"/api/transcribe", "p_transcribe"),
+    (r"/api/runs/clear", "p_api_runs_clear"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/delete", "p_api_run_delete"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/archive", "p_api_run_archive"),
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
     (r"/api/router/test", "p_api_router_test"),
@@ -628,7 +631,30 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, model_catalog.payload())
 
     def g_api_runs(self, qs):
-        self._json(200, {"runs": goalruns.list_runs()})
+        self._json(200, {"runs": goalruns.list_runs(include_archived=qs.get("archived", [""])[0] == "1")})
+
+    def p_api_run_delete(self, who, body, id):
+        try:
+            gone = goalruns.delete_run(id)
+        except goalruns.RunBusy:
+            return self._json(409, {"error": "This run is still working. Wait for it to finish."})
+        if not gone:
+            return self._json(404, {"error": "no such run"})
+        log.info("run deleted", run=id, by=who)
+        self._json(200, {"ok": True})
+
+    def p_api_run_archive(self, who, body, id):
+        on = body.get("archived", True) not in (False, "0", "false", 0)
+        if not goalruns.archive_run(id, on):
+            return self._json(404, {"error": "no such run"})
+        self._json(200, {"ok": True, "archived": on})
+
+    def p_api_runs_clear(self, who, body):
+        if body.get("confirm") not in (True, "1", 1):
+            return self._json(400, {"error": "Confirm clearing finished runs."})
+        n = goalruns.clear_finished()
+        log.info("finished runs cleared", count=n, by=who)
+        self._json(200, {"cleared": n})
 
     def g_api_approvals(self, qs):
         items = ApprovalQueue(approvals_path()).items()

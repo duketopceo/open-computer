@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import threading
 import uuid
 from pathlib import Path
@@ -90,14 +92,85 @@ def _held_steps(run_dir: Path, rows: list[dict]) -> list[dict]:
     ]
 
 
-def list_runs() -> list[dict]:
-    """Recent runs, newest first — literal disk state only."""
+RUN_ID_RE = re.compile(r"goal_[0-9a-f]{8}")
+ARCHIVED_MARK = "archived"
+
+
+class RunBusy(RuntimeError):
+    """The run still has a live driver in this process: stop it before removing it."""
+
+
+def _driving(rid: str) -> bool:
+    """True while this process has a live drive thread for `rid` (a stale queued run has none)."""
+    return any(t.name == f"oc-goal-{rid}" and t.is_alive() for t in threading.enumerate())
+
+
+def _run_path(run_id: str) -> Path | None:
+    """The run's directory, or None for anything that is not an existing goal run under runs_dir()."""
+    if not RUN_ID_RE.fullmatch(run_id or ""):
+        return None
+    d = runs_dir() / run_id
+    return d if d.is_dir() else None
+
+
+def _finished(states: dict) -> bool:
+    """Nothing left that could still progress: no step queued, leased, running or waiting on approval."""
+    return not any(states.get(s) for s in ("QUEUED", "LEASED", "RUNNING", "AWAITING-APPROVAL"))
+
+
+def delete_run(run_id: str) -> bool:
+    """Remove a run and everything it wrote. False if it does not exist; RunBusy while it is being driven."""
+    d = _run_path(run_id)
+    if d is None:
+        return False
+    if _driving(run_id):
+        raise RunBusy(run_id)
+    shutil.rmtree(d, ignore_errors=True)
+    with _lock:
+        _live.pop(run_id, None)
+    return True
+
+
+def archive_run(run_id: str, archived: bool = True) -> bool:
+    """Hide a run from the default list (or bring it back). The run stays on disk untouched."""
+    d = _run_path(run_id)
+    if d is None:
+        return False
+    mark = d / ARCHIVED_MARK
+    if archived:
+        mark.touch()
+    else:
+        mark.unlink(missing_ok=True)
+    return True
+
+
+def clear_finished() -> int:
+    """Delete every finished run that nothing is driving. Returns how many were removed."""
+    n = 0
+    for r in list_runs(include_archived=True, limit=None):
+        if _finished(r["states"]) and delete_run_quiet(r["run"]):
+            n += 1
+    return n
+
+
+def delete_run_quiet(run_id: str) -> bool:
+    try:
+        return delete_run(run_id)
+    except RunBusy:
+        return False
+
+
+def list_runs(*, include_archived: bool = False, limit: int | None = 30) -> list[dict]:
+    """Recent runs, newest first — literal disk state only. Archived runs are hidden unless asked for."""
     base = runs_dir()
     if not base.exists():
         return []
     out = []
     for d in sorted(base.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
         if not d.is_dir():
+            continue
+        archived = (d / ARCHIVED_MARK).exists()
+        if archived and not include_archived:
             continue
         rows = _audit_rows(d)
         submit = next((r for r in rows if r.get("event") == "run_submit"), None)
@@ -125,9 +198,11 @@ def list_runs() -> list[dict]:
                 "subtasks": (submit or {}).get("subtasks", 0),
                 "states": states,
                 "ts": anchor.get("ts", d.stat().st_mtime),
+                "archived": archived,
+                "finished": _finished(states) and not _driving(d.name),
             }
         )
-        if len(out) >= 30:
+        if limit is not None and len(out) >= limit:
             break
     return out
 
