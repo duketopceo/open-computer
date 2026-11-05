@@ -376,6 +376,13 @@ def test_untagged_fence_starting_with_import_is_python(monkeypatch):
     assert "python3" in _decoded_runner(plane)[1]
 
 
+def test_untagged_program_starting_with_print_is_python(monkeypatch):
+    _reply(monkeypatch, "```\nprint('hello')\n```")
+    plane = _FakePlane()
+    engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    assert "python3" in _decoded_runner(plane)[1]
+
+
 def test_shebang_python_without_a_tag_is_python(monkeypatch):
     _reply(monkeypatch, "#!/usr/bin/env python3\nprint('hi')")
     plane = _FakePlane()

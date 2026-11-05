@@ -88,7 +88,7 @@ _SCRIPT_PROMPT = (
 )
 
 _PY_FENCE_TAGS = {"python", "python3", "py"}
-_PY_FIRST_LINE = re.compile(r"(import\s+\w|from\s+[\w.]+\s+import\s|def\s+\w+\s*\(|class\s+\w)")
+_PY_FIRST_LINE = re.compile(r"(import\s+\w|from\s+[\w.]+\s+import\s|def\s+\w+\s*\(|class\s+\w|print\()")
 _PY_WARNINGS = "PYTHONWARNINGS=ignore::SyntaxWarning,ignore::DeprecationWarning"
 _ERR_TAIL = 1200
 
