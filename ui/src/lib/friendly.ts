@@ -43,3 +43,10 @@ export function shortId(id?: string): string {
   if (!id) return "";
   return id.length > 12 ? id.slice(0, 12) : id;
 }
+
+/** "Skipped — step 2 failed": names the dependency (by its position in the run) whose failure stopped this step. */
+export function skippedWhy(error: string | undefined, steps: { subtask: string }[]): string {
+  const id = /dep '([^']+)' failed/.exec(error ?? "")?.[1];
+  const at = id ? steps.findIndex((x) => x.subtask === id) : -1;
+  return at >= 0 ? `Skipped — step ${at + 1} failed` : "Skipped — an earlier step failed";
+}

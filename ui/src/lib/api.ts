@@ -47,6 +47,7 @@ export interface SubTask {
   ts: number;
   started_ts?: number; // when a worker claimed it; absent for steps that never ran
   finished_ts?: number;
+  skipped?: boolean; // a dependency failed, so the step never ran
   thinking?: string; // reasoning text the step's model calls returned
   approval?: string; // AWAITING-APPROVAL steps: the Approvals queue item that unblocks them
   hosts?: string[]; // ...and the sites that item asks to allow

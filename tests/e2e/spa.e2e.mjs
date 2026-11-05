@@ -1303,3 +1303,27 @@ test("@flow run page: only steps with detected PII say private; an empty list an
   assert.equal(await page.locator("li", { hasText: "step c" }).getByText("private details").count(), 0);
   await ctx.close();
 });
+
+test("@flow run page: a step skipped because a dependency failed says so and shows no duration or cost", async () => {
+  const step = (id, over) => ({ ...RUN.subtasks[0], subtask: id, title: `step ${id}`, ...over });
+  const run = { ...RUN, declared: 2, subtasks: [
+    step("a", { state: "FAILED", result: undefined, error: "sandbox exec rc=1", error_kind: "RuntimeError", started_ts: 10, finished_ts: 14 }),
+    step("b", { state: "FAILED", result: undefined, error: "dep 'a' failed — cannot run", error_kind: "DependencyFailed",
+      cost: 0, skipped: true, started_ts: 14, finished_ts: 14 }),
+  ] };
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 2, states: {}, ts: 1 }] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByText("step b").waitFor();
+  const row = page.locator("li", { hasText: "step b" });
+  assert.equal(await row.getByText("Skipped — step 1 failed").count(), 1);
+  assert.equal(await row.getByText(/^\d+(\.\d)?[sm]$/).count(), 0, "no duration");
+  assert.equal(await row.getByText(/\$/).count(), 0, "no cost");
+  assert.equal(await row.getByText("FAILED", { exact: true }).count(), 0);
+  assert.equal(await page.locator("li", { hasText: "step a" }).getByText("FAILED", { exact: true }).count(), 1);
+  await ctx.close();
+});

@@ -258,10 +258,13 @@ def get_run(run_id: str) -> dict | None:
             rec["error_kind"] = f.get("kind", "")
             rec["hint"] = f.get("hint", "")
             rec["finished_ts"] = f.get("ts")
+            if f.get("kind") == "DependencyFailed":  # never started: no duration, shown as skipped
+                rec["skipped"] = True
+                rec["started_ts"] = f.get("ts")
         elif tid in done_ts:
             rec["finished_ts"] = done_ts[tid]
         rec["ts"] = r.get("ts")
-        if tid in start_ts:
+        if tid in start_ts and not rec.get("skipped"):
             rec["started_ts"] = start_ts[tid]
         if tid in thoughts:
             rec["thinking"] = join_thoughts(thoughts[tid])

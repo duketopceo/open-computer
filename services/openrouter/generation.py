@@ -50,6 +50,9 @@ def _close(a: float, b: float) -> bool:
 
 def compare(call: dict, stats: dict) -> dict:
     cost = stats.get("total_cost", stats.get("usage"))
+    upstream = stats.get("upstream_inference_cost")
+    if stats.get("is_byok") is True and isinstance(cost, (int, float)) and isinstance(upstream, (int, float)):
+        cost = cost + upstream  # BYOK: recorded cost is OpenRouter's fee plus the provider's charge
     t_in, t_out = stats.get("tokens_prompt"), stats.get("tokens_completion")
     problems = []
     if isinstance(cost, (int, float)) and not _close(float(call.get("cost") or 0.0), float(cost)):
