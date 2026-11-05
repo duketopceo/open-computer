@@ -51,7 +51,7 @@ async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, p
 const RUN = {
   run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, declared: 1, worker_failures: [],
   subtasks: [{ subtask: "s1", title: "say hi", state: "DONE", route: "cheap", engine: "jev", placement: "cloud-a",
-    reason: "", gate_required: false, cost: 0.000026, pii: false, result: "hi", ts: 1, finished_ts: 2 }],
+    reason: "", gate_required: false, cost: 0.000026, pii: [], result: "hi", ts: 1, finished_ts: 2 }],
 };
 
 for (const w of [1440, 390]) {
@@ -1279,3 +1279,23 @@ for (const scheme of ["light", "dark"]) {
     });
   }
 }
+
+test("@flow run page: only steps with detected PII say private; an empty list and a legacy null say nothing", async () => {
+  const step = (id, pii) => ({ ...RUN.subtasks[0], subtask: id, title: `step ${id}`, pii });
+  const run = { ...RUN, declared: 3, subtasks: [step("a", []), step("b", ["email", "ssn"]), step("c", null)] };
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 3, states: {}, ts: 1 }] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByText("step b").waitFor();
+  const label = page.getByText("private details");
+  assert.equal(await label.count(), 1);
+  assert.equal(await label.getAttribute("title"), "Detected: email, ssn");
+  assert.ok(await page.locator("li", { hasText: "step b" }).getByText("private details").isVisible());
+  assert.equal(await page.locator("li", { hasText: "step a" }).getByText("private details").count(), 0);
+  assert.equal(await page.locator("li", { hasText: "step c" }).getByText("private details").count(), 0);
+  await ctx.close();
+});

@@ -38,7 +38,8 @@ export interface SubTask {
   reason: string;
   gate_required: boolean;
   cost: number;
-  pii: boolean;
+  /** PII categories the gate found in the step's prompt; empty means none. */
+  pii?: string[] | null;
   result?: string;
   error?: string;
   error_kind?: string;

@@ -84,7 +84,11 @@ function SubTaskRow({ s }: { s: SubTask }) {
           <span className="mono">{s.route || "route —"}</span>
           <span>·</span>
           <span className="mono">{placement(s.placement)}</span>
-          {s.pii && <span className="text-accent">· private</span>}
+          {(s.pii?.length ?? 0) > 0 && (
+            <span className="text-accent" title={`Detected: ${(s.pii ?? []).join(", ")}`}>
+              · private details
+            </span>
+          )}
         </p>
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "AWAITING-APPROVAL" && (
