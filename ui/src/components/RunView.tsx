@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
-import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy } from "@/lib/friendly";
+import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
@@ -91,6 +91,15 @@ function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
             </span>
           )}
         </p>
+        {s.waiting_on && s.state === "QUEUED" && (
+          <p className="mt-1 text-xs text-muted" title={s.waiting_on.detail}>
+            <span aria-hidden="true">– </span>
+            {waitingText(s.waiting_on.kind, s.waiting_on.attempt, s.waiting_on.max)}
+            {dur(s.waiting_on.since, Date.now() / 1000) && (
+              <span className="mono"> · {dur(s.waiting_on.since, Date.now() / 1000)}</span>
+            )}
+          </p>
+        )}
         <StepTruth s={s} />
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "AWAITING-APPROVAL" && (

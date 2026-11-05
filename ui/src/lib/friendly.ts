@@ -6,6 +6,7 @@ const ERROR_KINDS: Record<string, string> = {
   NoPlacement: "Couldn't be placed",
   CommandExitException: "Step failed",
   SandboxWorkerUnavailable: "Sandbox unavailable",
+  SandboxUnavailable: "Sandbox unavailable",
   BudgetHalt: "Over budget",
 };
 
@@ -54,6 +55,15 @@ export function fallbackWhy(router?: { fallbacks?: { engine: string; status?: nu
   const fb = router?.fallbacks?.[0];
   if (!fb) return "";
   return `${fb.engine} unavailable${fb.status ? ` (${fb.status})` : ""}`;
+}
+
+const WAITING: Record<string, string> = {
+  sandbox_boot: "sandbox",
+};
+
+/** "Waiting for sandbox — attempt 2 of 4" for a requeued step. */
+export function waitingText(kind: string, attempt: number, max: number): string {
+  return `Waiting for ${WAITING[kind] ?? kind.replace(/_/g, " ")} — retrying, attempt ${attempt + 1} of ${max}`;
 }
 
 /** "Skipped — step 2 failed": names the dependency (by its position in the run) whose failure stopped this step. */

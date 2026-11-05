@@ -1370,6 +1370,25 @@ for (const scheme of ["light", "dark"]) {
   }
 }
 
+test("@flow run page: a requeued step says it is waiting for a sandbox and which attempt", async () => {
+  const now = Date.now() / 1000;
+  const waiting = { ...RUN.subtasks[0], subtask: "w", title: "step waiting", state: "QUEUED", waiting_on: { kind: "sandbox_boot", attempt: 1, max: 4, since: now - 5, detail: "backend refused to boot" } };
+  const plain = { ...RUN.subtasks[0], subtask: "p", title: "step plain", state: "QUEUED" };
+  const run = { ...RUN, declared: 2, subtasks: [waiting, plain] };
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 2, states: {}, ts: 1 }] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByText("step waiting").waitFor();
+  const row = page.locator("li", { hasText: "step waiting" });
+  assert.ok(await row.getByText("Waiting for sandbox — retrying, attempt 2 of 4").isVisible());
+  assert.equal(await page.locator("li", { hasText: "step plain" }).getByText("Waiting for").count(), 0);
+  await ctx.close();
+});
+
 test("@flow run page: a step skipped because a dependency failed says so and shows no duration or cost", async () => {
   const step = (id, over) => ({ ...RUN.subtasks[0], subtask: id, title: `step ${id}`, ...over });
   const run = { ...RUN, declared: 2, subtasks: [

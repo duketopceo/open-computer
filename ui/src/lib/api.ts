@@ -70,8 +70,18 @@ export interface SubTask {
   thinking?: string; // reasoning text the step's model calls returned
   router?: RouterInfo; // absent on runs recorded before the router decision was kept
   worker?: WorkerInfo; // absent for steps that made no model call, and on older runs
+  waiting_on?: WaitingOn; // a requeued step that is backing off before its next attempt
   approval?: string; // AWAITING-APPROVAL steps: the Approvals queue item that unblocks them
   hosts?: string[]; // ...and the sites that item asks to allow
+}
+
+// Why a step is queued again: `attempt` executions have run so far, out of `max` allowed.
+export interface WaitingOn {
+  kind: string;
+  attempt: number;
+  max: number;
+  since: number;
+  detail?: string;
 }
 
 // What a run was started with, and what it has spent against its own budget.
