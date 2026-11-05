@@ -41,7 +41,7 @@ async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup } 
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
   // Empty runs list by default so the composer (not a run) is the landing view.
-  await page.route("**/api/runs", (r) => r.fulfill(json(200, { runs: [] })));
+  await page.route("**/api/runs*", (r) => r.fulfill(json(200, { runs: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   if (setup) await setup(page);
   await page.goto(base + "/", { waitUntil: "networkidle" });
@@ -103,7 +103,7 @@ test("@flow double Run sends one goal; failed confirm keeps the card and retries
 });
 
 test("@errors unreachable API shows the connection banner", async () => {
-  const { ctx, page } = await open({ routes: { "**/api/runs": (r) => r.abort("connectionrefused") } });
+  const { ctx, page } = await open({ routes: { "**/api/runs*": (r) => r.abort("connectionrefused") } });
   await page.getByRole("status").filter({ hasText: "Connection lost" }).waitFor();
   await ctx.close();
 });
@@ -119,7 +119,7 @@ test("@errors expired session shows sign-in and disables the composer", async ()
 test("@errors a missing run offers retry instead of spinning forever", async () => {
   const { ctx, page } = await open({
     routes: {
-      "**/api/runs": (r) => r.fulfill(json(200, { runs: [{ run: "g_gone", goal: "x", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_gone", goal: "x", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
       "**/api/runs/g_gone": (r) => r.fulfill(json(404, { error: "no such run" })),
     },
   });
@@ -939,7 +939,7 @@ test("@flow effort: a run shows its effort, model and spend, and a budget pause 
   ]) {
     const { ctx, page } = await open({
       routes: {
-        "**/api/runs": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
         "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, withEffort(effort))),
       },
     });
@@ -1096,6 +1096,99 @@ for (const scheme of ["dark", "light"]) {
     const server = await canvasOf(page);
     assert.equal(spa, CANVAS[scheme]);
     assert.equal(server, CANVAS[scheme]);
+    await ctx.close();
+  });
+}
+
+// ---- cleanup: delete, archive, clear finished (the API is faked in memory; nothing is removed for real)
+const row = (run, goal, finished = true, archived = false) =>
+  ({ run, goal, origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1, finished, archived });
+
+function cleanupApi(rows) {
+  const calls = [];
+  const routes = {
+    "**/api/runs*": (r) => {
+      const u = new URL(r.request().url());
+      if (u.pathname !== "/api/runs") return r.fallback();
+      return r.fulfill(json(200, { runs: rows.filter((x) => u.searchParams.get("archived") === "1" || !x.archived) }));
+    },
+    "**/api/runs/*/*": (r) => {
+      const [, , , id, op] = new URL(r.request().url()).pathname.split("/");
+      const body = JSON.parse(r.request().postData() || "{}");
+      calls.push([op, id, body]);
+      const i = rows.findIndex((x) => x.run === id);
+      if (op === "delete") rows.splice(i, 1);
+      if (op === "archive") rows[i].archived = body.archived;
+      return r.fulfill(json(200, { ok: true }));
+    },
+    "**/api/runs/clear": (r) => {
+      calls.push(["clear"]);
+      const n = rows.filter((x) => x.finished).length;
+      for (let i = rows.length - 1; i >= 0; i--) if (rows[i].finished) rows.splice(i, 1);
+      return r.fulfill(json(200, { cleared: n }));
+    },
+  };
+  return { calls, routes };
+}
+
+test("@cleanup delete asks in place, then removes the run; a working run offers no delete", async () => {
+  const rows = [row("goal_0000000a", "old junk"), row("goal_0000000b", "still going", false)];
+  const { calls, routes } = cleanupApi(rows);
+  const { ctx, page } = await open({ routes });
+  const junk = page.locator("div.group", { hasText: "old junk" });
+  await junk.hover();
+  await junk.getByRole("button", { name: "Delete run" }).click();
+  await page.getByText("Delete this run?").waitFor();
+  await page.getByRole("button", { name: "Keep" }).click();
+  assert.deepEqual(calls, [], "Keep must not call the API");
+  await junk.hover();
+  await junk.getByRole("button", { name: "Delete run" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByText("old junk").waitFor({ state: "detached" });
+  assert.deepEqual(calls, [["delete", "goal_0000000a", {}]]);
+  const busy = page.locator("div.group", { hasText: "still going" });
+  await busy.hover();
+  assert.equal(await busy.getByRole("button", { name: "Delete run" }).count(), 0);
+  await ctx.close();
+});
+
+test("@cleanup archive moves a run under Archived and restore brings it back", async () => {
+  const rows = [row("goal_0000000a", "keep me around")];
+  const { calls, routes } = cleanupApi(rows);
+  const { ctx, page } = await open({ routes });
+  const r = page.locator("div.group", { hasText: "keep me around" });
+  await r.hover();
+  await r.getByRole("button", { name: "Archive run" }).click();
+  await page.getByText("Archived (1)").waitFor();
+  await page.getByText("Archived (1)").click();
+  const a = page.locator("div.group", { hasText: "keep me around" });
+  await a.hover();
+  await a.getByRole("button", { name: "Restore run" }).click();
+  await page.getByText("Archived (1)").waitFor({ state: "detached" });
+  assert.deepEqual(calls.map((c) => [c[0], c[2].archived]), [["archive", true], ["archive", false]]);
+  await ctx.close();
+});
+
+test("@cleanup Clear finished confirms, removes only finished runs, keeps working ones", async () => {
+  const rows = [row("goal_0000000a", "done one"), row("goal_0000000b", "done two"), row("goal_0000000c", "running one", false)];
+  const { calls, routes } = cleanupApi(rows);
+  const { ctx, page } = await open({ routes });
+  await page.getByRole("button", { name: "Clear finished" }).click();
+  await page.getByRole("button", { name: "Remove 2" }).click();
+  await page.getByText("done one").waitFor({ state: "detached" });
+  assert.deepEqual(calls, [["clear"]]);
+  assert.ok(await page.getByText("running one").isVisible());
+  assert.equal(await page.getByRole("button", { name: "Clear finished" }).count(), 0);
+  await ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  test(`@cleanup rail hover state screenshot (${scheme})`, async () => {
+    const rows = [row("goal_0000000a", "Summarise the audit log"), row("goal_0000000b", "Map the dataset", false), row("goal_0000000c", "Old experiment", true, true)];
+    const { routes } = cleanupApi(rows);
+    const { ctx, page } = await open({ routes, scheme, w: 1100, h: 640 });
+    await page.locator("div.group", { hasText: "Summarise" }).hover();
+    if (process.env.OC_SHOTS) await page.screenshot({ path: `${process.env.OC_SHOTS}/cleanup-${scheme}.png` });
     await ctx.close();
   });
 }
