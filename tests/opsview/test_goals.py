@@ -156,7 +156,8 @@ def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
     got = None
     for _ in range(200):
         got = goalruns.get_run(rid)
-        if got and got["subtasks"] and got["subtasks"][0]["state"] == "FAILED":
+        # The mailbox says FAILED a moment before the worker_fail audit row lands: wait for both.
+        if got and got["subtasks"] and got["subtasks"][0]["state"] == "FAILED" and "error_kind" in got["subtasks"][0]:
             break
         time.sleep(0.05)
     sub = got["subtasks"][0]
