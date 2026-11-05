@@ -24,6 +24,29 @@ from .thinking import ThinkingLog, join_thoughts
 
 log = get_logger("worker")
 
+# A sandbox that will not boot is retried through the requeue path: the step is requeued while it has been
+# attempted fewer than REQUEUE_LIMIT times, so an execution count of REQUEUE_LIMIT + 1 is the most a step gets.
+REQUEUE_LIMIT = 3
+MAX_STEP_ATTEMPTS = REQUEUE_LIMIT + 1
+BOOT_RETRY_DELAY_S = 6.0  # gap between attempts, enforced by `not_before` — never slept in the sweep
+_clock = time.time  # injectable: tests move it instead of waiting
+
+
+def _not_before(fs, tid: str) -> float:
+    try:
+        return float((fs._task_dir(tid) / "not_before").read_text().strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
+def retry_delay(fs, agent: str) -> float:
+    """Seconds until the earliest pending task of `agent` that is held by a retry delay may be claimed; 0 when none."""
+    now = _clock()
+    waits = [
+        nb - now for tid in fs.inbox_ids(agent) if fs.pending(tid) and (nb := _not_before(fs, tid)) > now
+    ]
+    return min(waits) if waits else 0.0
+
 
 def _attempts(fs, tid: str) -> int:
     try:
@@ -73,6 +96,8 @@ def run_once(
 
 def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thinking: ThinkingLog | None) -> bool:
     """One inbox task. True when it was claimed (and so attempted), False when it was held or lost the claim."""
+    if _not_before(fs, tid) > _clock():
+        return False  # backing off after a sandbox boot failure: other steps run meanwhile
     token = None
     if ledger is not None:
         token = ledger.check(task["run"], float(task.get("est_cost", 0.0)))
@@ -93,6 +118,7 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
     t0 = time.monotonic()
     try:
         log.info("task claimed", agent=agent, placement=task.get("placement"), engine=task.get("engine"))
+        task["script_cache"] = str(fs._task_dir(tid) / "script.cache")  # a requeue reuses the generated script
         with collect_reasoning() as thoughts:
             try:
                 result = work_fn(task)
@@ -105,13 +131,24 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
         log.error("task failed", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1), **error_fields(e))
         if token:
             ledger.release(task["run"], token)
-        if isinstance(e, SandboxWorkerUnavailable) and _attempts(fs, tid) < 3:
+        if isinstance(e, SandboxWorkerUnavailable) and _attempts(fs, tid) < REQUEUE_LIMIT:
             # Temporary backend outage is not a step failure: release the
-            # lease so the task returns to queued for the next sweep.
-            attempts_file = fs._task_dir(tid) / "attempts"
-            attempts_file.write_text(str(_attempts(fs, tid) + 1))
+            # lease so the task returns to queued, to be claimed after the backoff.
+            attempt = _attempts(fs, tid) + 1
+            not_before = _clock() + BOOT_RETRY_DELAY_S
+            (fs._task_dir(tid) / "attempts").write_text(str(attempt))
+            (fs._task_dir(tid) / "not_before").write_text(repr(not_before))
             fs.expire(tid)
-            audit.append({"event": "worker_requeue", "task": tid, "reason": str(e)[:200]})
+            audit.append(
+                {
+                    "event": "worker_requeue",
+                    "task": tid,
+                    "reason": "sandbox_boot",
+                    "detail": str(e)[:200],
+                    "attempt": attempt,
+                    "not_before": not_before,
+                }
+            )
             return True
         fs.fail(tid)
         audit.append(

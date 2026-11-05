@@ -42,6 +42,8 @@ def work_sweep(run_dir: str) -> int:
     orch, rid = _recover(run_dir)
     model = model_of(orch.audit.rows())  # a run started with an effort keeps its model across workers
     done = orch.work(_engine_work_fn(model) if model else _engine_work_fn())
+    if not done and orch.retry_delay() > 0:
+        return HELD  # a step is backing off after a sandbox boot failure: the workflow sleeps, then sweeps again
     if not done and rid:
         if orch.wait_for_egress(rid, timeout=0):  # decided since the sweep began: held steps dispatched now
             return 1

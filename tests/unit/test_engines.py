@@ -9,7 +9,7 @@ import base64
 
 import pytest
 
-from services.execplane.client import ExecResult
+from services.execplane.client import ExecResult, SandboxUnavailable
 from services.orchestrator import engines
 
 
@@ -344,3 +344,55 @@ def test_slow_create_for_one_run_does_not_block_other_runs(scripted):
         gate.set()
         t.join(5)
         t2.join(5)
+
+
+# --- sandbox boot failure is retryable, and the generated script is cached (KTD6) ---
+
+
+class _BootFailSandbox(_FakeSandbox):
+    def exec(self, cmd):
+        raise SandboxUnavailable("sandbox boot failed: RuntimeError: backend refused to boot")
+
+
+@pytest.fixture
+def boot_sleeps(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(engines, "_sleep", sleeps.append)
+    return sleeps
+
+
+def _boot_fail_plane():
+    plane = _FakePlane()
+    plane.sb = _BootFailSandbox(ExecResult(0, "", ""))
+    return plane
+
+
+def test_boot_failure_after_recreate_becomes_retryable_with_backend_text(scripted, boot_sleeps):
+    with pytest.raises(engines.SandboxWorkerUnavailable, match="backend refused to boot"):
+        engines.sandbox_work({"prompt": "a", "run": "r1"}, api_key="k", plane=_boot_fail_plane())
+    assert boot_sleeps == [2.0]  # one pause, before the in-step re-create
+    engines._RUN_SANDBOXES.clear()
+
+
+def test_one_off_boot_failure_is_retryable_too(scripted, boot_sleeps):
+    with pytest.raises(engines.SandboxWorkerUnavailable, match="backend refused to boot"):
+        engines.sandbox_work({"prompt": "a"}, api_key="k", plane=_boot_fail_plane())
+
+
+def test_script_cache_skips_the_second_model_call(monkeypatch, boot_sleeps, tmp_path):
+    calls = []
+
+    def fake(url, model, prompt, **kw):
+        calls.append(prompt)
+        return "```bash\necho hello\n```", 0.0
+
+    monkeypatch.setattr(engines, "_chat", fake)
+    task = {"prompt": "a", "run": "r1", "script_cache": str(tmp_path / "script.cache")}
+    with pytest.raises(engines.SandboxWorkerUnavailable):
+        engines.sandbox_work(task, api_key="k", plane=_boot_fail_plane())
+    engines._RUN_SANDBOXES.clear()
+    good = _FakePlane(out="done\n")
+    assert engines.sandbox_work(task, api_key="k", plane=good) == "done\n"
+    assert len(calls) == 1
+    assert base64.b64decode(good.sb.seen[0].split()[1]).decode() == "echo hello"
+    engines._RUN_SANDBOXES.clear()
