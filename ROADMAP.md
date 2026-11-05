@@ -125,8 +125,8 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 
 | Id | Phase | Unit | Status |
 |---|---|---|---|
-| OC-068 | P3 | Routing truth: effort model for every step, local models opt-in (`OC_LOCAL_MODELS`), PII held for approval, real model and cost per step, durable/automation effort | open |
-| OC-069 | P3 | Run page truth: no false "private" label, show the served model | partial: the false "private" label is fixed (every step said it because an empty list is truthy); the served model and cost per step still need OC-068 to record them |
+| OC-068 | P3 | Routing truth: effort model for every step, local models opt-in (`OC_LOCAL_MODELS`), PII held for approval, real model and cost per step, durable/automation effort | partial: the goal-run half landed with the runtime-truth work (served model, provider, tokens and cost per step, and the router decision with its fallback cause, are recorded in the audit rows and shown on the run page; the decider model is `OC_DECIDER_MODEL`); the thread half remains in daily-driver U5 |
+| OC-069 | P3 | Run page truth: no false "private" label, show the served model | partial: the false "private" label is fixed (every step said it because an empty list is truthy); the goal-run half of the served model landed here (a model chip and a "routed by" chip per step, "no reasoning returned" when none came back); the thread half remains in daily-driver U5 |
 | OC-070 | P3 | Thread store, `/api/threads` and SSE stream, legacy runs read-through | partial: file-per-thread store, `/api/threads` list, detail (with its runs inlined), create, message, delete, archive, clear (this PR); polling, not SSE; legacy runs read through `/api/runs` |
 | OC-071 | P3 | OpenRouter client: tool calling and streaming | open |
 | OC-072 | P3 | App shell: Perplexity-style sidebar (New, Computer, Automations, Artifacts, Plugins; Pinned, Projects, Recents), texture, mobile | partial: New chat, Agent jobs, Chats and Earlier runs in the rail, Operator collapsed (this PR); Computer, Automations, Artifacts, Plugins, Pinned and Projects not built |

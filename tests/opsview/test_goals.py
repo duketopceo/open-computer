@@ -247,3 +247,43 @@ def test_reclaimed_step_uses_latest_start_and_joins_thinking(console, monkeypatc
     (s,) = goalruns.get_run(rid)["subtasks"]
     assert s["started_ts"] == 80.0
     assert s["thinking"] == "attempt one\n\nattempt two"
+
+
+def test_steps_expose_router_and_worker_and_cost_is_worker_plus_router(console, monkeypatch, tmp_path):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_70a0b000"
+    fb = {"engine": "decider", "kind": "EngineDown", "status": 404, "reason": "No endpoints found"}
+    worker = {"model": "deepseek/deepseek-v4-pro", "provider": "DeepInfra", "tokens_in": 30, "tokens_out": 12,
+              "tokens_reasoning": 0, "cost": 0.0102635}
+    _write_run(tmp_path, rid, [
+        {"event": "run_submit", "run": rid, "goal": "g", "subtasks": 3, "ts": 10.0},
+        {"event": "dispatch", "run": rid, "task": "t1", "subtask": "a", "cost": 0.000001, "ts": 11.0,
+         "router": {"engine": "jev", "model": "typesafe/jev-1.13", "confidence": 0.8, "ms": 250.0, "fallbacks": [fb]}},
+        {"event": "worker_start", "run": rid, "task": "t1", "subtask": "a", "ts": 12.0},
+        {"event": "worker_requeue", "task": "t1", "reason": "boot", "ts": 13.0, "worker": {**worker, "cost": 0.002}},
+        {"event": "worker_done", "task": "t1", "ts": 14.0, "worker": worker},
+        {"event": "dispatch", "run": rid, "task": "t2", "subtask": "b", "cost": 0.0, "ts": 15.0},
+        {"event": "worker_fail", "task": "t2", "kind": "RuntimeError", "error": "rc 1", "ts": 16.0,
+         "worker": {**worker, "cost": 0.004}},
+        {"event": "dispatch", "run": rid, "task": "t3", "subtask": "c", "cost": 0.5, "ts": 17.0},
+    ])
+    a, b, c = goalruns.get_run(rid)["subtasks"]
+    assert a["router"]["fallbacks"] == [fb] and a["router"]["engine"] == "jev"
+    assert a["worker"] == worker  # the attempt that finished
+    assert a["cost"] == pytest.approx(0.000001 + 0.002 + 0.0102635)  # the retried attempt was paid for too
+    assert b["worker"]["cost"] == 0.004 and b["cost"] == pytest.approx(0.004)
+    assert "router" not in b and "worker" not in c and c["cost"] == 0.5  # old rows: unchanged
+
+
+def test_router_ms_is_reported_in_milliseconds(monkeypatch, tmp_path):
+    from services.router import RouteDecision
+
+    class R:
+        def route(self, q):
+            return RouteDecision("cloud", "mid", "jev", 0.9, 0.0, 4.2)
+
+    import services.router as router_pkg
+
+    monkeypatch.setattr(router_pkg, "default_router", lambda *a, **k: R())
+    monkeypatch.setenv("OC_DATA_DIR", str(tmp_path))
+    assert server._route("hi")["ms"] == 4

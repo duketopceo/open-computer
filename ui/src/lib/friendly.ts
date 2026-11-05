@@ -43,3 +43,15 @@ export function shortId(id?: string): string {
   if (!id) return "";
   return id.length > 12 ? id.slice(0, 12) : id;
 }
+
+/** "deepseek/deepseek-v4-pro" -> "deepseek-v4-pro": the model's own name, without its vendor prefix. */
+export function modelName(id?: string | null): string {
+  return id ? id.slice(id.lastIndexOf("/") + 1) : "";
+}
+
+/** Why the router's first choice did not answer, in plain words ("decider unavailable (404)"); "" when it did. */
+export function fallbackWhy(router?: { fallbacks?: { engine: string; status?: number | null }[] }): string {
+  const fb = router?.fallbacks?.[0];
+  if (!fb) return "";
+  return `${fb.engine} unavailable${fb.status ? ` (${fb.status})` : ""}`;
+}

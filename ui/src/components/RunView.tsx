@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
-import { engine, errorKind, placement } from "@/lib/friendly";
-import { Dot, StateWord } from "./primitives";
+import { engine, errorKind, fallbackWhy, modelName, placement } from "@/lib/friendly";
+import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
 export function RunView({ run, compact = false }: { run: RunDetail; compact?: boolean }) {
@@ -90,6 +90,7 @@ function SubTaskRow({ s }: { s: SubTask }) {
             </span>
           )}
         </p>
+        <StepTruth s={s} />
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "AWAITING-APPROVAL" && (
           <p className="mt-1 text-xs text-accent">
@@ -108,6 +109,29 @@ function SubTaskRow({ s }: { s: SubTask }) {
         {s.thinking && <Thinking text={s.thinking} className="mt-2" />}
       </div>
     </li>
+  );
+}
+
+/** Which model served the step and who routed it, as two chips; plus a plain note when no reasoning came back. */
+function StepTruth({ s }: { s: SubTask }) {
+  const why = fallbackWhy(s.router);
+  const noReasoning = s.state === "DONE" && s.worker?.tokens_reasoning === 0 && !s.thinking;
+  if (!s.worker && !s.router && !noReasoning) return null;
+  return (
+    <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+      {s.worker && (
+        <Chip filled title={`Model ${s.worker.model}${s.worker.provider ? ` via ${s.worker.provider}` : ""}`}>
+          <span className="mono">{modelName(s.worker.model)}</span>
+        </Chip>
+      )}
+      {s.router && engine(s.router.engine) && (
+        <Chip title={why ? `Routed by ${engine(s.router.engine)} — ${why}` : undefined}>
+          routed by {engine(s.router.engine)}
+          {why && <span className="sr-only"> — {why}</span>}
+        </Chip>
+      )}
+      {noReasoning && <span>no reasoning returned</span>}
+    </p>
   );
 }
 

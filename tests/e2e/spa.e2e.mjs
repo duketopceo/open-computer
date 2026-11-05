@@ -1303,3 +1303,69 @@ test("@flow run page: only steps with detected PII say private; an empty list an
   assert.equal(await page.locator("li", { hasText: "step c" }).getByText("private details").count(), 0);
   await ctx.close();
 });
+
+// Router truth: the worker model and the router decision are two separate facts on each step row.
+const TRUTH_RUN = {
+  ...RUN, declared: 2,
+  subtasks: [
+    { ...RUN.subtasks[0], subtask: "a", title: "step a", cost: 0.0102635,
+      router: { engine: "jev", model: "typesafe/jev-1.13", confidence: 0.8, ms: 250,
+        fallbacks: [{ engine: "decider", kind: "EngineDown", status: 404, reason: "No endpoints found for perplexity/pplx-decider-v1.1-27b" }] },
+      worker: { model: "deepseek/deepseek-v4-pro", provider: "DeepInfra", tokens_in: 30, tokens_out: 12, tokens_reasoning: 0, cost: 0.0102635 } },
+    { ...RUN.subtasks[0], subtask: "b", title: "step b", result: "ok",
+      router: { engine: "decider", model: "perplexity/pplx-decider-v1.1-27b", confidence: 0.9, ms: 40, fallbacks: [] },
+      worker: { model: "google/gemini-2.5-flash", provider: "Acme", tokens_in: 9, tokens_out: 4, tokens_reasoning: 12, cost: 0.0001 },
+      thinking: "weighing the options" },
+  ],
+};
+const truthRoutes = (run) => ({
+  "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 2, states: {}, ts: 1 }] })),
+  "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+});
+
+test("@flow run page: each step shows its served model and a quieter routed-by chip that names the fallback cause", async () => {
+  const { ctx, page } = await open({ routes: truthRoutes(TRUTH_RUN), path: "/#g_e2e01" });
+  await page.getByText("step a").waitFor();
+  const a = page.locator("li", { hasText: "step a" });
+  const model = a.getByText("deepseek-v4-pro", { exact: true });
+  assert.equal(await model.count(), 1);
+  assert.equal(await a.locator("[title^='Model deepseek/deepseek-v4-pro']").getAttribute("title"), "Model deepseek/deepseek-v4-pro via DeepInfra");
+  const chip = a.locator("[title^='Routed by jev']");
+  assert.equal(await chip.count(), 1);
+  assert.equal(await chip.getAttribute("title"), "Routed by jev — decider unavailable (404)");
+  assert.ok((await chip.textContent()).includes("routed by jev"));
+  assert.ok((await chip.textContent()).includes("decider unavailable (404)"), "the cause is text for keyboard and screen-reader users too");
+  assert.ok((await a.innerText()).includes("$0.01"), "the worker cost is on the row");
+  const b = page.locator("li", { hasText: "step b" });
+  assert.equal(await b.getByText("routed by decider").count(), 1);
+  assert.equal(await b.locator("[title^='Routed by']").count(), 0, "no cause when the first engine answered");
+  await ctx.close();
+});
+
+test("@flow run page: a finished step with zero reasoning tokens says so; one that returned reasoning and old runs do not", async () => {
+  const { ctx, page } = await open({ routes: truthRoutes(TRUTH_RUN), path: "/#g_e2e01" });
+  await page.getByText("step a").waitFor();
+  assert.equal(await page.locator("li", { hasText: "step a" }).getByText("no reasoning returned").count(), 1);
+  assert.equal(await page.locator("li", { hasText: "step b" }).getByText("no reasoning returned").count(), 0);
+  await ctx.close();
+  const old = await open({ routes: truthRoutes({ ...RUN, declared: 1 }), path: "/#g_e2e01" });
+  const row = old.page.locator("ol li", { hasText: "say hi" });
+  await row.waitFor();
+  assert.equal(await row.getByText("no reasoning returned").count(), 0);
+  assert.equal(await row.getByText(/routed by/).count(), 0);
+  await old.ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  for (const w of [1440, 390]) {
+    test(`@a11y run page model and routed-by chips: axe 0 violations at ${w}px, ${scheme}`, async () => {
+      const { ctx, page } = await open({ w, scheme, routes: truthRoutes(TRUTH_RUN), path: "/#g_e2e01" });
+      await page.getByText("routed by jev").waitFor();
+      await page.evaluate(AXE);
+      const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+      assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${w} ${scheme}`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "no horizontal scroll");
+      await ctx.close();
+    });
+  }
+}

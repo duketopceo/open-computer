@@ -31,6 +31,7 @@ from services.mcp.server import State, handle
 from services.orchestrator import Orchestrator, engines
 from services.placement import Placement
 from services.router import Budget, Router
+from services.router.decide import EngineDown
 
 PLAN = json.dumps([
     {"id": "a", "title": "A", "prompt": "do a", "deps": []},
@@ -166,14 +167,15 @@ def test_recover_and_dep_failure_are_logged(tmp_path, fake, logs):
 
 def test_router_logs_the_decision_and_every_fallback(tmp_path, logs):
     def down(utterance):
-        raise ConnectionError("engine offline")
+        raise EngineDown("HTTP 500 for private document", status=500, reason="upstream error for private document")
 
     down.__name__ = "decider"
     router = Router(Budget(tmp_path / "ledger.jsonl"), [down])
     d = router.route("summarise this private document text")
     assert d.engine == "table"
     (warn,) = logs("router", "engine down, trying next")
-    assert warn["level"] == "WARNING" and warn["engine"] == "decider" and warn["error"] == "ConnectionError"
+    assert warn["level"] == "WARNING" and warn["engine"] == "decider" and warn["error"] == "EngineDown"
+    assert warn["status"] == 500 and "reason" not in warn  # the cause is logged; its text only with content capture
     logs()  # drained above for the first call; run again to read both lines together
     router.route("another private utterance")
     rows = logs("router")

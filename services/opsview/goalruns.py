@@ -221,6 +221,10 @@ def get_run(run_id: str) -> dict | None:
     done_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_done"}
     # A task can be claimed again after its lease expires; the latest claim is the attempt that finished.
     start_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_start"}
+    workers: dict[str, list[dict]] = {}  # every attempt that reported what served it, oldest first
+    for r in rows:
+        if isinstance(r.get("worker"), dict):
+            workers.setdefault(r.get("task"), []).append(r["worker"])
     thoughts: dict[str, list[str]] = {}
     for t in sorted(ThinkingLog(d / "thinking.ndjson").rows(), key=lambda t: t.get("ts") or 0):
         key = PLAN if t.get("subtask") == PLAN else t.get("task")
@@ -247,6 +251,11 @@ def get_run(run_id: str) -> dict | None:
             "cost": r.get("cost"),
             "pii": r.get("pii"),
         }
+        if isinstance(r.get("router"), dict):
+            rec["router"] = r["router"]
+        if tid in workers:  # real spend: every attempt's worker cost plus what the router paid to decide
+            rec["worker"] = workers[tid][-1]
+            rec["cost"] = sum(w.get("cost") or 0.0 for w in workers[tid]) + (r.get("cost") or 0.0)
         if state == "DONE":
             try:
                 rec["result"] = fs.collect("orchestrator", tid)

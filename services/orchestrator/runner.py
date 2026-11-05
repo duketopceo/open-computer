@@ -38,6 +38,15 @@ def _ctx(task: dict, tid: str):
                 service="worker")
 
 
+def _worker_view(usage: Usage | None) -> dict:
+    """The audit row's `worker` object: which model served the step and what it cost. Empty when nothing was spent."""
+    if usage is None:
+        return {}
+    return {"worker": {"model": usage.model, "provider": usage.provider, "tokens_in": usage.tokens_in,
+                       "tokens_out": usage.tokens_out, "tokens_reasoning": usage.tokens_reasoning,
+                       "cost": usage.cost}}
+
+
 @dataclass
 class WorkResult:
     """What a metering-aware work_fn returns: the output plus the provider-reported usage."""
@@ -111,7 +120,8 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
             attempts_file = fs._task_dir(tid) / "attempts"
             attempts_file.write_text(str(_attempts(fs, tid) + 1))
             fs.expire(tid)
-            audit.append({"event": "worker_requeue", "task": tid, "reason": str(e)[:200]})
+            audit.append({"event": "worker_requeue", "task": tid, "reason": str(e)[:200],
+                          **_worker_view(getattr(e, "usage", None))})
             return True
         fs.fail(tid)
         audit.append(
@@ -121,6 +131,7 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
                 "kind": type(e).__name__,
                 "error": str(e),
                 "hint": getattr(e, "hint", ""),
+                **_worker_view(getattr(e, "usage", None)),
             }
         )
         report_failure(
@@ -135,9 +146,11 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
         ledger.record(task["run"], task["subtask"], result.usage, token=token)
     elif token:
         ledger.release(task["run"], token)  # no usage reported: nothing was spent
+    used = result.usage if isinstance(result, WorkResult) else None
     if isinstance(result, WorkResult):
         result = result.output
     fs.outbox_write(agent, tid, result)
-    audit.append({"event": "worker_done", "task": tid})
+    audit.append({"event": "worker_done", "task": tid,
+                  **_worker_view(used)})
     log.info("task done", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1))
     return True
