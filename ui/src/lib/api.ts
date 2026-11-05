@@ -49,8 +49,18 @@ export interface SubTask {
   finished_ts?: number;
   skipped?: boolean; // a dependency failed, so the step never ran
   thinking?: string; // reasoning text the step's model calls returned
+  waiting_on?: WaitingOn; // a requeued step that is backing off before its next attempt
   approval?: string; // AWAITING-APPROVAL steps: the Approvals queue item that unblocks them
   hosts?: string[]; // ...and the sites that item asks to allow
+}
+
+// Why a step is queued again: `attempt` executions have run so far, out of `max` allowed.
+export interface WaitingOn {
+  kind: string;
+  attempt: number;
+  max: number;
+  since: number;
+  detail?: string;
 }
 
 // What a run was started with, and what it has spent against its own budget.

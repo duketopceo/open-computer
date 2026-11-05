@@ -28,7 +28,7 @@ from .collect import collect_run, task_state
 from .decompose import DEP_OUTPUT_CAP, DecomposeError, decompose
 from .dispatch import dispatch
 from .egress import EgressApproval, requested_hosts
-from .runner import WorkResult, run_once
+from .runner import WorkResult, retry_delay, run_once
 from .thinking import PLAN, ThinkingLog, join_thoughts
 
 log = get_logger("orchestrator")
@@ -405,6 +405,11 @@ class Orchestrator:
             self.dispatch_ready(run_id)
         return done
 
+    def retry_delay(self, agent: str = "worker") -> float:
+        """Seconds until a step backing off after a sandbox boot failure may run again (0: nothing is backing off).
+        The drive loop waits this out between sweeps — the sweep itself never sleeps."""
+        return retry_delay(self.fs, agent)
+
     def results(self, run_id: str) -> dict:
         return collect_run(self.fs, self.dispatches[run_id], list(self._subtasks[run_id]))
 
@@ -425,7 +430,10 @@ class Orchestrator:
             if all(r["state"] in ("DONE", "FAILED") for r in before.values()):
                 break
             if not self.work(work_fn, agent):
-                break
+                wait = self.retry_delay(agent)
+                if wait <= 0:
+                    break
+                time.sleep(wait)
         out = self.results(run_id)
         with bind(run_id=run_id, chat_id=self._chat.get(run_id), service="orchestrator"):
             states: dict[str, int] = {}
