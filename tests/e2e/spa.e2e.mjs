@@ -1234,9 +1234,13 @@ test("@chat a follow-up continues the same thread: one POST to that thread, mess
   assert.equal(await page.getByRole("radio").count(), 0);
   const box = page.getByRole("textbox", { name: "Message" });
   await box.fill("now make it louder");
+  // The UI is optimistic: the message and "Working" render before the POST (which first fetches a CSRF
+  // token) leaves the page, so wait for the POST's response before asserting what the server saw.
+  const posted = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/threads/th_e2e00001/messages"));
   await box.press("Enter");
   await page.getByRole("list", { name: "Conversation" }).getByText("now make it louder").waitFor();
   await page.getByRole("status").filter({ hasText: "Working" }).waitFor();
+  await posted;
   assert.deepEqual(api.calls, [["messages", { text: "now make it louder" }]]);
   await ctx.close();
 });
