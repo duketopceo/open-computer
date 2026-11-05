@@ -1,7 +1,10 @@
 export function cost(c: number | null | undefined): string {
   if (c == null || !isFinite(c)) return "—";
   if (c > 0 && c < 0.0001) return "<$0.0001"; // a charge must never render as $0
-  return `$${c.toFixed(c < 0.01 ? 4 : 2)}`;
+  if (c < 0.01) return `$${c.toFixed(4)}`;
+  // Per-step model costs sit between one and ten cents: keep the digits that tell them apart ($0.0103, $0.07).
+  if (c < 0.1) return `$${c.toFixed(4).replace(/(\.\d\d\d*?)0+$/, "$1")}`;
+  return `$${c.toFixed(2)}`;
 }
 
 export function dur(a?: number, b?: number): string {

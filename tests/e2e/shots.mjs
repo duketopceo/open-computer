@@ -3,6 +3,7 @@
 import { createRequire } from "node:module";
 const { chromium } = createRequire(import.meta.url)("playwright"); // honours NODE_PATH
 import fs from "node:fs";
+import { GID, manySteps, threeSteps } from "./timeline-fixture.mjs";
 
 const [base, out, prefix = "after"] = process.argv.slice(2);
 fs.mkdirSync(out, { recursive: true });
@@ -48,6 +49,33 @@ if (prefix === "after") {
     await page.goto(base + "/runs/new", { waitUntil: "networkidle" });
     await page.screenshot({ path: `${out}/after-run-confirm-${theme}-1440.png` });
     await ctx.close();
+  }
+}
+// run timeline (dev mode), routed fixtures: three steps expanded, and 400 virtualized steps
+if (prefix === "after") {
+  const json = (body) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  for (const theme of ["dark", "light"]) {
+    for (const [w, h] of [[1440, 900], [390, 844]]) {
+      for (const [name, s, finished] of [["timeline", threeSteps(), false], ["timeline-long", manySteps(400), true]]) {
+        const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme, reducedMotion: "reduce" });
+        await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
+        const page = await ctx.newPage();
+        await page.addInitScript((t) => { try { localStorage.setItem("oc-theme", t); } catch {} }, theme);
+        await page.route("**/api/runs*", (r) => r.fulfill(json({ runs: [] })));
+        await page.route("**/api/dev", (r) => r.fulfill(json({ trace: true, env: false, active: true })));
+        await page.route(`**/api/runs/${GID}/events*`, (r) => {
+          const after = Number(new URL(r.request().url()).searchParams.get("after"));
+          r.fulfill(json({ events: s.events.filter((e) => e.seq > after), last_seq: s.events.at(-1).seq, finished }));
+        });
+        await page.goto(`${base}/#${GID}/timeline`, { waitUntil: "networkidle" });
+        await page.locator("ul[aria-label=Steps] > li").first().waitFor();
+        if (name === "timeline") {
+          for (const b of await page.locator("ul[aria-label=Steps] button[aria-expanded]").all()) await b.click();
+        }
+        await page.screenshot({ path: `${out}/after-${name}-${theme}-${w}.png` });
+        await ctx.close();
+      }
+    }
   }
 }
 await browser.close();

@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { RunSummary, ThreadSummary } from "@/lib/api";
+import { errorMessage } from "@/lib/api";
+import { setDevTrace, useDevTrace } from "@/lib/devmode";
 import { rel } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { NAV } from "@/lib/nav";
@@ -116,6 +118,7 @@ export function Sidebar({
             Operator
           </summary>
           <NavList items={NAV.filter((n) => n.href !== "/")} label="Operator" />
+          <DevSwitch />
         </details>
         {identity && (
           <p className="mt-1 truncate px-2.5 text-[11px] text-muted" title={identity}>
@@ -275,5 +278,60 @@ function CmdIcon() {
       <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.6" />
       <circle cx="12" cy="12" r="3.5" stroke="currentColor" strokeWidth="1.6" />
     </svg>
+  );
+}
+
+// Dev trace records program text, command output, plan JSON and model reasoning for new runs, so
+// turning it on asks first; turning it off does not.
+function DevSwitch() {
+  const dev = useDevTrace();
+  const on = dev.active;
+  const [ask, setAsk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (v: boolean) => {
+    setBusy(true);
+    setErr("");
+    setDevTrace(v)
+      .then(() => setAsk(false))
+      .catch((e) => setErr(errorMessage(e, "Could not change Dev trace.")))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="mt-1 px-2.5 py-1.5">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        disabled={busy || dev.env}
+        onClick={() => (on ? set(false) : setAsk(true))}
+        className="flex w-full items-center justify-between gap-2 rounded-lg text-sm text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+      >
+        <span>Dev trace</span>
+        <span className="mono uppercase tracking-wider">{on ? "On" : "Off"}</span>
+      </button>
+      {dev.env && <p className="mt-1 text-xs text-muted">Forced on by the environment (OC_DEV_TRACE).</p>}
+      {ask && !on && (
+        <div role="alertdialog" aria-label="Turn on Dev trace" className="mt-2 rounded-lg border border-line bg-surface-2 p-2.5 text-xs text-ink">
+          <p>
+            Dev trace captures content for new runs: program text, command output, plan JSON and model reasoning. Secrets are redacted
+            before they are written, but the rest is stored on this machine.
+          </p>
+          <div className="mt-2 flex items-center gap-3">
+            <button disabled={busy} onClick={() => set(true)} className="font-medium text-ink underline underline-offset-2 hover:text-accent">
+              Turn on
+            </button>
+            <button disabled={busy} onClick={() => setAsk(false)} className="text-muted hover:text-ink">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {err && (
+        <p className="mt-1 text-xs text-urgent" role="alert">
+          {err}
+        </p>
+      )}
+    </div>
   );
 }

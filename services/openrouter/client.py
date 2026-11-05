@@ -4,6 +4,10 @@ Provider-reported `usage.cost` is the cost truth (OpenRouter always returns it; 
 with no reported cost is recorded `cost_source: "none"` and warned, never guessed. Recording failures never
 affect the call. Prompt/completion text is stored only with OC_OBS_CAPTURE_CONTENT=1 (and still redacted).
 
+Every chat call carries the model's catalog fallback chain as OpenRouter's native `models` array
+(services/router/model_catalog.py `call_params`); the row records the chain asked (`models_requested`), the model
+that served (`model_served`, from the response) and `fell_back` when that is not the first choice.
+
 Env: OC_OPENROUTER_BASE_URL (default https://openrouter.ai/api/v1), plus the attribution variables in
 `services.openrouter.attribution`.
 """
@@ -24,7 +28,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Iterator
 
-from oc.obs import capture_content, context, get_logger, redact_str
+from oc.obs import capture_content, context, devtrace, error_fields, get_logger, redact_str
 from services.cost import Usage
 
 from . import attribution
@@ -34,6 +38,7 @@ log = get_logger("openrouter")
 DEFAULT_BASE = "https://openrouter.ai/api/v1"
 _collector: ContextVar[list | None] = ContextVar("oc_or_usage", default=None)
 _reasoning: ContextVar[list | None] = ContextVar("oc_or_reasoning", default=None)
+_effort: ContextVar[str | None] = ContextVar("oc_or_effort", default=None)
 
 
 def base_url() -> str:
@@ -73,10 +78,20 @@ def collect_usage() -> Iterator[list[Usage]]:
 
 
 @contextmanager
+def effort_scope(effort: str | None) -> Iterator[None]:
+    """Every chat call inside the block runs at this effort level (low/medium/high) unless it names its own."""
+    token = _effort.set(effort)
+    try:
+        yield
+    finally:
+        _effort.reset(token)
+
+
+@contextmanager
 def collect_reasoning() -> Iterator[list[str]]:
     """Gather the reasoning text models returned on every OpenRouter call made inside the block.
 
-    Only what the model sends back unasked is kept; nothing here requests reasoning (it costs tokens)."""
+    Collects whatever the model sends back; `chat` asks for reasoning only on Medium/High effort."""
     box: list[str] = []
     token = _reasoning.set(box)
     try:
@@ -110,14 +125,16 @@ def extract_reasoning(resp: dict) -> str:
 
 
 def total_usage(items: list[Usage]) -> Usage | None:
+    """Sum a step's calls. The first served model and provider win (a step's calls share both in practice)."""
     if not items:
         return None
-    models = sorted({u.model for u in items if u.model})
     return Usage(
-        model=models[0] if len(models) == 1 else ",".join(models) or "unknown",
+        model=next((u.model for u in items if u.model), "unknown"),
         tokens_in=sum(u.tokens_in for u in items),
         tokens_out=sum(u.tokens_out for u in items),
         cost=sum(u.cost for u in items),
+        provider=next((u.provider for u in items if u.provider), None),
+        tokens_reasoning=sum(u.tokens_reasoning for u in items),
     )
 
 
@@ -166,6 +183,19 @@ def parse_response(resp: dict) -> dict:
     }
 
 
+def _fallback_fields(base: dict, parsed: dict) -> dict:
+    """`fell_back: true` when a fallback chain was sent and a later model served (OpenRouter may append a dated
+    suffix to the served id, so a served id that starts with the first choice is still the first choice)."""
+    chain, served = base.get("models_requested"), parsed.get("model_served")
+    if not chain or not served:
+        return {}
+    first = str(chain[0])
+    fell = not (served == first or served.startswith(first + "-") or served.startswith(first + ":"))
+    if fell:
+        log.warning("openrouter fallback served the call", requested=first, served=served)
+    return {"fell_back": fell}
+
+
 def _error_class(e: BaseException) -> tuple[str, int | None]:
     if isinstance(e, urllib.error.HTTPError):
         return f"http_{e.code}", e.code
@@ -187,6 +217,43 @@ def _record(store: CallStore | None, row: dict) -> None:
         _l._count_failure(None, None)
 
 
+def _trace_call(ctx: dict, row: dict, resp: dict | None = None) -> None:
+    """Dev trace: one `llm_call` per request, for runs that have a stream. Never affects the call."""
+    trace = devtrace.tracer(run_id=ctx.get("run_id"))
+    if trace is None:
+        return
+    try:
+        subtask = ctx.get("subtask")
+        kind = row["kind"]
+        if kind == "chat":  # the same client serves the planner, the workers and chat turns
+            kind = "work" if subtask else "plan" if ctx.get("service") == "orchestrator" else "chat"
+        ok = row["status"] == "ok"
+        reasoning = extract_reasoning(resp) if resp is not None else ""
+        trace.emit(
+            "llm_call",
+            id=devtrace.entity("call", row["call_id"]),
+            kind=kind,
+            status=row["status"],
+            step=devtrace.entity("step", subtask) if subtask else None,
+            model_requested=row.get("model_requested"),
+            model_served=row.get("model_served"),
+            provider=row.get("provider"),
+            tokens_in=row.get("tokens_in"),
+            tokens_out=row.get("tokens_out"),
+            tokens_cached=row.get("tokens_cached"),
+            tokens_reasoning=row.get("tokens_reasoning"),
+            cost_usd=max(0.0, row["cost"]) if ok else None,
+            latency_ms=row.get("latency_ms"),
+            generation_id=row.get("generation_id"),
+            reasoning=devtrace.text(reasoning, devtrace.REASONING_CAP) if reasoning else None,
+            error_class=row.get("error_class"),
+            http_status=row.get("http_status"),
+            error=devtrace.text(row["error"], 300) if row.get("error") else None,
+        )
+    except Exception as e:  # noqa: BLE001 - tracing never changes a call
+        log.warning("dev trace call dropped", **error_fields(e))
+
+
 def post(
     url: str,
     payload: dict,
@@ -205,6 +272,7 @@ def post(
     call_id = uuid.uuid4().hex[:16]
     base = {
         "event": "call", "call_id": call_id, "kind": kind, "model_requested": model or payload.get("model"),
+        **({"models_requested": list(payload["models"])} if isinstance(payload.get("models"), list) else {}),
         "url_host": urllib.parse.urlsplit(url).netloc,
         "prompt_chars": len(json.dumps(payload.get("messages", payload.get("state", "")), default=str)),
         "prompt_sha256": hashlib.sha256(
@@ -236,10 +304,12 @@ def post(
         row = {**base, "status": "error", "error_class": klass, "http_status": status, "latency_ms": latency,
                "error": msg[:300], "cost": 0.0, "cost_source": "none"}
         _record(store, row)
+        _trace_call(ctx, row)
         log.warning("openrouter call failed", call_id=call_id, kind=kind, error_class=klass, http_status=status,
                     latency_ms=latency)
         raise OpenRouterError(msg, status=status, error_class=klass) from e
     parsed = parse_response(resp)
+    parsed.update(_fallback_fields(base, parsed))
     row = {**base, "status": "ok", "latency_ms": latency, **parsed}
     if capture_content():
         row["prompt"] = payload.get("messages", payload.get("state"))
@@ -248,6 +318,7 @@ def post(
         except Exception:
             row["completion"] = None
     _record(store, row)
+    _trace_call(ctx, row, resp)
     (log.info if parsed["cost_source"] == "provider" else log.warning)(
         "openrouter call" if parsed["cost_source"] == "provider" else "openrouter call: no cost reported",
         call_id=call_id, kind=kind, model=parsed["model_served"], provider=parsed["provider"],
@@ -257,7 +328,7 @@ def post(
     sink = _collector.get()
     if sink is not None and (parsed["tokens_in"] or parsed["tokens_out"] or parsed["cost_source"] == "provider"):
         sink.append(Usage(parsed["model_served"] or str(base["model_requested"]), parsed["tokens_in"],
-                          parsed["tokens_out"], parsed["cost"]))
+                          parsed["tokens_out"], parsed["cost"], parsed["provider"], parsed["tokens_reasoning"]))
     thoughts = _reasoning.get()
     if thoughts is not None:
         text = extract_reasoning(resp)
@@ -276,11 +347,21 @@ def chat(
     timeout: float = 60.0,
     kind: str = "chat",
     store: CallStore | None = None,
+    effort: str | None = None,
     **params,
 ) -> ChatResult:
-    """One chat completion. Raises OpenRouterError (after recording the failed call)."""
+    """One chat completion. Raises OpenRouterError (after recording the failed call).
+
+    A catalog model is sent as its fallback chain (`models`, no `model`: OpenRouter tries them in order) and,
+    on Medium/High `effort` for a reasoning model, with `reasoning`. Explicit `params` win over both."""
+    from services.router.model_catalog import call_params  # local: the router package imports this client
+
     msgs = messages if messages is not None else [{"role": "user", "content": prompt or ""}]
-    resp, row = post(f"{base_url()}/chat/completions", {"model": model, "messages": msgs, **params},
+    extra = {**call_params(model, effort if effort is not None else _effort.get()), **params}
+    body = {"model": model, "messages": msgs, **extra}
+    if isinstance(body.get("models"), list) and len(body["models"]) > 1:
+        body.pop("model")  # the `models` array alone states the order
+    resp, row = post(f"{base_url()}/chat/completions", body,
                      key=key, timeout=timeout, kind=kind, model=model, store=store)
     try:
         text = resp["choices"][0]["message"]["content"]
@@ -290,7 +371,8 @@ def chat(
     text = text if isinstance(text, str) else ""
     u = None
     if row["tokens_in"] or row["tokens_out"] or row["cost_source"] == "provider":
-        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"])
+        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"], row["provider"],
+                  row["tokens_reasoning"])
     return ChatResult(text=text, usage=u, cost=row["cost"], generation_id=row["generation_id"],
                       model_served=row["model_served"], provider=row["provider"], finish_reason=row["finish_reason"],
                       latency_ms=row["latency_ms"], cost_source=row["cost_source"], call_id=row["call_id"],

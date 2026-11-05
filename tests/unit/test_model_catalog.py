@@ -35,7 +35,7 @@ def test_shipped_catalog_loads_and_every_price_is_under_the_ceiling_unless_flagg
 
 def test_defaults_and_presets_are_under_the_ceiling_and_the_default_is_not_high():
     cat = mc.CATALOG
-    assert cat.default_orchestrator == "deepseek/deepseek-v4-pro"
+    assert cat.default_orchestrator == "particle-ai/particle-1"
     worker = cat.get(cat.default_worker)
     assert worker and "worker" in worker.roles and not worker.over_ceiling()
     for model_id in [cat.default_orchestrator, cat.default_worker, *cat.presets.values()]:

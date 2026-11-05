@@ -1,6 +1,6 @@
 """Router — engine chain + budget gate + declared deterministic fallback.
 
-Chain: decider -> jev -> table. Never openrouter/auto (bench: worst
+Chain: decider (OC_DECIDER_MODEL) -> OC_DECIDER_FALLBACKS -> jev -> table. Never openrouter/auto (bench: worst
 accuracy, 17x cost). A 'table' decision is honest about what it is.
 """
 
@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
-from oc.obs import get_logger
+from oc.obs import capture_content, get_logger
 
 from . import decide as _decide
 from .budget import Budget, BudgetHalt  # noqa: F401  (re-exported)
@@ -29,6 +29,8 @@ class RouteDecision:
     cost: float
     ms: float
     model_used: str | None = None
+    router_model: str | None = None  # the model id the engine asked (model_used is the one that answered)
+    fallbacks: list[dict] = field(default_factory=list)  # engines tried first: {engine, kind, status, reason}
 
 
 Engine = Callable[[str], RouteDecision]
@@ -50,6 +52,7 @@ def _http_engine(name: str, model: str, base_url: str, api_key: str) -> Engine:
             cost=d["cost"],
             ms=d["ms"],
             model_used=d["model_used"],
+            router_model=model,
         )
 
     run.__name__ = name
@@ -75,25 +78,40 @@ class Router:
     def __init__(self, budget: Budget, engines: list[Engine]):
         self.budget = budget
         self.engines = engines
+        self._skipped: dict[str, dict] = {}  # engine name -> the fallback entry that retired it (404 no endpoints)
 
     def route(self, utterance: str) -> RouteDecision:
         self.budget.check()
         t0 = time.monotonic()
+        fallbacks: list[dict] = []
         for eng in self.engines:
+            name = getattr(eng, "__name__", "engine")
+            if name in self._skipped:
+                fallbacks.append(self._skipped[name])  # retired for this process; every step still shows why
+                continue
             try:
                 d = eng(utterance)
             except Exception as e:
-                log.warning("engine down, trying next", engine=getattr(eng, "__name__", "engine"),
-                            error=type(e).__name__)
+                fb = {"engine": name, "kind": type(e).__name__, "status": getattr(e, "status", None),
+                      "reason": getattr(e, "reason", "")}
+                fallbacks.append(fb)
+                log.warning("engine down, trying next", engine=name, error=fb["kind"], status=fb["status"],
+                            **({"reason": fb["reason"]} if capture_content() else {}))
+                if fb["status"] == 404 and "No endpoints" in fb["reason"]:
+                    self._skipped[name] = fb  # the model is gone: do not ask again until the process restarts
+                    log.warning("engine retired: no endpoints for its model", engine=name)
                 continue  # engine down/invalid — next in chain
             if not (d.route and d.tier):
                 log.warning("malformed decision rejected", engine=d.engine)
+                fallbacks.append({"engine": name, "kind": "MalformedDecision", "status": None, "reason": ""})
                 continue  # malformed decision — reject, next engine
+            d.fallbacks = fallbacks
             self.budget.record(d.cost, d.engine, d.route)
             self._log_decision(d, utterance, t0)
             return d
         # every engine down or invalid -> deterministic table, declared
         d = _table_engine()(utterance)
+        d.fallbacks = fallbacks
         self.budget.record(0.0, "table", d.route)
         log.warning("all engines down: table fallback", engines=len(self.engines))
         self._log_decision(d, utterance, t0)
@@ -114,13 +132,12 @@ def default_router(
     daily_cap: float | None = None,
     task_cap: float | None = None,
 ) -> Router:
-    """decider -> jev -> (implicit table). Config via env or args."""
+    """decider chain (decide.decider_chain) -> (implicit table). Config via env or args."""
     base = (base_url or os.environ.get("OPENROUTER_BASE") or _decide.DEFAULT_BASE).rstrip("/")
     key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
     engines: list[Engine] = []
     if key:
-        engines.append(_http_engine("decider", _decide.DECIDER_MODEL, base, key))
-        engines.append(_http_engine("jev", _decide.JEV_MODEL, base, key))
+        engines.extend(_http_engine(name, model, base, key) for name, model in _decide.decider_chain())
     daily = daily_cap if daily_cap is not None else float(os.environ.get("OC_DAILY_CAP", "1.0"))
     task = task_cap if task_cap is not None else float(os.environ.get("OC_TASK_CAP", "0.10"))
     return Router(Budget(ledger_path, daily_cap=daily, task_cap=task), engines)

@@ -71,5 +71,8 @@ def entities(events: list[dict], type_: str) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for e in events:
         if e["type"] == type_:
-            out[e["data"]["id"]] = {**out.get(e["data"]["id"], {}), **e["data"]}
+            prior = out.get(e["data"]["id"], {})
+            if type_ == "step" and "waiting_on" not in e["data"]:
+                prior = {k: v for k, v in prior.items() if k != "waiting_on"}  # a wait ends with the next plain step event
+            out[e["data"]["id"]] = {**prior, **e["data"]}
     return out

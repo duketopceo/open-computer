@@ -5,8 +5,12 @@ inputs only; recorded cost still comes from the provider response (services/cost
 
 Spend rule (ROADMAP.md): the price ceiling is Grok 4.7 class, about $1.60 input / $4.80 output per Mtok. An entry
 above it loads only with an explicit `above_ceiling: true` set by hand, and a flagged entry can never be the default
-orchestrator or worker, a preset, or a tier member. Local models are a separate list gated by `OC_LOCAL_MODELS`
+orchestrator or worker, a preset, a tier member, or a fallback. Local models are a separate list gated by `OC_LOCAL_MODELS`
 and sit outside these price checks.
+
+Fallbacks: every entry may name an ordered `fallbacks` chain. `call_params` turns it into OpenRouter's native
+`models` array on each chat call, so a provider outage, rate limit or refusal moves the call to the next model
+inside the same request; the response's `model` names the one that served, and cost is recorded for that one.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ CEILING_OUTPUT = 4.80  # USD per Mtok
 ROLES = ("orchestrator", "worker")
 LEVELS = ("low", "medium", "high")
 CLOUD_TIERS = ("cheap", "mid", "frontier")
+MAX_FALLBACKS = 2  # OpenRouter's `models` array: the primary plus at most two more
+REASONING_LEVELS = {"medium": "medium", "high": "high"}  # effort level -> OpenRouter `reasoning.effort`; Low asks none
 LOCAL_MODELS = ("typesafe/jev-1.13", "local/ollama")  # shown only when OC_LOCAL_MODELS is on
 PATH = Path(__file__).with_name("model_catalog.json")
 
@@ -41,6 +47,8 @@ class Entry:
     context: int
     tiers: tuple[str, ...]
     above_ceiling: bool
+    fallbacks: tuple[str, ...] = ()
+    reasoning: bool = False
 
     def over_ceiling(self) -> bool:
         return self.input_price > CEILING_INPUT or self.output_price > CEILING_OUTPUT
@@ -56,6 +64,8 @@ class Entry:
             "output_price": self.output_price,
             "context": self.context,
             "above_ceiling": self.above_ceiling,
+            "fallbacks": list(self.fallbacks),
+            "reasoning": self.reasoning,
         }
 
 
@@ -81,6 +91,16 @@ class Catalog:
     def tier_models(self) -> dict[str, list[str]]:
         return {t: [e.id for e in self.entries if t in e.tiers] for t in CLOUD_TIERS}
 
+    def chain(self, model_id: str) -> list[str]:
+        """The model followed by its fallbacks, in order. A model outside the catalog has no chain."""
+        e = self.get(model_id)
+        return [model_id, *e.fallbacks] if e else [model_id]
+
+    def effort_for(self, model_id: str) -> str | None:
+        """The lowest effort level whose preset is this model (how a run started without a recorded effort, such
+        as a resumed run or a chat turn, is treated). None when no level uses it."""
+        return next((lv for lv in LEVELS if self.presets.get(lv) == model_id), None)
+
 
 def _price(raw: dict, key: str, where: str) -> float:
     v = raw.get(key)
@@ -100,6 +120,14 @@ def _entry(raw: dict) -> Entry:
     tiers = tuple(raw.get("tiers") or ())
     if any(t not in CLOUD_TIERS for t in tiers):
         raise CatalogError(f"{where}: tiers must be a subset of {CLOUD_TIERS}")
+    fallbacks = raw.get("fallbacks") or []
+    if not isinstance(fallbacks, list) or not all(isinstance(f, str) and f for f in fallbacks):
+        raise CatalogError(f"{where}: fallbacks must be a list of model ids")
+    if len(fallbacks) > MAX_FALLBACKS or len(set(fallbacks)) != len(fallbacks) or mid in fallbacks:
+        raise CatalogError(f"{where}: fallbacks must be at most {MAX_FALLBACKS} distinct models other than itself")
+    reasoning = raw.get("reasoning", False)
+    if not isinstance(reasoning, bool):
+        raise CatalogError(f"{where}: reasoning must be true or false")
     flagged = raw.get("above_ceiling", False)
     if not isinstance(flagged, bool):
         raise CatalogError(f"{where}: above_ceiling must be true or false")
@@ -117,6 +145,8 @@ def _entry(raw: dict) -> Entry:
         context=ctx,
         tiers=tiers,
         above_ceiling=flagged,
+        fallbacks=tuple(fallbacks),
+        reasoning=reasoning,
     )
     if e.over_ceiling() and not e.above_ceiling:
         raise CatalogError(f"{where}: price is above the ceiling; set above_ceiling: true by hand or remove it")
@@ -138,6 +168,23 @@ def _default(by_id: dict[str, Entry], mid: object, role: str, what: str) -> str:
     return e.id
 
 
+def _check_fallbacks(by_id: dict[str, Entry]) -> None:
+    """Each fallback is a catalog entry under the ceiling that can do every role its model has, and has tool
+    calling when its model does (a fallback answers the same request, tools included)."""
+    for e in by_id.values():
+        for f in e.fallbacks:
+            fb = by_id.get(f)
+            what = f"model {e.id}: fallback {f!r}"
+            if fb is None:
+                raise CatalogError(f"{what} is not a catalog entry")
+            if fb.above_ceiling:
+                raise CatalogError(f"{what} is above the ceiling; it can never be a fallback")
+            if not set(e.roles) <= set(fb.roles):
+                raise CatalogError(f"{what} lacks a role its model has ({', '.join(e.roles)})")
+            if e.tools and not fb.tools:
+                raise CatalogError(f"{what} has no tool calling, which its model's role needs")
+
+
 def parse(data: dict) -> Catalog:
     raw = data.get("models")
     if not isinstance(raw, list) or not raw:
@@ -146,6 +193,7 @@ def parse(data: dict) -> Catalog:
     by_id = {e.id: e for e in entries}
     if len(by_id) != len(entries):
         raise CatalogError("duplicate model id")
+    _check_fallbacks(by_id)
     presets_raw = data.get("presets")
     if not isinstance(presets_raw, dict) or set(presets_raw) != set(LEVELS):
         raise CatalogError(f"presets must name exactly {LEVELS}")
@@ -169,6 +217,23 @@ def load(path: Path = PATH) -> Catalog:
 CATALOG = load()
 DEFAULT_ORCHESTRATOR_MODEL = CATALOG.default_orchestrator
 DEFAULT_WORKER_MODEL = CATALOG.default_worker
+
+
+def call_params(model_id: str, effort: str | None = None) -> dict:
+    """Extra OpenRouter chat-request fields for one call to `model_id`: the `models` fallback array when the
+    model has fallbacks, and `reasoning` when the model supports it and the effort is Medium or High. `effort`
+    None means unknown: the lowest level whose preset is this model stands in. Models outside the catalog
+    (local, test doubles) get nothing."""
+    e = CATALOG.get(model_id)
+    if e is None:
+        return {}
+    out: dict = {}
+    if e.fallbacks:
+        out["models"] = CATALOG.chain(model_id)
+    level = effort if effort is not None else CATALOG.effort_for(model_id)
+    if e.reasoning and level in REASONING_LEVELS:
+        out["reasoning"] = {"effort": REASONING_LEVELS[level]}
+    return out
 
 
 def local_models_enabled() -> bool:

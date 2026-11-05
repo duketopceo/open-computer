@@ -65,7 +65,7 @@ def ap(job, rid, verb):
 # ---------------------------------------------------------------- submit
 def test_submit_needs_confirm_and_records_nothing(console):
     s, b = post(console, "/api/agent-jobs", {"goal": "ship the thing"})
-    assert (s, b) == (200, {"needs_confirm": True, "budget": 25.0, "model": "deepseek/deepseek-v4-pro"})
+    assert (s, b) == (200, {"needs_confirm": True, "budget": 25.0, "model": "particle-ai/particle-1"})
     assert get(console, "/api/agent-jobs") == (200, {"jobs": []})
     s, b = post(console, "/api/agent-jobs", {"goal": "x", "budget": 5})
     assert b["budget"] == 5.0 and get(console, "/api/agent-jobs")[1] == {"jobs": []}

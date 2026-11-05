@@ -28,13 +28,51 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from oc.obs import context as obs_context
+from oc.obs import devtrace, error_fields, get_logger
 from services.execplane.client import SandboxUnavailable
 from services.router.model_catalog import DEFAULT_WORKER_MODEL
 
-from services.openrouter import OpenRouterError, collect_usage, total_usage
+from services.openrouter import OpenRouterError, collect_usage, effort_scope, total_usage
 from services.openrouter import chat as or_chat
 
 from .runner import WorkResult
+
+
+log = get_logger("engines")
+
+
+class _CommandTrace:
+    """Dev trace of one sandbox command: a `tool_call` shell.exec, running while it executes, then its rc and
+    output tails. A no-op unless the run has a stream; tracing never changes the command's outcome."""
+
+    def __init__(self, task: dict, script: str):
+        self.trace = devtrace.tracer(run_id=str(task.get("run") or ""), actor="worker")
+        self.t0 = time.monotonic()
+        if self.trace is None:
+            return
+        task_id = obs_context.current().get("task") or "task"
+        self.id = devtrace.entity("tool", f"{task_id}_{int(time.time() * 1000)}")
+        self.step = devtrace.entity("step", task.get("subtask") or "x")
+        self.command = devtrace.text(script)
+        self.trace.emit("tool_call", id=self.id, name="shell.exec", status="running", step=self.step,
+                        command=self.command)
+
+    def finish(self, res=None, exc: BaseException | None = None) -> None:
+        if self.trace is None:
+            return
+        try:
+            rc = getattr(res, "returncode", None)
+            self.trace.emit(
+                "tool_call", id=self.id, name="shell.exec", status="ok" if rc == 0 else "error", step=self.step,
+                command=self.command, rc=rc if isinstance(rc, int) else None,
+                stdout_tail=devtrace.tail(getattr(res, "stdout", "")) if res is not None else None,
+                stderr_tail=devtrace.tail(getattr(res, "stderr", "")) if res is not None else None,
+                summary=devtrace.text(f"{type(exc).__name__}: {exc}", 300) if exc is not None else None,
+                duration_ms=int((time.monotonic() - self.t0) * 1000),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("dev trace command dropped", **error_fields(e))
 
 
 class WorkerUnavailable(RuntimeError):
@@ -304,9 +342,11 @@ def sandbox_work(
         res = None
         for attempt in range(2):  # transient VM/control-plane errors get exactly one retry
             ent = _acquire_run_sandbox(plane, run_id, hosts)
+            ct = _CommandTrace(task, script)
             try:
                 res = ent["sb"].exec(cmd)
             except Exception as e:
+                ct.finish(exc=e)
                 _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
                 boot = isinstance(e, SandboxUnavailable)
                 if attempt == 1:
@@ -318,6 +358,7 @@ def sandbox_work(
                 continue
             finally:
                 _release_run_sandbox(ent)
+            ct.finish(res)
             break
     else:
         sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)
@@ -378,18 +419,21 @@ def _chat(url: str, model: str, prompt: str, key: str = "", timeout: float = 60.
 def decompose_engine(
     model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
+    effort: str | None = None,
 ) -> Callable[[str], str]:
-    """Planner: one OpenRouter call, returns raw text for decompose()."""
+    """Planner: one OpenRouter call, returns raw text for decompose(). `effort` (low/medium/high) decides whether
+    reasoning is requested; None infers it from the model's preset level."""
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
 
     def engine(prompt: str) -> str:
-        text, _ = _chat(
-            "https://openrouter.ai/api/v1/chat/completions",
-            model,
-            prompt,
-            key=key,
-            timeout=60,
-        )
+        with effort_scope(effort):
+            text, _ = _chat(
+                "https://openrouter.ai/api/v1/chat/completions",
+                model,
+                prompt,
+                key=key,
+                timeout=60,
+            )
         return text
 
     return engine
@@ -423,15 +467,16 @@ def local_work(task: dict) -> str:
 def work_fn(
     or_model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
+    effort: str | None = None,
 ) -> Callable[[dict], str]:
-    """The dispatched-task executor. Placement is honored, not decorative."""
+    """The dispatched-task executor. Placement is honored, not decorative. `effort` as for decompose_engine."""
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
 
     def run(task: dict):
         target = task.get("placement", "")
         if target.startswith("local"):
             return local_work(task)
-        with collect_usage() as used:
+        with collect_usage() as used, effort_scope(effort):
             try:
                 if target == "cloud-sandbox":
                     out = sandbox_work(task, model=or_model, api_key=key)

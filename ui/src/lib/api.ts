@@ -28,6 +28,25 @@ export interface RunSummary {
   finished?: boolean;
 }
 
+/** The router's decision for a step; `fallbacks` lists the engines tried first and why each was skipped. */
+export interface RouterInfo {
+  engine: string;
+  model?: string | null;
+  confidence?: number | null;
+  ms?: number | null;
+  fallbacks?: { engine: string; kind: string; status?: number | null; reason?: string }[];
+}
+
+/** What actually served a step: the model id the provider reported, and its tokens and dollars. */
+export interface WorkerInfo {
+  model: string;
+  provider?: string | null;
+  tokens_in?: number;
+  tokens_out?: number;
+  tokens_reasoning?: number;
+  cost?: number;
+}
+
 export interface SubTask {
   subtask: string;
   title: string;
@@ -49,6 +68,8 @@ export interface SubTask {
   finished_ts?: number;
   skipped?: boolean; // a dependency failed, so the step never ran
   thinking?: string; // reasoning text the step's model calls returned
+  router?: RouterInfo; // absent on runs recorded before the router decision was kept
+  worker?: WorkerInfo; // absent for steps that made no model call, and on older runs
   waiting_on?: WaitingOn; // a requeued step that is backing off before its next attempt
   approval?: string; // AWAITING-APPROVAL steps: the Approvals queue item that unblocks them
   hosts?: string[]; // ...and the sites that item asks to allow
@@ -136,7 +157,7 @@ async function request(url: string, init?: RequestInit): Promise<unknown> {
   return body;
 }
 
-async function json<T>(url: string, init?: RequestInit): Promise<T> {
+export async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return (await request(url, init)) as T;
 }
 
@@ -217,7 +238,7 @@ export async function getRun(id: string): Promise<RunDetail> {
 }
 
 // JSON POST with a fresh CSRF token (the convention for every mutation).
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+export async function postJson<T>(url: string, body: unknown): Promise<T> {
   const token = await csrf();
   return json<T>(url, {
     method: "POST",

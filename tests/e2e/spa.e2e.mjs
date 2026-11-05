@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const AXE = fs.readFileSync(process.env.AXE_JS || require.resolve("axe-core/axe.min.js"), "utf8");
 const REPO = path.resolve(import.meta.dirname, "../..");
+const PORT = process.env.OC_E2E_PORT || "8891"; // override when another checkout is testing on the same machine
 const PY = (process.env.OC_PYTHON || "uv run --with fido2 python").split(" ");
 
 if (!fs.existsSync(path.join(REPO, "ui/dist/index.html"))) {
@@ -23,14 +24,14 @@ let browser, base, server;
 before(async () => {
   browser = await chromium.launch();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-spa-"));
-  server = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", "8891", dir], { cwd: REPO });
+  server = spawn(PY[0], [...PY.slice(1), "-I", "tests/opsview/serve_fixture.py", PORT, dir], { cwd: REPO });
   server.stderr.on("data", (d) => process.stderr.write(d));
   await new Promise((res, rej) => {
     server.stdout.on("data", (d) => String(d).includes("ready") && res());
     server.on("exit", (c) => rej(new Error("fixture exited " + c)));
     setTimeout(() => rej(new Error("fixture timeout")), 30000);
   });
-  base = "http://127.0.0.1:8891";
+  base = `http://127.0.0.1:${PORT}`;
 });
 after(async () => { await browser?.close(); server?.kill(); });
 
@@ -42,6 +43,9 @@ async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, p
   const page = await ctx.newPage();
   // Empty runs list by default so the composer (not a run) is the landing view.
   await page.route("**/api/runs*", (r) => r.fulfill(json(200, { runs: [] })));
+  // The sidebar reads /api/dev; the fixture server predates it, so answer it here (tests override).
+  await page.route("**/api/dev", (r) => r.fulfill(json(200, { trace: false, env: false, active: false })));
+  await page.route("**/api/runs/*/events*", (r) => r.fulfill(json(404, { error: "dev trace off for this run" })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   if (setup) await setup(page);
   await page.goto(base + path, { waitUntil: "networkidle" });
@@ -149,6 +153,8 @@ async function openAt(path, { w = 1440, h = 900, routes = {} } = {}) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce" });
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
+  await page.route("**/api/dev", (r) => r.fulfill(json(200, { trace: false, env: false, active: false })));
+  await page.route("**/api/runs/*/events*", (r) => r.fulfill(json(404, { error: "dev trace off for this run" })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   await page.goto(base + path, { waitUntil: "networkidle" });
   return { ctx, page };
@@ -1303,6 +1309,324 @@ test("@flow run page: only steps with detected PII say private; an empty list an
   assert.equal(await page.locator("li", { hasText: "step c" }).getByText("private details").count(), 0);
   await ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Run timeline (dev mode): events come from routed fixtures, never a live run.
+// ---------------------------------------------------------------------------
+import { GID, manySteps, threeSteps } from "./timeline-fixture.mjs";
+
+const TL = `/#${GID}/timeline`;
+const PROBE = 2 ** 31 - 1;
+
+function eventsRoute(getEvents, { afters = [], finished = () => true } = {}) {
+  return (r) => {
+    const u = new URL(r.request().url());
+    if (u.pathname.endsWith("events.jsonl")) return r.fulfill({ status: 200, contentType: "application/x-ndjson", body: "" });
+    const after = Number(u.searchParams.get("after"));
+    if (after !== PROBE) afters.push(after);
+    const all = getEvents();
+    r.fulfill(json(200, { events: all.filter((e) => e.seq > after).slice(0, 500), last_seq: all.at(-1)?.seq ?? 0, finished: finished() }));
+  };
+}
+
+const timelineRoutes = (getEvents, opts, dev = true) => ({
+  [`**/api/runs/${GID}/events*`]: eventsRoute(getEvents, opts),
+  "**/api/dev": (r) => r.fulfill(json(200, { trace: dev, env: false, active: dev })),
+});
+
+const steps = (page) => page.locator("ul[aria-label=Steps] > li");
+
+test("@timeline three steps render as cards in first-seen order with model and router chips", async () => {
+  const s = threeSteps();
+  const { ctx, page } = await open({ routes: timelineRoutes(() => s.events), path: TL });
+  await steps(page).first().waitFor();
+  assert.equal(await steps(page).count(), 3);
+  const titles = await steps(page).locator("button span.truncate").allTextContents();
+  assert.deepEqual(titles, ["Fetch the sheet", "Parse the rows", "Write the report"]);
+  const first = steps(page).nth(0);
+  assert.ok(await first.getByText("Model deepseek-v4-pro").isVisible());
+  assert.ok(await first.getByText("Routed by jev").isVisible());
+  assert.ok(await first.getByText("decider unavailable (404)").isVisible());
+  assert.ok(await first.getByText("$0.0103", { exact: true }).isVisible(), "cost is the worker call's real cost, to the digit");
+  await ctx.close();
+});
+
+test("@timeline a later poll with only new events updates a card in place without reordering", async () => {
+  const s = threeSteps();
+  const first = 11; // the first reply ends at seq 11; step_t3 is still pending
+  const all = s.events.filter((e) => e.seq <= first);
+  const afters = [];
+  let served = all;
+  const { ctx, page } = await open({ routes: timelineRoutes(() => served, { afters, finished: () => false }), path: TL });
+  await steps(page).first().waitFor();
+  const titles = () => steps(page).locator("button span.truncate").allTextContents();
+  const before = await titles();
+  served = s.events; // adds events above `first`
+  await steps(page).nth(2).getByText("Waiting").first().waitFor({ timeout: 5000 });
+  assert.deepEqual(await titles(), before, "order is first-seen order and does not change");
+  assert.equal(afters[0], 0);
+  assert.ok(afters.slice(1).every((a) => a >= first), `later polls ask only for events after the cursor: ${afters}`);
+  assert.ok(afters.at(-1) > 0);
+  await ctx.close();
+});
+
+test("@timeline a step waiting on the sandbox says which attempt it is on", async () => {
+  const s = threeSteps();
+  const { ctx, page } = await open({ routes: timelineRoutes(() => s.events), path: TL });
+  await steps(page).first().waitFor();
+  const card = steps(page).nth(2);
+  assert.ok(await card.getByText("Waiting for sandbox — retrying, attempt 2 of 4").isVisible());
+  assert.ok(!(await card.getByText("Running", { exact: true }).count()), "waiting is its own state, not running");
+  await ctx.close();
+});
+
+test("@timeline a failed command shows rc 1 and the stderr tail, with the plain-words error first", async () => {
+  const s = threeSteps();
+  const { ctx, page } = await open({ routes: timelineRoutes(() => s.events), path: TL });
+  await steps(page).first().waitFor();
+  const card = steps(page).nth(1);
+  await card.getByRole("button", { name: /Parse the rows/ }).click();
+  const detail = card.locator("[id^=step-][id$=-detail]");
+  assert.ok(await detail.getByText("rc 1").isVisible());
+  const stderr = detail.getByLabel("stderr");
+  assert.ok((await stderr.textContent()).trim().endsWith("IndexError: list index out of range"));
+  const text = await detail.innerText();
+  assert.ok(text.indexOf("exited with an error") >= 0 && text.indexOf("exited with an error") < text.indexOf("rc 1"), "plain error precedes the command");
+  assert.ok(await detail.getByText("rc=1: IndexError", { exact: false }).count(), "raw text is kept under Details");
+  await ctx.close();
+});
+
+test("@timeline a call that returned no reasoning says so", async () => {
+  const s = threeSteps();
+  const { ctx, page } = await open({ routes: timelineRoutes(() => s.events), path: TL });
+  await steps(page).first().waitFor();
+  const card = steps(page).nth(1); // call_w2 has no reasoning
+  await card.getByRole("button", { name: /Parse the rows/ }).click();
+  assert.ok(await card.getByText("no reasoning returned").isVisible());
+  const done = steps(page).nth(0);
+  await done.getByRole("button", { name: /Fetch the sheet/ }).click();
+  assert.equal(await done.getByText("no reasoning returned").count(), 0);
+  await ctx.close();
+});
+
+test("@timeline 400 steps render few DOM rows and scrolling to the end shows step 400", async () => {
+  const s = manySteps(400);
+  const { ctx, page } = await open({ routes: timelineRoutes(() => s.events), path: TL });
+  await steps(page).first().waitFor();
+  assert.ok((await steps(page).count()) < 80, `rendered ${await steps(page).count()} rows`);
+  const region = page.getByRole("region", { name: "Steps" });
+  for (let i = 0; i < 40 && !(await page.getByText("Step 400", { exact: true }).count()); i++) {
+    await region.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await page.waitForTimeout(60);
+  }
+  assert.ok(await page.getByText("Step 400", { exact: true }).isVisible());
+  assert.ok((await steps(page).count()) < 80);
+  await ctx.close();
+});
+
+test("@timeline dev trace off: no Timeline link on the run, and the timeline route is an honest empty state", async () => {
+  const noStream = (r) => r.fulfill(json(404, { error: "dev trace off for this run" }));
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+      "**/api/runs/g_e2e01/events*": noStream,
+      [`**/api/runs/${GID}/events*`]: noStream,
+      "**/api/dev": (r) => r.fulfill(json(200, { trace: false, env: false, active: false })),
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByRole("heading", { name: "say hi" }).waitFor();
+  await page.waitForTimeout(300);
+  assert.equal(await page.getByRole("link", { name: "Timeline" }).count(), 0);
+  await page.goto(base + TL);
+  await page.getByText("No timeline for this run").waitFor();
+  assert.equal(await page.getByRole("link", { name: "Export JSONL" }).count(), 0);
+  await ctx.close();
+});
+
+test("@timeline a run with a stream offers the Timeline link", async () => {
+  const s = threeSteps();
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: GID, goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+      [`**/api/runs/${GID}`]: (r) => r.fulfill(json(200, { ...RUN, run: GID })),
+      ...timelineRoutes(() => s.events),
+    },
+    path: `/#${GID}`,
+  });
+  const link = page.getByRole("link", { name: "Timeline" });
+  await link.waitFor();
+  assert.equal(await link.getAttribute("href"), `#${GID}/timeline`);
+  await link.click();
+  await steps(page).first().waitFor();
+  await ctx.close();
+});
+
+test("@timeline Export JSONL links to the events.jsonl export", async () => {
+  const s = threeSteps();
+  const { ctx, page } = await open({ routes: timelineRoutes(() => s.events), path: TL });
+  await steps(page).first().waitFor();
+  assert.equal(await page.getByRole("link", { name: "Export JSONL" }).getAttribute("href"), `/api/runs/${GID}/events.jsonl`);
+  assert.ok(await page.getByText("Dev trace on").isVisible());
+  await ctx.close();
+});
+
+test("@timeline the dev switch asks before turning on, and Cancel sends nothing", async () => {
+  const posts = [];
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/dev": (r) => {
+        if (r.request().method() === "POST") {
+          posts.push({ body: r.request().postDataJSON(), csrf: r.request().headers()["x-csrf-token"] });
+          return r.fulfill(json(200, { trace: true, env: false, active: true }));
+        }
+        return r.fulfill(json(200, { trace: false, env: false, active: false }));
+      },
+    },
+  });
+  await page.getByText("Operator", { exact: true }).click();
+  const sw = page.getByRole("switch", { name: "Dev trace" });
+  assert.equal(await sw.getAttribute("aria-checked"), "false");
+  await sw.click();
+  const warn = page.getByRole("alertdialog", { name: "Turn on Dev trace" });
+  assert.ok(await warn.getByText(/program text, command output, plan JSON and model reasoning/).isVisible());
+  await warn.getByRole("button", { name: "Cancel" }).click();
+  assert.equal(await sw.getAttribute("aria-checked"), "false");
+  assert.equal(posts.length, 0, "cancelling must not POST");
+  await sw.click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Turn on" }).click();
+  await page.waitForFunction(() => document.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true");
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].body, { trace: true });
+  assert.ok(posts[0].csrf, "the POST carries the CSRF header");
+  await ctx.close();
+});
+
+test("@timeline an environment-forced dev trace shows on and cannot be switched off", async () => {
+  const { ctx, page } = await open({ routes: { "**/api/dev": (r) => r.fulfill(json(200, { trace: false, env: true, active: true })) } });
+  await page.getByText("Operator", { exact: true }).click();
+  const sw = page.getByRole("switch", { name: "Dev trace" });
+  await page.waitForFunction(() => document.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true");
+  assert.ok(await sw.isDisabled());
+  assert.ok(await page.getByText("Forced on by the environment").isVisible());
+  await ctx.close();
+});
+
+test("@timeline @keyboard Tab reaches each card, Enter toggles it, focus is visible", async () => {
+  const s = threeSteps();
+  const { ctx, page } = await open({ routes: timelineRoutes(() => s.events), path: TL });
+  await steps(page).first().waitFor();
+  const seen = [];
+  for (let i = 0; i < 20 && seen.length < 3; i++) {
+    await page.keyboard.press("Tab");
+    const info = await page.evaluate(() => {
+      const a = document.activeElement;
+      return { expanded: a?.getAttribute("aria-expanded"), visible: a?.matches(":focus-visible"), text: a?.textContent ?? "" };
+    });
+    if (info.expanded !== null) {
+      assert.ok(info.visible, "focus is visible on the card");
+      seen.push(info.text);
+    }
+  }
+  assert.equal(seen.length, 3, "Tab reached all three cards");
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-expanded")), "true");
+  await page.keyboard.press("Enter");
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-expanded")), "false");
+  await ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  for (const w of [1440, 390]) {
+    test(`@a11y @timeline axe: 0 violations at ${w}px, ${scheme} (cards expanded, then 400 steps)`, async () => {
+      const s = threeSteps();
+      let { ctx, page } = await open({ w, scheme, routes: timelineRoutes(() => s.events), path: TL });
+      await steps(page).first().waitFor();
+      for (const b of await steps(page).locator("button[aria-expanded]").all()) await b.click();
+      await page.locator("summary", { hasText: "Reasoning" }).first().click();
+      assert.deepEqual(await axeViolations(page), [], `expanded @${w} ${scheme}`);
+      assert.ok(await noHScroll(page), "no horizontal scroll");
+      await ctx.close();
+
+      const many = manySteps(400);
+      ({ ctx, page } = await open({ w, scheme, routes: timelineRoutes(() => many.events), path: TL }));
+      await steps(page).first().waitFor();
+      assert.deepEqual(await axeViolations(page), [], `virtualized @${w} ${scheme}`);
+      assert.ok(await noHScroll(page), "no horizontal scroll (virtualized)");
+      await ctx.close();
+    });
+  }
+}
+
+// Router truth: the worker model and the router decision are two separate facts on each step row.
+const TRUTH_RUN = {
+  ...RUN, declared: 2,
+  subtasks: [
+    { ...RUN.subtasks[0], subtask: "a", title: "step a", cost: 0.0102635,
+      router: { engine: "jev", model: "typesafe/jev-1.13", confidence: 0.8, ms: 250,
+        fallbacks: [{ engine: "decider", kind: "EngineDown", status: 404, reason: "No endpoints found for perplexity/pplx-decider-v1.1-27b" }] },
+      worker: { model: "deepseek/deepseek-v4-pro", provider: "DeepInfra", tokens_in: 30, tokens_out: 12, tokens_reasoning: 0, cost: 0.0102635 } },
+    { ...RUN.subtasks[0], subtask: "b", title: "step b", result: "ok",
+      router: { engine: "decider", model: "perplexity/pplx-decider-v1.1-27b", confidence: 0.9, ms: 40, fallbacks: [] },
+      worker: { model: "google/gemini-2.5-flash", provider: "Acme", tokens_in: 9, tokens_out: 4, tokens_reasoning: 12, cost: 0.0001 },
+      thinking: "weighing the options" },
+  ],
+};
+const truthRoutes = (run) => ({
+  "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 2, states: {}, ts: 1 }] })),
+  "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+});
+
+test("@flow run page: each step shows its served model and a quieter routed-by chip that names the fallback cause", async () => {
+  const { ctx, page } = await open({ routes: truthRoutes(TRUTH_RUN), path: "/#g_e2e01" });
+  await page.getByText("step a").waitFor();
+  const a = page.locator("li", { hasText: "step a" });
+  const model = a.getByText("deepseek-v4-pro", { exact: true });
+  assert.equal(await model.count(), 1);
+  assert.equal(await a.locator("[title^='Model deepseek/deepseek-v4-pro']").getAttribute("title"), "Model deepseek/deepseek-v4-pro via DeepInfra");
+  const chip = a.locator("[title^='Routed by jev']");
+  assert.equal(await chip.count(), 1);
+  assert.equal(await chip.getAttribute("title"), "Routed by jev — decider unavailable (404)");
+  assert.ok((await chip.textContent()).includes("routed by jev"));
+  assert.ok((await chip.textContent()).includes("decider unavailable (404)"), "the cause is text for keyboard and screen-reader users too");
+  assert.ok((await a.innerText()).includes("$0.0103"), "the worker cost is on the row, to the digit");
+  const b = page.locator("li", { hasText: "step b" });
+  assert.equal(await b.getByText("routed by decider").count(), 1);
+  assert.equal(await b.locator("[title^='Routed by']").count(), 0, "no cause when the first engine answered");
+  await ctx.close();
+});
+
+test("@flow run page: a finished step with zero reasoning tokens says so; one that returned reasoning and old runs do not", async () => {
+  const { ctx, page } = await open({ routes: truthRoutes(TRUTH_RUN), path: "/#g_e2e01" });
+  await page.getByText("step a").waitFor();
+  assert.equal(await page.locator("li", { hasText: "step a" }).getByText("no reasoning returned").count(), 1);
+  assert.equal(await page.locator("li", { hasText: "step b" }).getByText("no reasoning returned").count(), 0);
+  await ctx.close();
+  const old = await open({ routes: truthRoutes({ ...RUN, declared: 1 }), path: "/#g_e2e01" });
+  const row = old.page.locator("ol li", { hasText: "say hi" });
+  await row.waitFor();
+  assert.equal(await row.getByText("no reasoning returned").count(), 0);
+  assert.equal(await row.getByText(/routed by/).count(), 0);
+  await old.ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  for (const w of [1440, 390]) {
+    test(`@a11y run page model and routed-by chips: axe 0 violations at ${w}px, ${scheme}`, async () => {
+      const { ctx, page } = await open({ w, scheme, routes: truthRoutes(TRUTH_RUN), path: "/#g_e2e01" });
+      await page.getByText("routed by jev").waitFor();
+      await page.evaluate(AXE);
+      const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+      assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${w} ${scheme}`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "no horizontal scroll");
+      await ctx.close();
+    });
+  }
+}
 
 test("@flow run page: a requeued step says it is waiting for a sandbox and which attempt", async () => {
   const now = Date.now() / 1000;

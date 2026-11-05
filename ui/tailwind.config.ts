@@ -59,9 +59,19 @@ const config: Config = {
           "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        "strip-in": {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "run-line": {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(100%)" },
+        },
       },
       animation: {
         "fade-up": "fade-up .2s ease-out",
+        "strip-in": "strip-in 160ms ease-out",
+        "run-line": "run-line 1.6s linear infinite",
       },
     },
   },

@@ -8,7 +8,7 @@ NVIDIA OpenShell, on the luke-agents harness.
 
 | PPLX Computer (cloud) | OSS equivalent | Status |
 |---|---|---|
-| Parent orchestrator (premium frontier model) | `services/orchestrator/` decompose/dispatch/collect with a cheap orchestrator model (default `deepseek-v4-pro`; no premium default, see ROADMAP spend rule); Khan (Agent Zero fork) stays the harness skeleton for later adapter work (OC-043) | partial: glue landed (#16), no CLI or golden tasks yet |
+| Parent orchestrator (premium frontier model) | `services/orchestrator/` decompose/dispatch/collect with a cheap orchestrator model (default `particle-ai/particle-1`, with a fallback chain; no premium default, see ROADMAP spend rule); Khan (Agent Zero fork) stays the harness skeleton for later adapter work (OC-043) | partial: glue landed (#16), no CLI or golden tasks yet |
 | Meta-router (task → model) | **pplx-decider-v1-27b** (hosted; Apache-2.0 weights) with Jev as fallback, in `services/router/` behind `services/placement/` | benched (86.7% route and tier on 180 fixtures, `docs/router-bench-results.md`); shipped (#10) |
 | Model fleet (20 models) | OpenRouter — one API, BYOK, his credits | exists |
 | SPACE (disposable Firecracker microVMs) | Tencent CubeVM (CubeSandbox, Apache-2.0): KVM microVMs, CubeCoW snapshot/clone, CubeEgress L7 allowlist proxy; adapter in `services/execplane/` | partial: make_sandbox + exec only (#8); boot time and rollback are doc claims, unmeasured |

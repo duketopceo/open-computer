@@ -33,8 +33,8 @@ class Level:
 
 LEVELS: tuple[Level, ...] = (
     Level("low", "Low", "Quick and cheap: a hosted flash-class model.", "cheap", 0.10),
-    Level("medium", "Medium", "Harder tasks: a strong mid-tier model.", "mid", 0.30),
-    Level("high", "High", "Most capable allowed: the price ceiling, never a default.", "frontier", 1.00),
+    Level("medium", "Medium", "Harder tasks: Particle 1 with reasoning on.", "mid", 0.30),
+    Level("high", "High", "Hardest tasks: Particle 1 thinking harder, with a bigger budget. Never a default.", "mid", 1.00),
 )
 BY_ID = {lv.id: lv for lv in LEVELS}
 FALLBACK_DEFAULT = "low"
