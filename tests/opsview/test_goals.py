@@ -136,6 +136,23 @@ def test_failed_decompose_renders_visible_run(console, monkeypatch, tmp_path):
     assert row["goal"] == "Will fail" and row["states"]["FAILED"] == 1
 
 
+def test_twice_invalid_plan_renders_failed_with_the_validator_message(console, monkeypatch, tmp_path):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    bad = json.dumps([{"id": "t1", "title": "A", "prompt": "a", "latency": "whenever"}])
+    calls = []
+
+    def planner(prompt):
+        calls.append(prompt)
+        return bad
+
+    rid = goalruns.submit("Bad enums", planner, lambda task: "x", by="test")
+    got = goalruns.get_run(rid)
+    assert len(calls) == 2
+    assert got["error_kind"] == "DecomposeError"
+    assert "t1" in got["error"] and "whenever" in got["error"]
+    assert goalruns.list_runs()[0]["states"]["FAILED"] == 1
+
+
 def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
     import time
     from services.orchestrator.engines import LocalModelUnavailable
