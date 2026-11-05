@@ -125,7 +125,7 @@ async function request(url: string, init?: RequestInit): Promise<unknown> {
   return body;
 }
 
-async function json<T>(url: string, init?: RequestInit): Promise<T> {
+export async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return (await request(url, init)) as T;
 }
 
@@ -206,7 +206,7 @@ export async function getRun(id: string): Promise<RunDetail> {
 }
 
 // JSON POST with a fresh CSRF token (the convention for every mutation).
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+export async function postJson<T>(url: string, body: unknown): Promise<T> {
   const token = await csrf();
   return json<T>(url, {
     method: "POST",

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, placement } from "@/lib/friendly";
+import { hasStream } from "@/lib/runEvents";
 import { Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
@@ -14,6 +15,16 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [active]);
+  // The Timeline link appears only when this run has an event stream (dev trace was on at submit).
+  const [stream, setStream] = useState(false);
+  useEffect(() => {
+    let dead = false;
+    setStream(false);
+    hasStream(run.run).then((ok) => !dead && setStream(ok));
+    return () => {
+      dead = true;
+    };
+  }, [run.run]);
   return (
     <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
       <header className={compact ? "mb-3" : "mb-6"}>
@@ -24,6 +35,14 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
             {states.DONE}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
             {run.started != null ? dur(run.started, run.ended ?? Date.now() / 1000) : ""}
           </span>
+          {stream && (
+            <a
+              href={`#${run.run}/timeline`}
+              className="inline-flex h-6 items-center rounded-full border border-line px-2.5 font-medium text-ink hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              Timeline
+            </a>
+          )}
           <span className="mono text-muted">origin {run.origin}</span>
           {run.device_id && <span className="mono text-muted">device {run.device_id}</span>}
           {run.effort && (

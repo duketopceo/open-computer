@@ -113,3 +113,8 @@ Flight Strip still governs the CLI, the approval TUI and the Developer area in S
 - **Navigation:** New thread, Threads (recents with a needs-you count), Automations, Artifacts, Connectors, Settings. Operator
   pages live under Settings > Developer.
 - **Carries over:** state is a glyph plus a word, never colour alone; text pairs meet 4.5:1; every state is explicit.
+- **Run timeline (2026-11-05, dev mode):** `#goal_x/timeline` shows one card per step from the run event stream: state glyph and
+  word, title, a model chip and a quieter "Routed by" chip, elapsed, cost, and a waiting-on line; reasoning, plan, commands and
+  output open on demand. Only a running step uses the accent. "Waiting" uses the leased dash and "Skipped" a muted dashed box;
+  neither is accent. Above 60 steps the list is virtualized with measured rows. A new card slides in over 160 ms and the running
+  line is static under reduced motion. The Dev trace switch under Operator asks before turning on, because it captures content.

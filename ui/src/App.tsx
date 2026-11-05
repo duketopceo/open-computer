@@ -28,6 +28,7 @@ import {
 import { AgentJobs } from "@/components/AgentJobs";
 import { Composer } from "@/components/Composer";
 import { RunView } from "@/components/RunView";
+import { Timeline } from "@/components/runtime/Timeline";
 import { Sidebar } from "@/components/Sidebar";
 import { ThreadView } from "@/components/ThreadView";
 import { Button } from "@/components/primitives";
@@ -46,6 +47,7 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [run, setRun] = useState<RunDetail | null>(null);
+  const [timeline, setTimeline] = useState(false); // #goal_x/timeline: the dev-mode event view of a run
   const [selError, setSelError] = useState("");
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState<string | undefined>();
@@ -119,8 +121,11 @@ export default function App() {
 
   useEffect(() => {
     const fromHash = () => {
-      const id = location.hash.replace(/^#/, "");
-      if (id) setSelected(id);
+      const [id, sub] = location.hash.replace(/^#/, "").split("/");
+      if (id) {
+        setSelected(id);
+        setTimeline(sub === "timeline");
+      }
     };
     fromHash();
     addEventListener("hashchange", fromHash);
@@ -191,6 +196,7 @@ export default function App() {
 
   function select(id: string | null) {
     setView("chat");
+    setTimeline(false);
     setError("");
     setDraft(undefined);
     setSelected(id || null);
@@ -277,6 +283,16 @@ export default function App() {
         {link !== "ok" && <LinkBanner link={link} />}
         {view === "agents" ? (
           <AgentJobs jobs={jobs} jobsError={jobsError} link={link} onRefresh={refreshJobs} onOk={noteSuccess} onFail={noteFailure} />
+        ) : selected && timeline && !isThread(selected) ? (
+          <div className="mx-auto w-full max-w-3xl px-6 py-10">
+            <a
+              href={`#${selected}`}
+              className="mb-4 inline-block text-xs text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              ← Back to the run
+            </a>
+            <Timeline key={selected} runId={selected} goal={run?.goal} />
+          </div>
         ) : gone ? (
           <div className="m-auto flex flex-col items-center gap-3 px-6 text-center">
             <p className="text-sm text-urgent" role="alert">
