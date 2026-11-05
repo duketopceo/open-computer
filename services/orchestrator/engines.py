@@ -94,20 +94,21 @@ _ERR_TAIL = 1200
 
 
 def _split_program(reply: str) -> tuple[str, str]:
-    """Model reply -> (program text, "python" | "shell"): fence tag first, then a shebang, then a leading
-    import/from/def/class line. Anything else runs as shell, the contract the prompt asks for."""
+    """Model reply -> (program text, "python" | "shell"): a python fence tag, else a python shebang, else a first
+    code line (comments skipped) that only Python would start with. Anything else runs as shell, the contract the
+    prompt asks for. A shell tag does not win over Python content: models mislabel fences, and `import` under bash
+    is ImageMagick, never what was meant."""
     text = reply.strip()
-    tag = ""
     m = re.match(r"```(\w*)", text)
-    if m:
-        tag = m.group(1).lower()
+    tag = m.group(1).lower() if m else ""
     program = re.sub(r"^```\w*\n?|\n?```$", "", text).strip()
     if tag in _PY_FENCE_TAGS:
         return program, "python"
-    if tag:
-        return program, "shell"
-    first = program.split("\n", 1)[0]
-    if re.match(r"#!.*\bpython", first) or _PY_FIRST_LINE.match(next((ln for ln in program.splitlines() if ln.strip()), "")):
+    lines = [ln.strip() for ln in program.splitlines() if ln.strip()]
+    if lines and re.match(r"#!.*\bpython", lines[0]):
+        return program, "python"
+    first_code = next((ln for ln in lines if not ln.startswith("#")), "")
+    if _PY_FIRST_LINE.match(first_code):
         return program, "python"
     return program, "shell"
 

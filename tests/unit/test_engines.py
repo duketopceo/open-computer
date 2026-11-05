@@ -391,6 +391,16 @@ def test_bash_fence_containing_a_python_heredoc_stays_shell(monkeypatch):
     assert runner.strip() == "bash"
 
 
+def test_shell_tagged_fence_holding_python_code_still_runs_python(monkeypatch):
+    # The reply that failed with "bash: line 2: import: command not found": a Python program under a shell tag.
+    for reply in ("```bash\n#!/usr/bin/env python3\nimport os\nprint(os.getcwd())\n```",
+                  "```sh\n# build the module\nimport termios\nprint(1)\n```"):
+        plane = _FakePlane()
+        _reply(monkeypatch, reply)
+        engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+        assert "python3" in _decoded_runner(plane)[1], reply
+
+
 def test_failure_detail_is_the_end_of_stderr_not_the_head(scripted):
     warnings = "".join(f'<stdin>:{n}: SyntaxWarning: "\\ " is an invalid escape sequence\n' for n in range(30))
     err = warnings + "Traceback (most recent call last):\n  File \"<stdin>\", line 71, in <module>\nIndexError: list index out of range\n"
