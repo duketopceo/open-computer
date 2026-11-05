@@ -1335,7 +1335,7 @@ test("@flow run page: each step shows its served model and a quieter routed-by c
   assert.equal(await chip.getAttribute("title"), "Routed by jev — decider unavailable (404)");
   assert.ok((await chip.textContent()).includes("routed by jev"));
   assert.ok((await chip.textContent()).includes("decider unavailable (404)"), "the cause is text for keyboard and screen-reader users too");
-  assert.ok((await a.innerText()).includes("$0.01"), "the worker cost is on the row");
+  assert.ok((await a.innerText()).includes("$0.0103"), "the worker cost is on the row, to the digit");
   const b = page.locator("li", { hasText: "step b" });
   assert.equal(await b.getByText("routed by decider").count(), 1);
   assert.equal(await b.locator("[title^='Routed by']").count(), 0, "no cause when the first engine answered");
