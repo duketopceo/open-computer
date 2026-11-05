@@ -27,7 +27,8 @@ from services.gate.queue import ApprovalQueue, QueueError
 from services.gate.queue import payload_hash as queue_payload_hash
 
 FIX = Path(__file__).resolve().parents[2] / "services/workspace/fixtures"
-TYPES = ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error"]
+FIXTURE_TYPES = ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error"]
+TYPES = [*FIXTURE_TYPES, "route", "llm_call"]  # route and llm_call are the dev-trace additions (KTD7)
 
 
 def fixture_events(goal):
@@ -58,10 +59,10 @@ def test_ordering_is_gapless_monotonic_and_ids_are_stable(goal):
 
 def test_every_event_type_appears_in_the_fixtures():
     seen = {e["type"] for g in GOALS for e in fixture_events(g)}
-    assert seen == set(TYPES)
+    assert seen == set(FIXTURE_TYPES)
 
 
-def test_schema_lists_exactly_the_ten_event_types():
+def test_schema_lists_exactly_the_twelve_event_types():
     s = schema()
     assert s["$defs"]["event"]["properties"]["type"]["enum"] == TYPES
     assert {a["properties"]["type"]["const"] for a in s["$defs"]["event"]["oneOf"]} == set(TYPES)
@@ -189,6 +190,92 @@ def test_file_log_persists_resumes_and_tolerates_a_torn_line(tmp_path):
     assert [e["seq"] for e in again.read("g_f1")] == [1, 2]
     assert [e["seq"] for e in again.read("g_f1", after=1)] == [2]
     assert again.goals() == ["g_f1"]
+
+
+# ---- dev trace stream (KTD7) ---------------------------------------------------------------------------------
+
+DEV_GOAL = "goal_0123abcd"
+
+
+def dev_stream() -> list[dict]:
+    """A hand-built dev run: one of every new shape, in the order a real run writes them."""
+    data = [
+        ("run", {"status": "running", "title": "Two things", "goal_text": "Do two things"}),
+        ("llm_call", {"id": "call_plan", "kind": "plan", "status": "ok", "detail": "[{\"id\":\"t1\"}]"}),
+        ("step", {"id": "step_t1", "title": "first", "status": "pending"}),
+        ("route", {"id": "route_t1", "step": "step_t1", "route": "cloud", "tier": "cheap", "engine": "jev",
+                   "model": "vendor/model", "confidence": 0.9, "cost_usd": 0.001, "ms": 12,
+                   "placement": "cloud-sandbox",
+                   "fallbacks": [{"engine": "decider", "kind": "EngineDown", "status": 404, "reason": "no endpoints"}]}),
+        ("step", {"id": "step_t1", "title": "first", "status": "running"}),
+        ("llm_call", {"id": "call_0123456789abcdef", "kind": "work", "status": "ok", "step": "step_t1",
+                      "model_requested": "vendor/model", "model_served": "vendor/model-2", "provider": "Acme",
+                      "tokens_in": 10, "tokens_out": 5, "tokens_cached": 2, "tokens_reasoning": 1,
+                      "cost_usd": 0.0012, "latency_ms": 840, "reasoning": "because"}),
+        ("tool_call", {"id": "tool_task_1_1", "name": "shell.exec", "status": "error", "step": "step_t1",
+                       "command": "exit 1", "rc": 1, "stdout_tail": [], "stderr_tail": ["boom"], "duration_ms": 31}),
+        ("step", {"id": "step_t1", "title": "first", "status": "running",
+                  "waiting_on": {"kind": "sandbox_boot", "attempt": 2, "max": 4, "since": 5.5, "detail": "refused"},
+                  "model": "vendor/model-2"}),
+        ("step", {"id": "step_t1", "title": "first", "status": "failed"}),
+        ("error", {"id": "err_task_1", "code": "RuntimeError", "message": "sandbox exec rc=1: boom", "step": "step_t1"}),
+        ("run", {"status": "waiting", "reason": "sandbox"}),
+        ("run", {"status": "waiting", "reason": "queue"}),
+        ("run", {"status": "failed", "reason": "error"}),
+    ]
+    return [
+        {"id": f"{DEV_GOAL}:{i}", "v": 1, "goal": DEV_GOAL, "seq": i, "ts": 100.0 + i, "type": t, "data": d}
+        for i, (t, d) in enumerate(data, 1)
+    ]
+
+
+def test_a_dev_run_stream_validates_with_one_of_each_new_type():
+    evs = dev_stream()
+    assert {"route", "llm_call"} <= {e["type"] for e in evs}
+    for e in evs:
+        assert errors(e) == [], (e["seq"], errors(e))
+
+
+@pytest.mark.parametrize(
+    "mutate,why",
+    [
+        (lambda e: e["data"].update(id="Step T1"), "entity id must match the ref pattern"),
+        (lambda e: e["data"].update(surprise=1), "unknown data field"),
+        (lambda e: e["data"].update(status="exploding"), "bad status"),
+    ],
+)
+def test_dev_stream_shapes_reject_bad_data(mutate, why):
+    for typ in ("route", "llm_call", "tool_call"):
+        ev = next(e for e in dev_stream() if e["type"] == typ)
+        mutate(ev)
+        assert errors(ev), (typ, why)
+
+
+def test_tool_call_keeps_rejecting_unknown_fields_but_accepts_command_fields():
+    ev = next(e for e in dev_stream() if e["type"] == "tool_call")
+    assert errors(ev) == []
+    ev["data"]["stdout_tail"] = ["x"] * 51
+    assert errors(ev)
+
+
+def test_the_old_goal_id_pattern_still_applies_and_goal_hex_ids_are_exact():
+    ev = dev_stream()[0]
+    assert ev["id"] == "goal_0123abcd:1" and errors(ev) == []
+    for bad_goal in ("goal_0123ABCD", "goal_0123abc", "goal_0123abcdef"):
+        assert errors({**ev, "goal": bad_goal, "id": f"{bad_goal}:1"})
+    assert errors({**ev, "goal": "g_research01", "id": "g_research01:1"}) == []
+
+
+def test_waiting_on_clears_when_the_next_step_event_carries_none():
+    evs = [e for e in dev_stream() if e["type"] == "step"]
+    seen = [entities(evs[: i + 1], "step")["step_t1"].get("waiting_on") for i in range(len(evs))]
+    assert seen[1] is None and seen[2]["attempt"] == 2 and seen[3] is None
+
+
+def test_fold_accepts_the_dev_run_reasons():
+    runs = [e for e in dev_stream() if e["type"] == "run"]
+    assert (fold(runs[:2])["status"], fold(runs[:2])["reason"]) == ("waiting", "sandbox")
+    assert fold(runs[:3])["reason"] == "queue"
 
 
 def test_concurrent_emitters_never_gap_or_duplicate_seq(tmp_path):

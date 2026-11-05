@@ -47,6 +47,8 @@ class Usage:
     tokens_in: int
     tokens_out: int
     cost: float  # dollars, as reported by the provider
+    provider: str | None = None  # who served the call (the router's and worker's step truth, not the ledger's)
+    tokens_reasoning: int = 0
 
 
 @dataclass

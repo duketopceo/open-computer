@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
-import { engine, errorKind, placement, skippedWhy } from "@/lib/friendly";
-import { Dot, StateWord } from "./primitives";
+import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
+import { hasStream } from "@/lib/runEvents";
+import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
 export function RunView({ run, compact = false }: { run: RunDetail; compact?: boolean }) {
@@ -14,6 +15,16 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [active]);
+  // The Timeline link appears only when this run has an event stream (dev trace was on at submit).
+  const [stream, setStream] = useState(false);
+  useEffect(() => {
+    let dead = false;
+    setStream(false);
+    hasStream(run.run).then((ok) => !dead && setStream(ok));
+    return () => {
+      dead = true;
+    };
+  }, [run.run]);
   return (
     <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
       <header className={compact ? "mb-3" : "mb-6"}>
@@ -24,6 +35,14 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
             {states.DONE}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
             {run.started != null ? dur(run.started, run.ended ?? Date.now() / 1000) : ""}
           </span>
+          {stream && (
+            <a
+              href={`#${run.run}/timeline`}
+              className="inline-flex h-6 items-center rounded-full border border-line px-2.5 font-medium text-ink hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              Timeline
+            </a>
+          )}
           <span className="mono text-muted">origin {run.origin}</span>
           {run.device_id && <span className="mono text-muted">device {run.device_id}</span>}
           {run.effort && (
@@ -91,6 +110,16 @@ function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
             </span>
           )}
         </p>
+        {s.waiting_on && s.state === "QUEUED" && (
+          <p className="mt-1 text-xs text-muted" title={s.waiting_on.detail}>
+            <span aria-hidden="true">– </span>
+            {waitingText(s.waiting_on.kind, s.waiting_on.attempt, s.waiting_on.max)}
+            {dur(s.waiting_on.since, Date.now() / 1000) && (
+              <span className="mono"> · {dur(s.waiting_on.since, Date.now() / 1000)}</span>
+            )}
+          </p>
+        )}
+        <StepTruth s={s} />
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "AWAITING-APPROVAL" && (
           <p className="mt-1 text-xs text-accent">
@@ -109,6 +138,29 @@ function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
         {s.thinking && <Thinking text={s.thinking} className="mt-2" />}
       </div>
     </li>
+  );
+}
+
+/** Which model served the step and who routed it, as two chips; plus a plain note when no reasoning came back. */
+function StepTruth({ s }: { s: SubTask }) {
+  const why = fallbackWhy(s.router);
+  const noReasoning = s.state === "DONE" && s.worker?.tokens_reasoning === 0 && !s.thinking;
+  if (!s.worker && !s.router && !noReasoning) return null;
+  return (
+    <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+      {s.worker && (
+        <Chip filled title={`Model ${s.worker.model}${s.worker.provider ? ` via ${s.worker.provider}` : ""}`}>
+          <span className="mono">{modelName(s.worker.model)}</span>
+        </Chip>
+      )}
+      {s.router && engine(s.router.engine) && (
+        <Chip title={why ? `Routed by ${engine(s.router.engine)} — ${why}` : undefined}>
+          routed by {engine(s.router.engine)}
+          {why && <span className="sr-only"> — {why}</span>}
+        </Chip>
+      )}
+      {noReasoning && <span>no reasoning returned</span>}
+    </p>
   );
 }
 

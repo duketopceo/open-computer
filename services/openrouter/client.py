@@ -28,7 +28,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Iterator
 
-from oc.obs import capture_content, context, get_logger, redact_str
+from oc.obs import capture_content, context, devtrace, error_fields, get_logger, redact_str
 from services.cost import Usage
 
 from . import attribution
@@ -125,14 +125,16 @@ def extract_reasoning(resp: dict) -> str:
 
 
 def total_usage(items: list[Usage]) -> Usage | None:
+    """Sum a step's calls. The first served model and provider win (a step's calls share both in practice)."""
     if not items:
         return None
-    models = sorted({u.model for u in items if u.model})
     return Usage(
-        model=models[0] if len(models) == 1 else ",".join(models) or "unknown",
+        model=next((u.model for u in items if u.model), "unknown"),
         tokens_in=sum(u.tokens_in for u in items),
         tokens_out=sum(u.tokens_out for u in items),
         cost=sum(u.cost for u in items),
+        provider=next((u.provider for u in items if u.provider), None),
+        tokens_reasoning=sum(u.tokens_reasoning for u in items),
     )
 
 
@@ -215,6 +217,43 @@ def _record(store: CallStore | None, row: dict) -> None:
         _l._count_failure(None, None)
 
 
+def _trace_call(ctx: dict, row: dict, resp: dict | None = None) -> None:
+    """Dev trace: one `llm_call` per request, for runs that have a stream. Never affects the call."""
+    trace = devtrace.tracer(run_id=ctx.get("run_id"))
+    if trace is None:
+        return
+    try:
+        subtask = ctx.get("subtask")
+        kind = row["kind"]
+        if kind == "chat":  # the same client serves the planner, the workers and chat turns
+            kind = "work" if subtask else "plan" if ctx.get("service") == "orchestrator" else "chat"
+        ok = row["status"] == "ok"
+        reasoning = extract_reasoning(resp) if resp is not None else ""
+        trace.emit(
+            "llm_call",
+            id=devtrace.entity("call", row["call_id"]),
+            kind=kind,
+            status=row["status"],
+            step=devtrace.entity("step", subtask) if subtask else None,
+            model_requested=row.get("model_requested"),
+            model_served=row.get("model_served"),
+            provider=row.get("provider"),
+            tokens_in=row.get("tokens_in"),
+            tokens_out=row.get("tokens_out"),
+            tokens_cached=row.get("tokens_cached"),
+            tokens_reasoning=row.get("tokens_reasoning"),
+            cost_usd=max(0.0, row["cost"]) if ok else None,
+            latency_ms=row.get("latency_ms"),
+            generation_id=row.get("generation_id"),
+            reasoning=devtrace.text(reasoning, devtrace.REASONING_CAP) if reasoning else None,
+            error_class=row.get("error_class"),
+            http_status=row.get("http_status"),
+            error=devtrace.text(row["error"], 300) if row.get("error") else None,
+        )
+    except Exception as e:  # noqa: BLE001 - tracing never changes a call
+        log.warning("dev trace call dropped", **error_fields(e))
+
+
 def post(
     url: str,
     payload: dict,
@@ -265,6 +304,7 @@ def post(
         row = {**base, "status": "error", "error_class": klass, "http_status": status, "latency_ms": latency,
                "error": msg[:300], "cost": 0.0, "cost_source": "none"}
         _record(store, row)
+        _trace_call(ctx, row)
         log.warning("openrouter call failed", call_id=call_id, kind=kind, error_class=klass, http_status=status,
                     latency_ms=latency)
         raise OpenRouterError(msg, status=status, error_class=klass) from e
@@ -278,6 +318,7 @@ def post(
         except Exception:
             row["completion"] = None
     _record(store, row)
+    _trace_call(ctx, row, resp)
     (log.info if parsed["cost_source"] == "provider" else log.warning)(
         "openrouter call" if parsed["cost_source"] == "provider" else "openrouter call: no cost reported",
         call_id=call_id, kind=kind, model=parsed["model_served"], provider=parsed["provider"],
@@ -287,7 +328,7 @@ def post(
     sink = _collector.get()
     if sink is not None and (parsed["tokens_in"] or parsed["tokens_out"] or parsed["cost_source"] == "provider"):
         sink.append(Usage(parsed["model_served"] or str(base["model_requested"]), parsed["tokens_in"],
-                          parsed["tokens_out"], parsed["cost"]))
+                          parsed["tokens_out"], parsed["cost"], parsed["provider"], parsed["tokens_reasoning"]))
     thoughts = _reasoning.get()
     if thoughts is not None:
         text = extract_reasoning(resp)
@@ -330,7 +371,8 @@ def chat(
     text = text if isinstance(text, str) else ""
     u = None
     if row["tokens_in"] or row["tokens_out"] or row["cost_source"] == "provider":
-        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"])
+        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"], row["provider"],
+                  row["tokens_reasoning"])
     return ChatResult(text=text, usage=u, cost=row["cost"], generation_id=row["generation_id"],
                       model_served=row["model_served"], provider=row["provider"], finish_reason=row["finish_reason"],
                       latency_ms=row["latency_ms"], cost_source=row["cost_source"], call_id=row["call_id"],

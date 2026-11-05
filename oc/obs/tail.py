@@ -9,6 +9,7 @@ Sources (each optional; a missing one is skipped and `--sources` shows which wer
   ledger   $OC_COST_LEDGER                 per-run cost ledger          (or --ledger)
   calls    $OC_OBS_DIR/openrouter-calls.ndjson   one row per OpenRouter request
   events   $OC_EVENTS_DIR/*.ndjson         goal event stream
+           $OC_GOALS_DIR/*/events.ndjson   a run's dev trace stream (dev mode runs only)
 
 Rows are matched on `trace_id`, or on a run id (`run_id` / `run` / event `goal`). A trace id is derived from a
 run id by hash, so a row that only carries a run id is still found by trace. Everything printed was already
@@ -65,12 +66,14 @@ def sources(args: argparse.Namespace) -> dict[str, list[Path]]:
     root = Path(env("OC_ROOT") or Path.home() / ".local/share/oc")
     logd = args.log_dir or env("OC_LOG_DIR")
     ev = env("OC_EVENTS_DIR")
+    goals = Path(env("OC_GOALS_DIR") or Path.home() / ".local/share/oc/goals")
     return {
         "log": sorted(Path(p) for p in glob.glob(str(Path(logd) / "oc.log*"))) if logd else [],
         "audit": [Path(args.audit or env("OC_ORCH_AUDIT") or root / "orchestrator.ndjson")],
         "ledger": [Path(p) for p in (args.ledger or env("OC_COST_LEDGER"),) if p],
         "calls": [obs / "openrouter-calls.ndjson"],
-        "events": sorted(Path(p) for p in glob.glob(str(Path(ev) / "*.ndjson"))) if ev else [],
+        "events": (sorted(Path(p) for p in glob.glob(str(Path(ev) / "*.ndjson"))) if ev else [])
+        + sorted(Path(p) for p in glob.glob(str(goals / "goal_*" / "events.ndjson"))),
     }
 
 

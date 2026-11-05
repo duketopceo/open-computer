@@ -9,12 +9,12 @@
       "type": "object",
       "required": ["id", "v", "goal", "seq", "ts", "type", "data"],
       "properties": {
-        "id": { "type": "string", "pattern": "^g_[a-z0-9_]+:[0-9]+$", "description": "'<goal>:<seq>'. Stable and unique." },
+        "id": { "type": "string", "pattern": "^(g_[a-z0-9_]+|goal_[0-9a-f]{8}):[0-9]+$", "description": "'<goal>:<seq>'. Stable and unique." },
         "v": { "const": 1 },
-        "goal": { "type": "string", "pattern": "^g_[a-z0-9_]+$" },
+        "goal": { "type": "string", "pattern": "^(g_[a-z0-9_]+|goal_[0-9a-f]{8})$", "description": "A workspace goal (g_...) or a console run id (goal_<8 hex>, the dev trace stream)." },
         "seq": { "type": "integer", "minimum": 1, "description": "Gapless, strictly increasing per goal, starting at 1. Doubles as the SSE id." },
         "ts": { "type": "number", "minimum": 0, "description": "Epoch seconds, millisecond precision. The UI derives all durations from event ts, never from its own clock." },
-        "type": { "enum": ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error"] },
+        "type": { "enum": ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error", "route", "llm_call"] },
         "actor": { "$ref": "#/$defs/actor" },
         "data": { "type": "object" }
       },
@@ -29,7 +29,9 @@
         { "properties": { "type": { "const": "approval" }, "data": { "$ref": "#/$defs/approval" } } },
         { "properties": { "type": { "const": "cost" }, "data": { "$ref": "#/$defs/cost" } } },
         { "properties": { "type": { "const": "note" }, "data": { "$ref": "#/$defs/note" } } },
-        { "properties": { "type": { "const": "error" }, "data": { "$ref": "#/$defs/error" } } }
+        { "properties": { "type": { "const": "error" }, "data": { "$ref": "#/$defs/error" } } },
+        { "properties": { "type": { "const": "route" }, "data": { "$ref": "#/$defs/route" } } },
+        { "properties": { "type": { "const": "llm_call" }, "data": { "$ref": "#/$defs/llm_call" } } }
       ]
     },
     "actor": {
@@ -49,7 +51,7 @@
       "required": ["status"],
       "properties": {
         "status": { "enum": ["queued", "planning", "running", "waiting", "paused", "done", "failed", "cancelled"] },
-        "reason": { "enum": ["approval", "plan_approval", "cap", "loop_guard", "user", "error"], "description": "Why the run is waiting or paused." },
+        "reason": { "enum": ["approval", "plan_approval", "cap", "loop_guard", "user", "error", "sandbox", "queue"], "description": "Why the run is waiting or paused." },
         "title": { "type": "string", "minLength": 1 },
         "goal_text": { "type": "string" },
         "summary": { "type": "string" },
@@ -80,7 +82,21 @@
         "parent": { "$ref": "#/$defs/ref" },
         "kind": { "enum": ["step", "subagent", "sandbox"] },
         "agent": { "type": "string", "description": "Name of the sub-agent or sandbox running this row." },
-        "detail": { "type": "string" }
+        "detail": { "type": "string" },
+        "model": { "type": "string", "description": "Worker model that served this step (dev trace)." },
+        "waiting_on": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1, "description": "What the step waits on, e.g. sandbox_boot." },
+            "attempt": { "type": "integer", "minimum": 1, "description": "The attempt about to run." },
+            "max": { "type": "integer", "minimum": 1 },
+            "since": { "type": "number", "minimum": 0 },
+            "detail": { "type": "string" }
+          },
+          "additionalProperties": false,
+          "description": "Set while a requeued step waits (status stays running). The next step event without it clears the wait."
+        }
       },
       "additionalProperties": false
     },
@@ -97,7 +113,11 @@
         "output_tail": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Last lines of terminal output; feeds the Box tab." },
         "duration_ms": { "type": "integer", "minimum": 0 },
         "repeat": { "type": "integer", "minimum": 1, "description": "Consecutive identical calls so far. The loop guard fires at 3." },
-        "cost_usd": { "$ref": "#/$defs/usd" }
+        "cost_usd": { "$ref": "#/$defs/usd" },
+        "command": { "type": "string", "description": "The program text the sandbox ran (dev trace; redacted, capped)." },
+        "rc": { "type": "integer", "description": "Exit code of the command." },
+        "stdout_tail": { "type": "array", "maxItems": 50, "items": { "type": "string" } },
+        "stderr_tail": { "type": "array", "maxItems": 50, "items": { "type": "string" } }
       },
       "additionalProperties": false
     },
@@ -247,6 +267,65 @@
           }
         },
         "to": { "$ref": "#/$defs/ref", "description": "A sub-agent step this user note is addressed to (Send note)." }
+      },
+      "additionalProperties": false
+    },
+    "route": {
+      "type": "object",
+      "required": ["id", "route", "tier", "engine"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "step": { "$ref": "#/$defs/ref" },
+        "route": { "type": "string", "minLength": 1 },
+        "tier": { "type": "string", "minLength": 1 },
+        "engine": { "type": "string", "minLength": 1, "description": "Which engine decided: decider, jev or table." },
+        "model": { "type": "string", "description": "Decider model that answered." },
+        "router_model": { "type": "string" },
+        "confidence": { "type": ["number", "null"] },
+        "cost_usd": { "$ref": "#/$defs/usd" },
+        "ms": { "type": "number", "minimum": 0 },
+        "placement": { "type": "string", "description": "Where the step was placed (cloud-sandbox, cloud-OpenRouter, local-..., device, blocked)." },
+        "fallbacks": {
+          "type": "array",
+          "description": "Engines tried and skipped before this decision, with why.",
+          "items": {
+            "type": "object",
+            "required": ["engine"],
+            "properties": {
+              "engine": { "type": "string" },
+              "kind": { "type": "string" },
+              "status": { "type": ["integer", "null"] },
+              "reason": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "llm_call": {
+      "type": "object",
+      "required": ["id", "kind", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "kind": { "type": "string", "minLength": 1, "description": "plan, work, decision, thread or the client's own kind." },
+        "status": { "enum": ["ok", "error"] },
+        "step": { "$ref": "#/$defs/ref" },
+        "model_requested": { "type": "string" },
+        "model_served": { "type": "string" },
+        "provider": { "type": "string" },
+        "tokens_in": { "type": "integer", "minimum": 0 },
+        "tokens_out": { "type": "integer", "minimum": 0 },
+        "tokens_cached": { "type": "integer", "minimum": 0 },
+        "tokens_reasoning": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "$ref": "#/$defs/usd" },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "generation_id": { "type": "string" },
+        "reasoning": { "type": "string", "description": "Reasoning text the model returned (redacted, capped at 16000 characters)." },
+        "detail": { "type": "string", "description": "Redacted, capped content: the plan JSON on the planner's output row." },
+        "error_class": { "type": "string" },
+        "http_status": { "type": "integer" },
+        "error": { "type": "string" }
       },
       "additionalProperties": false
     },

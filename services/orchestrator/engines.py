@@ -28,12 +28,51 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from oc.obs import context as obs_context
+from oc.obs import devtrace, error_fields, get_logger
+from services.execplane.client import SandboxUnavailable
 from services.router.model_catalog import DEFAULT_WORKER_MODEL
 
 from services.openrouter import OpenRouterError, collect_usage, effort_scope, total_usage
 from services.openrouter import chat as or_chat
 
 from .runner import WorkResult
+
+
+log = get_logger("engines")
+
+
+class _CommandTrace:
+    """Dev trace of one sandbox command: a `tool_call` shell.exec, running while it executes, then its rc and
+    output tails. A no-op unless the run has a stream; tracing never changes the command's outcome."""
+
+    def __init__(self, task: dict, script: str):
+        self.trace = devtrace.tracer(run_id=str(task.get("run") or ""), actor="worker")
+        self.t0 = time.monotonic()
+        if self.trace is None:
+            return
+        task_id = obs_context.current().get("task") or "task"
+        self.id = devtrace.entity("tool", f"{task_id}_{int(time.time() * 1000)}")
+        self.step = devtrace.entity("step", task.get("subtask") or "x")
+        self.command = devtrace.text(script)
+        self.trace.emit("tool_call", id=self.id, name="shell.exec", status="running", step=self.step,
+                        command=self.command)
+
+    def finish(self, res=None, exc: BaseException | None = None) -> None:
+        if self.trace is None:
+            return
+        try:
+            rc = getattr(res, "returncode", None)
+            self.trace.emit(
+                "tool_call", id=self.id, name="shell.exec", status="ok" if rc == 0 else "error", step=self.step,
+                command=self.command, rc=rc if isinstance(rc, int) else None,
+                stdout_tail=devtrace.tail(getattr(res, "stdout", "")) if res is not None else None,
+                stderr_tail=devtrace.tail(getattr(res, "stderr", "")) if res is not None else None,
+                summary=devtrace.text(f"{type(exc).__name__}: {exc}", 300) if exc is not None else None,
+                duration_ms=int((time.monotonic() - self.t0) * 1000),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("dev trace command dropped", **error_fields(e))
 
 
 class WorkerUnavailable(RuntimeError):
@@ -56,6 +95,8 @@ class LocalModelUnavailable(WorkerUnavailable):
 OR_CHAT = "https://openrouter.ai/api/v1/chat/completions"
 
 _plane_instance = None
+_sleep = time.sleep  # injectable: tests never wait out the boot-retry pause
+_BOOT_RETRY_PAUSE_S = 2.0
 
 
 def _plane():
@@ -273,10 +314,23 @@ def sandbox_work(
         backend = os.environ.get("OC_EXECPLANE_BACKEND", "cube")
         raise SandboxWorkerUnavailable(f"{backend} sandbox control plane unreachable")
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
-    script, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
-    script, kind = _split_program(script)
+    cache = Path(task["script_cache"]) if task.get("script_cache") else None
+    reply = None
+    if cache is not None:
+        try:  # a requeued step reuses the script its first attempt generated: no second model call
+            reply = cache.read_text()
+        except OSError:
+            reply = None
+    if reply is None:
+        reply, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
+    script, kind = _split_program(reply)
     if not script:
         raise RuntimeError("script planner emitted empty output")
+    if cache is not None:
+        try:
+            cache.write_text(reply)
+        except OSError:
+            pass  # the cache is an optimisation; a requeue just regenerates
     # S5: only approved hosts (a human grant, a built-in default or OC_EGRESS_ALLOW) ever reach
     # the payload — dispatch computes the effective set from the placement, empty = deny-all.
     run_id = str(task.get("run") or "")
@@ -288,20 +342,30 @@ def sandbox_work(
         res = None
         for attempt in range(2):  # transient VM/control-plane errors get exactly one retry
             ent = _acquire_run_sandbox(plane, run_id, hosts)
+            ct = _CommandTrace(task, script)
             try:
                 res = ent["sb"].exec(cmd)
-            except Exception:
+            except Exception as e:
+                ct.finish(exc=e)
                 _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
+                boot = isinstance(e, SandboxUnavailable)
                 if attempt == 1:
+                    if boot:  # retryable: the runner requeues the step with a backoff
+                        raise SandboxWorkerUnavailable(str(e)) from e
                     raise
+                if boot:
+                    _sleep(_BOOT_RETRY_PAUSE_S)
                 continue
             finally:
                 _release_run_sandbox(ent)
+            ct.finish(res)
             break
     else:
         sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)
         try:
             res = sb.exec(cmd)
+        except SandboxUnavailable as e:
+            raise SandboxWorkerUnavailable(str(e)) from e
         finally:
             sb.close()
     if res.returncode != 0:

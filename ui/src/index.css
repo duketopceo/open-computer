@@ -30,7 +30,13 @@
 
 /* Reduced motion: show the settled state at once instead of fading in. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up {
+  .animate-fade-up,
+  .animate-strip-in {
     animation: none;
+  }
+  /* the running line stays put, full width, instead of sweeping */
+  .animate-run-line {
+    animation: none;
+    transform: none;
   }
 }

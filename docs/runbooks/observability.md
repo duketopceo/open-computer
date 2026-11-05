@@ -97,7 +97,8 @@ and on another process. Every log line, call record and OpenRouter `trace` objec
    ```
 
    Rows from the five sources are interleaved by time: `log` (structured logs), `audit` (dispatch and worker
-   rows), `ledger` (cost), `calls` (OpenRouter requests) and `events` (the goal event stream). A run found by its
+   rows), `ledger` (cost), `calls` (OpenRouter requests) and `events` (the goal event stream, plus the dev trace
+   stream `$OC_GOALS_DIR/<run>/events.ndjson` of runs that had dev trace on). A run found by its
    id shows the same rows as one found by its trace id, even for sources that only record the run id.
 3. Read it top to bottom:
    - `run submitted` then `placement decided` shows where each subtask was sent and why.
@@ -111,6 +112,41 @@ and on another process. Every log line, call record and OpenRouter `trace` objec
 
 `tail` redacts again on the way out, and never prints the `prompt` or `completion` fields of a call record, even
 if you captured them.
+
+## Dev trace: a live per-run event stream
+
+Dev trace records everything one run decided and did as one append-only event stream, `events.ndjson` in the run's
+directory (`$OC_GOALS_DIR/<run id>/`): the planner's output, each step's transitions, the router's decision (with the
+engines it skipped and why), every model call (model requested and served, provider, tokens including reasoning tokens,
+cost, latency, reasoning text), every sandbox command (the program, exit code, stdout and stderr tails, duration), each
+wait (for example a sandbox that would not boot) and each error with its kind. It uses the documented goal event contract
+(`docs/design/event-stream.md`), so the same tools read it.
+
+**It captures content.** The stream holds program text, command output, plan JSON and model reasoning. Everything is
+redacted before it is written (keys, tokens, PEM private keys and the other patterns in `oc/obs/redact.py`) and then
+capped, but treat the file like the call record with `OC_OBS_CAPTURE_CONTENT=1`: it can still hold anything the task
+touched. Leave it off unless you are looking into a run.
+
+Turn it on, either way:
+
+- **Console toggle.** `POST /api/dev {"trace": true}` (the console asks you to confirm first) writes `dev.json` next to
+  the goals directory (`$OC_GOALS_DIR/../dev.json`, mode 0600). No restart.
+- **Environment.** `OC_DEV_TRACE=1` on the console service. Needs a restart of that service to take effect.
+
+It is decided once per run, when the run is submitted. A run submitted with it off never has a stream (no file is
+created, no extra field is sent to the provider), and flipping the setting while a run works neither starts nor stops that
+run's stream. `GET /api/dev` shows what is set (`trace`: the file, `env`: the variable, `active`: either).
+
+Read it:
+
+```sh
+curl -b "$COOKIE" "$CONSOLE/api/runs/<run-id>/events?after=0"   # {events, last_seq, finished}; 500 per call
+curl -b "$COOKIE" -OJ "$CONSOLE/api/runs/<run-id>/events.jsonl"  # export the whole stream as JSONL
+python -m oc.obs tail --run <run-id>                            # merged with logs, audit, ledger and calls
+```
+
+Pass `last_seq` back as `after` to poll; stop when `finished` is true. A run without a stream answers `404`
+(`dev trace off for this run`). The stream is deleted with the run when you delete it in the console.
 
 ## OpenRouter call record and reports
 
