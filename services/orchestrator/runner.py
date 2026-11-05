@@ -135,10 +135,10 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
             fs.expire(tid)
             audit.append({"event": "worker_requeue", "task": tid, "reason": str(e)[:200]})
             if trace is not None:
-                n = _attempts(fs, tid)  # the requeue was just counted: this is the attempt about to run
+                n = _attempts(fs, tid)  # executions made so far (the requeue was just counted); the plan pins this meaning
                 trace.step(task.get("subtask", ""), task.get("title", ""), "running",
                            model=_worker_model(getattr(e, "usage", None)),
-                           waiting_on={"kind": "sandbox_boot", "attempt": n + 1, "max": _max_attempts(),
+                           waiting_on={"kind": "sandbox_boot", "attempt": n, "max": _max_attempts(),
                                        "since": devtrace.now(), "detail": devtrace.text(str(e), 200)})
                 trace.error(devtrace.entity("err", f"{tid}_{n}"), type(e).__name__, str(e), task.get("subtask"),
                             hint=devtrace.text(getattr(e, "hint", ""), 300) or None, recoverable=True)

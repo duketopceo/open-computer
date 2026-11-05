@@ -358,7 +358,7 @@ def test_a_requeued_step_stays_running_with_waiting_on_until_it_is_claimed_again
     waiting = [e for e in stream(goals) if e["type"] == "step" and "waiting_on" in e["data"]]
     (w,) = waiting
     assert w["data"]["status"] == "running" and w["data"]["waiting_on"]["kind"] == "sandbox_boot"
-    assert (w["data"]["waiting_on"]["attempt"], w["data"]["waiting_on"]["max"]) == (2, 4)
+    assert (w["data"]["waiting_on"]["attempt"], w["data"]["waiting_on"]["max"]) == (1, 4)
     assert errors(w) == [] and w["data"]["waiting_on"]["since"] > 0
     Down.up = True
     orch.work(wfn)
