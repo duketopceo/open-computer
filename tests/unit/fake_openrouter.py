@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class FakeOpenRouter:
     def __init__(self):
         self.requests: list[dict] = []
-        self.chat_replies: list = []  # dicts -> 200 JSON; ints -> that HTTP status; "garbage" -> non-JSON 200
+        self.chat_replies: list = []  # dicts -> 200 JSON; ints -> that HTTP status; (status, body) tuples -> that status and body; "garbage" -> non-JSON 200
         self.generations: dict[str, dict] = {}
         self.generation_404s = 0
         outer = self
@@ -30,7 +30,9 @@ class FakeOpenRouter:
                 body = json.loads(self.rfile.read(n) or b"{}")
                 outer.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
                 reply = outer.chat_replies.pop(0) if outer.chat_replies else outer.default_reply(body)
-                if isinstance(reply, int):
+                if isinstance(reply, tuple):  # (status, body): a scripted failure with its own provider body
+                    self._send(*reply)
+                elif isinstance(reply, int):
                     self._send(reply, {"error": {"code": reply, "message": "scripted failure sk-or-v1-leakleakleakleak12"}})
                 elif reply == "garbage":
                     self._send(200, b"<html>not json</html>", "text/html")

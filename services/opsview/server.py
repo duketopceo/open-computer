@@ -257,7 +257,7 @@ def _route(q: str) -> dict:
         "engine": d.engine,
         "confidence": d.confidence,
         "cost": d.cost,
-        "ms": round(d.ms * 1000) if d.ms < 10 else round(d.ms),
+        "ms": round(d.ms),
     }
 
 

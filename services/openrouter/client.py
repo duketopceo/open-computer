@@ -110,14 +110,16 @@ def extract_reasoning(resp: dict) -> str:
 
 
 def total_usage(items: list[Usage]) -> Usage | None:
+    """Sum a step's calls. The first served model and provider win (a step's calls share both in practice)."""
     if not items:
         return None
-    models = sorted({u.model for u in items if u.model})
     return Usage(
-        model=models[0] if len(models) == 1 else ",".join(models) or "unknown",
+        model=next((u.model for u in items if u.model), "unknown"),
         tokens_in=sum(u.tokens_in for u in items),
         tokens_out=sum(u.tokens_out for u in items),
         cost=sum(u.cost for u in items),
+        provider=next((u.provider for u in items if u.provider), None),
+        tokens_reasoning=sum(u.tokens_reasoning for u in items),
     )
 
 
@@ -296,7 +298,7 @@ def post(
     sink = _collector.get()
     if sink is not None and (parsed["tokens_in"] or parsed["tokens_out"] or parsed["cost_source"] == "provider"):
         sink.append(Usage(parsed["model_served"] or str(base["model_requested"]), parsed["tokens_in"],
-                          parsed["tokens_out"], parsed["cost"]))
+                          parsed["tokens_out"], parsed["cost"], parsed["provider"], parsed["tokens_reasoning"]))
     thoughts = _reasoning.get()
     if thoughts is not None:
         text = extract_reasoning(resp)
@@ -329,7 +331,8 @@ def chat(
     text = text if isinstance(text, str) else ""
     u = None
     if row["tokens_in"] or row["tokens_out"] or row["cost_source"] == "provider":
-        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"])
+        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"], row["provider"],
+                  row["tokens_reasoning"])
     return ChatResult(text=text, usage=u, cost=row["cost"], generation_id=row["generation_id"],
                       model_served=row["model_served"], provider=row["provider"], finish_reason=row["finish_reason"],
                       latency_ms=row["latency_ms"], cost_source=row["cost_source"], call_id=row["call_id"],

@@ -143,7 +143,7 @@ class ExecplaneAdapter:
         try:
             sb = self._sdk.Sandbox.create(**payload)
         except Exception as e:
-            log.error("sandbox boot failed", backend="cube", error=type(e).__name__)
+            log.error("sandbox boot failed", backend="cube", error=type(e).__name__, detail=str(e)[:200])
             try:
                 record("failed", reason=type(e).__name__)
             except Exception:

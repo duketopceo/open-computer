@@ -30,6 +30,7 @@ from typing import Callable
 
 from oc.obs import context as obs_context
 from oc.obs import devtrace, error_fields, get_logger
+from services.execplane.client import SandboxUnavailable
 from services.router.model_catalog import DEFAULT_WORKER_MODEL
 
 from services.openrouter import OpenRouterError, collect_usage, total_usage
@@ -94,6 +95,8 @@ class LocalModelUnavailable(WorkerUnavailable):
 OR_CHAT = "https://openrouter.ai/api/v1/chat/completions"
 
 _plane_instance = None
+_sleep = time.sleep  # injectable: tests never wait out the boot-retry pause
+_BOOT_RETRY_PAUSE_S = 2.0
 
 
 def _plane():
@@ -311,10 +314,23 @@ def sandbox_work(
         backend = os.environ.get("OC_EXECPLANE_BACKEND", "cube")
         raise SandboxWorkerUnavailable(f"{backend} sandbox control plane unreachable")
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
-    script, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
-    script, kind = _split_program(script)
+    cache = Path(task["script_cache"]) if task.get("script_cache") else None
+    reply = None
+    if cache is not None:
+        try:  # a requeued step reuses the script its first attempt generated: no second model call
+            reply = cache.read_text()
+        except OSError:
+            reply = None
+    if reply is None:
+        reply, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
+    script, kind = _split_program(reply)
     if not script:
         raise RuntimeError("script planner emitted empty output")
+    if cache is not None:
+        try:
+            cache.write_text(reply)
+        except OSError:
+            pass  # the cache is an optimisation; a requeue just regenerates
     # S5: only approved hosts (a human grant, a built-in default or OC_EGRESS_ALLOW) ever reach
     # the payload — dispatch computes the effective set from the placement, empty = deny-all.
     run_id = str(task.get("run") or "")
@@ -332,8 +348,13 @@ def sandbox_work(
             except Exception as e:
                 ct.finish(exc=e)
                 _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
+                boot = isinstance(e, SandboxUnavailable)
                 if attempt == 1:
+                    if boot:  # retryable: the runner requeues the step with a backoff
+                        raise SandboxWorkerUnavailable(str(e)) from e
                     raise
+                if boot:
+                    _sleep(_BOOT_RETRY_PAUSE_S)
                 continue
             finally:
                 _release_run_sandbox(ent)
@@ -343,6 +364,8 @@ def sandbox_work(
         sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)
         try:
             res = sb.exec(cmd)
+        except SandboxUnavailable as e:
+            raise SandboxWorkerUnavailable(str(e)) from e
         finally:
             sb.close()
     if res.returncode != 0:
