@@ -51,5 +51,5 @@ const WAITING: Record<string, string> = {
 
 /** "Waiting for sandbox — attempt 2 of 4" for a requeued step. */
 export function waitingText(kind: string, attempt: number, max: number): string {
-  return `Waiting for ${WAITING[kind] ?? kind.replace(/_/g, " ")} — attempt ${attempt} of ${max}`;
+  return `Waiting for ${WAITING[kind] ?? kind.replace(/_/g, " ")} — retrying, attempt ${attempt + 1} of ${max}`;
 }

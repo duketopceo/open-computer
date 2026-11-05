@@ -1306,7 +1306,7 @@ test("@flow run page: only steps with detected PII say private; an empty list an
 
 test("@flow run page: a requeued step says it is waiting for a sandbox and which attempt", async () => {
   const now = Date.now() / 1000;
-  const waiting = { ...RUN.subtasks[0], subtask: "w", title: "step waiting", state: "QUEUED", waiting_on: { kind: "sandbox_boot", attempt: 2, max: 4, since: now - 5, detail: "backend refused to boot" } };
+  const waiting = { ...RUN.subtasks[0], subtask: "w", title: "step waiting", state: "QUEUED", waiting_on: { kind: "sandbox_boot", attempt: 1, max: 4, since: now - 5, detail: "backend refused to boot" } };
   const plain = { ...RUN.subtasks[0], subtask: "p", title: "step plain", state: "QUEUED" };
   const run = { ...RUN, declared: 2, subtasks: [waiting, plain] };
   const { ctx, page } = await open({
@@ -1318,7 +1318,7 @@ test("@flow run page: a requeued step says it is waiting for a sandbox and which
   });
   await page.getByText("step waiting").waitFor();
   const row = page.locator("li", { hasText: "step waiting" });
-  assert.ok(await row.getByText("Waiting for sandbox — attempt 2 of 4").isVisible());
+  assert.ok(await row.getByText("Waiting for sandbox — retrying, attempt 2 of 4").isVisible());
   assert.equal(await page.locator("li", { hasText: "step plain" }).getByText("Waiting for").count(), 0);
   await ctx.close();
 });
