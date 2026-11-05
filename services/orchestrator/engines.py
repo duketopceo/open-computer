@@ -30,7 +30,7 @@ from typing import Callable
 
 from services.router.model_catalog import DEFAULT_WORKER_MODEL
 
-from services.openrouter import OpenRouterError, collect_usage, total_usage
+from services.openrouter import OpenRouterError, collect_usage, effort_scope, total_usage
 from services.openrouter import chat as or_chat
 
 from .runner import WorkResult
@@ -355,18 +355,21 @@ def _chat(url: str, model: str, prompt: str, key: str = "", timeout: float = 60.
 def decompose_engine(
     model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
+    effort: str | None = None,
 ) -> Callable[[str], str]:
-    """Planner: one OpenRouter call, returns raw text for decompose()."""
+    """Planner: one OpenRouter call, returns raw text for decompose(). `effort` (low/medium/high) decides whether
+    reasoning is requested; None infers it from the model's preset level."""
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
 
     def engine(prompt: str) -> str:
-        text, _ = _chat(
-            "https://openrouter.ai/api/v1/chat/completions",
-            model,
-            prompt,
-            key=key,
-            timeout=60,
-        )
+        with effort_scope(effort):
+            text, _ = _chat(
+                "https://openrouter.ai/api/v1/chat/completions",
+                model,
+                prompt,
+                key=key,
+                timeout=60,
+            )
         return text
 
     return engine
@@ -400,15 +403,16 @@ def local_work(task: dict) -> str:
 def work_fn(
     or_model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
+    effort: str | None = None,
 ) -> Callable[[dict], str]:
-    """The dispatched-task executor. Placement is honored, not decorative."""
+    """The dispatched-task executor. Placement is honored, not decorative. `effort` as for decompose_engine."""
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
 
     def run(task: dict):
         target = task.get("placement", "")
         if target.startswith("local"):
             return local_work(task)
-        with collect_usage() as used:
+        with collect_usage() as used, effort_scope(effort):
             try:
                 if target == "cloud-sandbox":
                     out = sandbox_work(task, model=or_model, api_key=key)

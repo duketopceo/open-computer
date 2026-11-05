@@ -4,6 +4,10 @@ Provider-reported `usage.cost` is the cost truth (OpenRouter always returns it; 
 with no reported cost is recorded `cost_source: "none"` and warned, never guessed. Recording failures never
 affect the call. Prompt/completion text is stored only with OC_OBS_CAPTURE_CONTENT=1 (and still redacted).
 
+Every chat call carries the model's catalog fallback chain as OpenRouter's native `models` array
+(services/router/model_catalog.py `call_params`); the row records the chain asked (`models_requested`), the model
+that served (`model_served`, from the response) and `fell_back` when that is not the first choice.
+
 Env: OC_OPENROUTER_BASE_URL (default https://openrouter.ai/api/v1), plus the attribution variables in
 `services.openrouter.attribution`.
 """
@@ -34,6 +38,7 @@ log = get_logger("openrouter")
 DEFAULT_BASE = "https://openrouter.ai/api/v1"
 _collector: ContextVar[list | None] = ContextVar("oc_or_usage", default=None)
 _reasoning: ContextVar[list | None] = ContextVar("oc_or_reasoning", default=None)
+_effort: ContextVar[str | None] = ContextVar("oc_or_effort", default=None)
 
 
 def base_url() -> str:
@@ -73,10 +78,20 @@ def collect_usage() -> Iterator[list[Usage]]:
 
 
 @contextmanager
+def effort_scope(effort: str | None) -> Iterator[None]:
+    """Every chat call inside the block runs at this effort level (low/medium/high) unless it names its own."""
+    token = _effort.set(effort)
+    try:
+        yield
+    finally:
+        _effort.reset(token)
+
+
+@contextmanager
 def collect_reasoning() -> Iterator[list[str]]:
     """Gather the reasoning text models returned on every OpenRouter call made inside the block.
 
-    Only what the model sends back unasked is kept; nothing here requests reasoning (it costs tokens)."""
+    Collects whatever the model sends back; `chat` asks for reasoning only on Medium/High effort."""
     box: list[str] = []
     token = _reasoning.set(box)
     try:
@@ -187,6 +202,19 @@ def _record(store: CallStore | None, row: dict) -> None:
         _l._count_failure(None, None)
 
 
+def _fallback_fields(base: dict, parsed: dict) -> dict:
+    """`fell_back: true` when a fallback chain was sent and a later model served (OpenRouter may append a dated
+    suffix to the served id, so a served id that starts with the first choice is still the first choice)."""
+    chain, served = base.get("models_requested"), parsed.get("model_served")
+    if not chain or not served:
+        return {}
+    first = str(chain[0])
+    fell = not (served == first or served.startswith(first + "-") or served.startswith(first + ":"))
+    if fell:
+        log.warning("openrouter fallback served the call", requested=first, served=served)
+    return {"fell_back": fell}
+
+
 def post(
     url: str,
     payload: dict,
@@ -205,6 +233,7 @@ def post(
     call_id = uuid.uuid4().hex[:16]
     base = {
         "event": "call", "call_id": call_id, "kind": kind, "model_requested": model or payload.get("model"),
+        **({"models_requested": list(payload["models"])} if isinstance(payload.get("models"), list) else {}),
         "url_host": urllib.parse.urlsplit(url).netloc,
         "prompt_chars": len(json.dumps(payload.get("messages", payload.get("state", "")), default=str)),
         "prompt_sha256": hashlib.sha256(
@@ -240,6 +269,7 @@ def post(
                     latency_ms=latency)
         raise OpenRouterError(msg, status=status, error_class=klass) from e
     parsed = parse_response(resp)
+    parsed.update(_fallback_fields(base, parsed))
     row = {**base, "status": "ok", "latency_ms": latency, **parsed}
     if capture_content():
         row["prompt"] = payload.get("messages", payload.get("state"))
@@ -276,11 +306,21 @@ def chat(
     timeout: float = 60.0,
     kind: str = "chat",
     store: CallStore | None = None,
+    effort: str | None = None,
     **params,
 ) -> ChatResult:
-    """One chat completion. Raises OpenRouterError (after recording the failed call)."""
+    """One chat completion. Raises OpenRouterError (after recording the failed call).
+
+    A catalog model is sent as its fallback chain (`models`, no `model`: OpenRouter tries them in order) and,
+    on Medium/High `effort` for a reasoning model, with `reasoning`. Explicit `params` win over both."""
+    from services.router.model_catalog import call_params  # local: the router package imports this client
+
     msgs = messages if messages is not None else [{"role": "user", "content": prompt or ""}]
-    resp, row = post(f"{base_url()}/chat/completions", {"model": model, "messages": msgs, **params},
+    extra = {**call_params(model, effort if effort is not None else _effort.get()), **params}
+    body = {"model": model, "messages": msgs, **extra}
+    if isinstance(body.get("models"), list) and len(body["models"]) > 1:
+        body.pop("model")  # the `models` array alone states the order
+    resp, row = post(f"{base_url()}/chat/completions", body,
                      key=key, timeout=timeout, kind=kind, model=model, store=store)
     try:
         text = resp["choices"][0]["message"]["content"]

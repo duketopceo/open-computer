@@ -12,7 +12,7 @@ approval gate, a cost ledger with a hard cap, on the owner's own machines. Not a
 hosted SaaS, a persistent memory product.
 
 **Spend rule:** no premium model (Anthropic-class and similar) is a default anywhere. The price ceiling
-is Grok 4.7 (about $1.60/$4.80 per Mtok); the orchestrator default is `deepseek-v4-pro`. Anything above
+is Grok 4.7 (about $1.60/$4.80 per Mtok); the orchestrator default is `particle-ai/particle-1`. Anything above
 that needs an explicit owner decision. Enforced by `tests/unit/test_spend_rule.py`.
 
 ## Phases

@@ -1,0 +1,32 @@
+{
+  "_note": "Recorded shape of an OpenRouter chat completion sent with models=[particle-ai/particle-1, deepseek/deepseek-v4.1-flash, google/gemini-2.5-flash] where the first two were unavailable: `model` names the fallback that served, and `usage.cost` is billed at that model's price. Ids and text are scrubbed.",
+  "id": "gen-1762300000-fallbackfixture",
+  "provider": "Google",
+  "model": "google/gemini-2.5-flash",
+  "object": "chat.completion",
+  "created": 1762300000,
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "native_finish_reason": "STOP",
+      "message": {
+        "role": "assistant",
+        "content": "echo done",
+        "refusal": null,
+        "reasoning": "The task asks for one shell line, so print the result.",
+        "reasoning_details": [{"type": "reasoning.text", "text": "The task asks for one shell line, so print the result.", "format": "unknown", "index": 0}]
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 412,
+    "completion_tokens": 58,
+    "total_tokens": 470,
+    "cost": 0.0002686,
+    "is_byok": false,
+    "prompt_tokens_details": {"cached_tokens": 0},
+    "cost_details": {"upstream_inference_cost": null},
+    "completion_tokens_details": {"reasoning_tokens": 41}
+  }
+}

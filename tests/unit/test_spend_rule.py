@@ -31,7 +31,7 @@ def test_docs_name_no_premium_orchestrator():
 def test_default_orchestrator_model_is_not_premium():
     from services.agents.loop import DEFAULT_ORCHESTRATOR_MODEL
 
-    assert DEFAULT_ORCHESTRATOR_MODEL == "deepseek/deepseek-v4-pro"
+    assert DEFAULT_ORCHESTRATOR_MODEL == "particle-ai/particle-1"
     assert not PREMIUM.match(DEFAULT_ORCHESTRATOR_MODEL)
 
 

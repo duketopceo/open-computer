@@ -1,7 +1,8 @@
 """Decisions-endpoint client — one wire shape, two engines.
 
-Primary: perplexity/pplx-decider (best tier accuracy + cheapest in bench).
-Fallback: typesafe/jev-1.13 (faster; local-shim compatible).
+Primary: perplexity/pplx-decider (best tier accuracy + cheapest in bench), or OC_DECIDER_MODEL.
+Fallbacks: OC_DECIDER_FALLBACKS (comma-separated model ids), then always typesafe/jev-1.13 (faster;
+local-shim compatible). `decider_chain` is the order the router tries them in, one engine per model.
 
 Validated against the bench wire: POST {state, questions, model?} ->
 {answers: {<q>: {choice, confidence}}, model, usage.cost}.
@@ -9,6 +10,7 @@ Validated against the bench wire: POST {state, questions, model?} ->
 
 from __future__ import annotations
 
+import os
 import time
 
 from services.openrouter import post as or_post
@@ -18,6 +20,16 @@ from .policy_table import QUESTIONS
 DECIDER_MODEL = "perplexity/pplx-decider-v1.1-27b"
 JEV_MODEL = "typesafe/jev-1.13"
 DEFAULT_BASE = "https://openrouter.ai/api"
+
+
+def decider_chain() -> list[tuple[str, str]]:
+    """(engine name, model) in try order: the decider, its configured fallbacks, then jev. Duplicates dropped."""
+    primary = os.environ.get("OC_DECIDER_MODEL", "").strip() or DECIDER_MODEL
+    extra = [m.strip() for m in os.environ.get("OC_DECIDER_FALLBACKS", "").split(",") if m.strip()]
+    models = list(dict.fromkeys([primary, *extra, JEV_MODEL]))
+    names = ["decider", *(f"decider-fallback-{i}" for i in range(1, len(models)))]
+    out = [(n, m) for n, m in zip(names, models)]
+    return [(n if m != JEV_MODEL else "jev", m) for n, m in out]
 
 
 class EngineDown(Exception):

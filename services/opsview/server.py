@@ -266,8 +266,8 @@ def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
     every cloud step; its budget is a hard per-run cap."""
     return goalruns.submit(
         goal,
-        goal_engines.decompose_engine(plan.model),
-        goal_engines.work_fn(plan.model),
+        goal_engines.decompose_engine(plan.model, effort=plan.effort),
+        goal_engines.work_fn(plan.model, effort=plan.effort),
         by=who,
         effort=plan.effort,
         model=plan.model,

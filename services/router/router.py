@@ -1,6 +1,6 @@
 """Router — engine chain + budget gate + declared deterministic fallback.
 
-Chain: decider -> jev -> table. Never openrouter/auto (bench: worst
+Chain: decider (OC_DECIDER_MODEL) -> OC_DECIDER_FALLBACKS -> jev -> table. Never openrouter/auto (bench: worst
 accuracy, 17x cost). A 'table' decision is honest about what it is.
 """
 
@@ -114,13 +114,12 @@ def default_router(
     daily_cap: float | None = None,
     task_cap: float | None = None,
 ) -> Router:
-    """decider -> jev -> (implicit table). Config via env or args."""
+    """decider chain (decide.decider_chain) -> (implicit table). Config via env or args."""
     base = (base_url or os.environ.get("OPENROUTER_BASE") or _decide.DEFAULT_BASE).rstrip("/")
     key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
     engines: list[Engine] = []
     if key:
-        engines.append(_http_engine("decider", _decide.DECIDER_MODEL, base, key))
-        engines.append(_http_engine("jev", _decide.JEV_MODEL, base, key))
+        engines.extend(_http_engine(name, model, base, key) for name, model in _decide.decider_chain())
     daily = daily_cap if daily_cap is not None else float(os.environ.get("OC_DAILY_CAP", "1.0"))
     task = task_cap if task_cap is not None else float(os.environ.get("OC_TASK_CAP", "0.10"))
     return Router(Budget(ledger_path, daily_cap=daily, task_cap=task), engines)

@@ -1,13 +1,14 @@
 {
-  "_note": "Curated model list (plan KTD14). Changed by a reviewed PR or an explicit hand edit, never at runtime. Prices are USD per Mtok from OpenRouter's published list on 2026-10-31 and only gate and display; recorded cost is the provider's. A model above the price ceiling needs `above_ceiling: true` here and is never a default, preset or tier member.",
-  "default_orchestrator": "deepseek/deepseek-v4-pro",
+  "_note": "Curated model list (plan KTD14). Changed by a reviewed PR or an explicit hand edit, never at runtime. Prices are USD per Mtok from OpenRouter's published list on 2026-11-05 (particle-ai/particle-1 added at $0.05/$0.50) and only gate and display; recorded cost is the provider's, for the model that actually served. `fallbacks` is each model's ordered OpenRouter `models` fallback chain (at most 2 entries, each a catalog entry under the ceiling, tools-capable when the model's role needs tools). `reasoning: true` marks a model that is asked for reasoning on Medium and High effort. A model above the price ceiling needs `above_ceiling: true` here and is never a default, preset, tier member or fallback.",
+  "default_orchestrator": "particle-ai/particle-1",
   "default_worker": "z-ai/glm-5.3-flash",
-  "presets": {"low": "google/gemini-2.5-flash", "medium": "deepseek/deepseek-v4-pro", "high": "deepseek/deepseek-v4-pro"},
+  "presets": {"low": "google/gemini-2.5-flash", "medium": "particle-ai/particle-1", "high": "particle-ai/particle-1"},
   "models": [
-    {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash", "provider": "Google", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 0.30, "output_price": 2.50, "context": 1048576, "tiers": ["cheap"]},
-    {"id": "deepseek/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "provider": "DeepSeek", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 0.045, "output_price": 0.50, "context": 1048576, "tiers": ["cheap"]},
-    {"id": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro", "provider": "DeepSeek", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 1.60, "output_price": 3.20, "context": 1048576, "tiers": ["mid", "frontier"]},
-    {"id": "x-ai/grok-4.7", "label": "Grok 4.7", "provider": "xAI", "roles": ["orchestrator"], "tools": true, "input_price": 2.00, "output_price": 6.00, "context": 500000, "tiers": [], "above_ceiling": true},
-    {"id": "z-ai/glm-5.3-flash", "label": "GLM 5.3 Flash", "provider": "Z.ai", "roles": ["worker"], "tools": true, "input_price": 0.0147, "output_price": 0.1794, "context": 1048576, "tiers": []}
+    {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash", "provider": "Google", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 0.30, "output_price": 2.50, "context": 1048576, "tiers": ["cheap"], "fallbacks": ["deepseek/deepseek-v4.1-flash"]},
+    {"id": "particle-ai/particle-1", "label": "Particle 1", "provider": "Particle AI", "roles": ["orchestrator", "worker"], "tools": true, "reasoning": true, "input_price": 0.05, "output_price": 0.50, "context": 1048576, "tiers": ["cheap", "mid"], "fallbacks": ["deepseek/deepseek-v4.1-flash", "google/gemini-2.5-flash"]},
+    {"id": "deepseek/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "provider": "DeepSeek", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 0.045, "output_price": 0.50, "context": 1048576, "tiers": ["cheap"], "fallbacks": ["google/gemini-2.5-flash"]},
+    {"id": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro", "provider": "DeepSeek", "roles": ["orchestrator", "worker"], "tools": true, "input_price": 1.60, "output_price": 3.20, "context": 1048576, "tiers": ["mid", "frontier"], "fallbacks": ["particle-ai/particle-1", "deepseek/deepseek-v4.1-flash"]},
+    {"id": "x-ai/grok-4.7", "label": "Grok 4.7", "provider": "xAI", "roles": ["orchestrator"], "tools": true, "input_price": 2.00, "output_price": 6.00, "context": 500000, "tiers": [], "above_ceiling": true, "fallbacks": ["deepseek/deepseek-v4-pro", "particle-ai/particle-1"]},
+    {"id": "z-ai/glm-5.3-flash", "label": "GLM 5.3 Flash", "provider": "Z.ai", "roles": ["worker"], "tools": true, "input_price": 0.0147, "output_price": 0.1794, "context": 1048576, "tiers": [], "fallbacks": ["deepseek/deepseek-v4.1-flash", "google/gemini-2.5-flash"]}
   ]
 }
