@@ -3,7 +3,8 @@
 The composer shows Low / Medium / High instead of a list of settings. Each level names a router tier
 (`services.router.policy_table.TIERS`); the model is the level's preset in the curated catalog
 (`services/router/model_catalog.json`), so the spend rule (ROADMAP.md, enforced by tests/unit/test_spend_rule.py
-and the catalog loader) governs it. The per-run budget is a
+and the catalog loader) governs it. Each level has three models of its own, the preset and two OpenRouter fallbacks,
+and no model serves two levels. The per-run budget is a
 hard cap on a `CostLedger` that pauses the run, and is never above the daily cap (`OC_DAILY_CAP`).
 
 The optional advanced override (a model from the three below, a smaller or larger budget) goes through
@@ -30,11 +31,16 @@ class Level:
     def model(self) -> str:
         return CATALOG.preset(self.id)
 
+    @property
+    def fallbacks(self) -> list[str]:
+        """The models OpenRouter falls back to, in order, when the preset cannot serve."""
+        return CATALOG.level_chain(self.id)[1:]
+
 
 LEVELS: tuple[Level, ...] = (
-    Level("low", "Low", "Quick and cheap: a hosted flash-class model.", "cheap", 0.10),
-    Level("medium", "Medium", "Harder tasks: Particle 1 with reasoning on.", "mid", 0.30),
-    Level("high", "High", "Hardest tasks: Particle 1 thinking harder, with a bigger budget. Never a default.", "mid", 1.00),
+    Level("low", "Low", "Quick and cheap: small open-weight models.", "cheap", 0.10),
+    Level("medium", "Medium", "Harder tasks: mid-size open-weight models with reasoning on.", "mid", 0.30),
+    Level("high", "High", "Hardest tasks: strong open-weight coders, thinking harder. Never a default.", "frontier", 1.00),
 )
 BY_ID = {lv.id: lv for lv in LEVELS}
 FALLBACK_DEFAULT = "low"
@@ -98,7 +104,8 @@ def catalog(daily_cap: float) -> dict:
         "max_budget": daily_cap,
         "models": models(),
         "levels": [
-            {"id": lv.id, "label": lv.label, "blurb": lv.blurb, "model": lv.model, "budget": min(lv.budget, daily_cap)}
+            {"id": lv.id, "label": lv.label, "blurb": lv.blurb, "model": lv.model, "fallbacks": lv.fallbacks,
+             "budget": min(lv.budget, daily_cap)}
             for lv in LEVELS
         ],
     }

@@ -258,6 +258,7 @@ export interface EffortLevel {
   label: string;
   blurb: string;
   model: string;
+  fallbacks?: string[]; // the level's two other models, in the order OpenRouter tries them
   budget: number;
 }
 

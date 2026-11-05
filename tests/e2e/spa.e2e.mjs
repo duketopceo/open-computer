@@ -842,7 +842,7 @@ const EFFORT = {
   max_budget: 1,
   models: ["google/gemini-2.5-flash", "deepseek/deepseek-v4-pro", "x-ai/grok-4.7"],
   levels: [
-    { id: "low", label: "Low", blurb: "Quick and cheap.", model: "google/gemini-2.5-flash", budget: 0.1 },
+    { id: "low", label: "Low", blurb: "Quick and cheap.", model: "google/gemini-2.5-flash", fallbacks: ["vendor/low-b", "vendor/low-c"], budget: 0.1 },
     { id: "medium", label: "Medium", blurb: "Harder tasks.", model: "deepseek/deepseek-v4-pro", budget: 0.3 },
     { id: "high", label: "High", blurb: "Most capable allowed.", model: "x-ai/grok-4.7", budget: 1 },
   ],
@@ -878,6 +878,7 @@ test("@flow effort: server default is selected, Advanced is closed, and the capt
   assert.equal(await page.getByLabel("Model").count(), 0);
   await page.getByText("up to $0.10 per run").waitFor();
   assert.ok(await page.getByText("google/gemini-2.5-flash").first().isVisible());
+  assert.ok(await page.getByText("vendor/low-b, vendor/low-c").isVisible());
   await ctx.close();
 });
 
