@@ -381,10 +381,14 @@ def work_fn(
         if target.startswith("local"):
             return local_work(task)
         with collect_usage() as used:
-            if target == "cloud-sandbox":
-                out = sandbox_work(task, model=or_model, api_key=key)
-            else:  # cloud-OpenRouter and anything unrecognized-but-cloud
-                out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
+            try:
+                if target == "cloud-sandbox":
+                    out = sandbox_work(task, model=or_model, api_key=key)
+                else:  # cloud-OpenRouter and anything unrecognized-but-cloud
+                    out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
+            except Exception as e:
+                e.usage = total_usage(used)  # paid calls made before the failure still count (the runner records it)
+                raise
         usage = total_usage(used)
         # Provider-reported spend goes to the run's cost ledger (the cap enforces on real dollars).
         return WorkResult(out, usage) if usage is not None else out
