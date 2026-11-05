@@ -90,7 +90,14 @@ export function EffortPicker({
       </div>
 
       <p className="text-xs text-muted" aria-live="polite">
-        {level.blurb} <span className="mono">{value.model || level.model}</span> ·{" "}
+        {level.blurb} <span className="mono">{value.model || level.model}</span>
+        {!value.model && level.fallbacks?.length ? (
+          <>
+            {" "}
+            (falls back to <span className="mono">{level.fallbacks.join(", ")}</span>)
+          </>
+        ) : null}{" "}
+        ·{" "}
         <span className="mono">up to {usd(Number(value.budget.trim()) > 0 && !budgetBad ? Number(value.budget) : level.budget)}</span>{" "}
         per run
       </p>

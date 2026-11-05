@@ -52,6 +52,21 @@ Measured evidence: on a 180-fixture set the hosted `pplx-decider` reached 86.7% 
 about $0.000004 per decision ([bench](./docs/router-bench-results.md)). A self-hosted router did not stay up
 under load, so the router is a thin chain over the hosted decider with Jev as fallback.
 
+**Models by effort** ([`services/router/model_catalog.json`](./services/router/model_catalog.json)): each effort
+level has three open-weight, tool-calling models of its own, a primary and two OpenRouter fallbacks tried in order
+inside the same request. No model serves two levels, and the catalog loader refuses a file that breaks that.
+Prices are OpenRouter's published USD per Mtok (input/output) on 2026-11-05. Medium and High ask for reasoning.
+
+| Effort | Primary | Fallback 1 | Fallback 2 |
+| --- | --- | --- | --- |
+| Low | `google/gemma-4-26b-a4b-it` ($0.077/$0.26) | `nvidia/nemotron-3.5-lightning` ($0.07/$0.20) | `deepseek/deepseek-v4-flash` ($0.091/$0.18) |
+| Medium | `particle-ai/particle-1` ($0.05/$0.50) | `deepseek/deepseek-v4.1-flash` ($0.045/$0.50) | `xiaomi/mimo-v2.6-flash` ($0.14/$0.28) |
+| High | `moonshotai/kimi-k2.7-code` ($0.60/$3.50) | `xiaomi/mimo-v2.6-pro` ($0.435/$0.87) | `deepseek/deepseek-v4-pro` ($1.60/$3.20) |
+
+The orchestrator default is the Medium primary. Workers default to `z-ai/glm-5.3-flash` ($0.15/$0.50) with their
+own chain, `minimax/minimax-m3.1-flash` then `tencent/hy3`, which shares no model with a level. The price ceiling
+(about $1.60/$4.80, see the [ROADMAP](./ROADMAP.md) spend rule) is unchanged.
+
 ## Observability and cost data
 
 Stages 1 and 2 of the [observability plan](./docs/plans/2026-10-28-001-feat-observability-and-cost-telemetry-plan.md)

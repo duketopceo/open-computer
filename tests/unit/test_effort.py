@@ -15,6 +15,18 @@ def test_levels_map_to_router_tiers_and_their_first_model():
         assert lv.model == TIER_MODELS[lv.tier][0]
 
 
+def test_each_level_shows_its_two_fallbacks_and_no_level_shares_a_model():
+    seen = []
+    for lv in effort.LEVELS:
+        assert len(lv.fallbacks) == 2 and lv.model not in lv.fallbacks
+        assert [lv.model, *lv.fallbacks] == TIER_MODELS[lv.tier]
+        seen += [lv.model, *lv.fallbacks]
+    assert len(seen) == len(set(seen)) == 9
+    assert [lv.tier for lv in effort.LEVELS] == ["cheap", "mid", "frontier"]
+    cat = effort.catalog(1.0)
+    assert [lv["fallbacks"] for lv in cat["levels"]] == [lv.fallbacks for lv in effort.LEVELS]
+
+
 def test_overrides_are_only_models_the_router_already_allows():
     assert set(effort.models()) <= {m for ms in TIER_MODELS.values() for m in ms}
 

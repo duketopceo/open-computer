@@ -11,6 +11,10 @@ and sit outside these price checks.
 Fallbacks: every entry may name an ordered `fallbacks` chain. `call_params` turns it into OpenRouter's native
 `models` array on each chat call, so a provider outage, rate limit or refusal moves the call to the next model
 inside the same request; the response's `model` names the one that served, and cost is recorded for that one.
+
+Effort levels own tiers (`LEVEL_TIERS`): each tier holds exactly `TIER_SIZE` models, the level's preset followed by
+its fallbacks, and no model belongs to two tiers, so Low, Medium and High never overlap. A tier member's fallbacks stay
+inside its tier, and the default worker's chain shares no model with any tier.
 """
 
 from __future__ import annotations
@@ -26,6 +30,8 @@ ROLES = ("orchestrator", "worker")
 LEVELS = ("low", "medium", "high")
 CLOUD_TIERS = ("cheap", "mid", "frontier")
 MAX_FALLBACKS = 2  # OpenRouter's `models` array: the primary plus at most two more
+LEVEL_TIERS = {"low": "cheap", "medium": "mid", "high": "frontier"}  # effort level -> the tier it owns
+TIER_SIZE = 3  # each level: its preset plus exactly two fallbacks
 REASONING_LEVELS = {"medium": "medium", "high": "high"}  # effort level -> OpenRouter `reasoning.effort`; Low asks none
 LOCAL_MODELS = ("typesafe/jev-1.13", "local/ollama")  # shown only when OC_LOCAL_MODELS is on
 PATH = Path(__file__).with_name("model_catalog.json")
@@ -89,7 +95,13 @@ class Catalog:
         return self.presets[level]
 
     def tier_models(self) -> dict[str, list[str]]:
-        return {t: [e.id for e in self.entries if t in e.tiers] for t in CLOUD_TIERS}
+        """Each cloud tier's models, primary first: the owning level's preset chain."""
+        level = {t: lv for lv, t in LEVEL_TIERS.items()}
+        return {t: self.chain(self.presets[level[t]]) for t in CLOUD_TIERS}
+
+    def level_chain(self, level: str) -> list[str]:
+        """The level's preset followed by its fallbacks: the three models that may serve a run at this level."""
+        return self.chain(self.presets[level])
 
     def chain(self, model_id: str) -> list[str]:
         """The model followed by its fallbacks, in order. A model outside the catalog has no chain."""
@@ -120,6 +132,8 @@ def _entry(raw: dict) -> Entry:
     tiers = tuple(raw.get("tiers") or ())
     if any(t not in CLOUD_TIERS for t in tiers):
         raise CatalogError(f"{where}: tiers must be a subset of {CLOUD_TIERS}")
+    if len(tiers) > 1:
+        raise CatalogError(f"{where}: a model belongs to at most one tier (effort levels never share a model)")
     fallbacks = raw.get("fallbacks") or []
     if not isinstance(fallbacks, list) or not all(isinstance(f, str) and f for f in fallbacks):
         raise CatalogError(f"{where}: fallbacks must be a list of model ids")
@@ -204,10 +218,30 @@ def parse(data: dict) -> Catalog:
         default_worker=_default(by_id, data.get("default_worker"), "worker", "default worker"),
         presets=presets,
     )
-    empty = [t for t, ms in cat.tier_models().items() if not ms]
-    if empty:
-        raise CatalogError(f"tiers without a model: {empty}")
+    _check_levels(cat, by_id)
     return cat
+
+
+def _check_levels(cat: Catalog, by_id: dict[str, Entry]) -> None:
+    """Each level's tier is exactly its preset's chain of TIER_SIZE models, tier members fall back only inside
+    their tier, and the default worker's chain stays out of every tier."""
+    members = {t: {e.id for e in by_id.values() if t in e.tiers} for t in CLOUD_TIERS}
+    for lv, t in LEVEL_TIERS.items():
+        chain = cat.chain(cat.presets[lv])
+        if len(members[t]) != TIER_SIZE:
+            raise CatalogError(f"tier {t} ({lv}) must have exactly {TIER_SIZE} models, has {len(members[t])}")
+        if len(chain) != TIER_SIZE or set(chain) != members[t]:
+            raise CatalogError(f"preset {lv} {chain[0]!r}: its chain {chain} must be exactly the {t} tier "
+                               f"{sorted(members[t])}")
+    for e in by_id.values():
+        for t in e.tiers:
+            stray = [f for f in e.fallbacks if f not in members[t]]
+            if stray:
+                raise CatalogError(f"model {e.id}: fallbacks {stray} leave its {t} tier")
+    tiered = set().union(*members.values())
+    shared = [m for m in cat.chain(cat.default_worker) if m in tiered]
+    if shared:
+        raise CatalogError(f"default worker chain shares {shared} with an effort level's tier")
 
 
 def load(path: Path = PATH) -> Catalog:
@@ -247,6 +281,7 @@ def payload() -> dict:
         "default_orchestrator": CATALOG.default_orchestrator,
         "default_worker": CATALOG.default_worker,
         "presets": dict(CATALOG.presets),
+        "levels": {lv: CATALOG.level_chain(lv) for lv in LEVELS},
         "orchestrators": [e.public() for e in CATALOG.orchestrators()],
         "workers": [e.public() for e in CATALOG.workers()],
         "local": [],

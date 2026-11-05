@@ -43,6 +43,9 @@ def test_effort_catalog_is_json_and_matches_the_module(console, monkeypatch):
     assert d["default"] == "low" and d["models"] == effort.models()
     assert [lv["id"] for lv in d["levels"]] == ["low", "medium", "high"]
     assert d["levels"][1]["model"] == effort.BY_ID["medium"].model
+    assert d["levels"][1]["fallbacks"] == ["deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"]
+    shown = [m for lv in d["levels"] for m in [lv["model"], *lv["fallbacks"]]]
+    assert len(shown) == len(set(shown)) == 9  # three per level, none shared
 
 
 def test_confirm_step_reports_the_resolved_plan_and_submits_nothing(console, plans):
@@ -176,4 +179,5 @@ def test_models_endpoint_serves_the_catalog_with_prices_and_the_above_ceiling_ma
     assert by["x-ai/grok-4.7"]["above_ceiling"] is True and by["x-ai/grok-4.7"]["input_price"] > d["ceiling"]["input"]
     assert by["deepseek/deepseek-v4-pro"]["above_ceiling"] is False
     assert d["local"] == []
+    assert {lv: len(ms) for lv, ms in d["levels"].items()} == {"low": 3, "medium": 3, "high": 3}
     assert console.request("POST", "/api/models", body="{}", headers={TOKEN_HDR: console.csrf()})[0] in (404, 405)

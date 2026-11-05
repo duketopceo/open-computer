@@ -1,8 +1,8 @@
 {
-  "_note": "Recorded shape of an OpenRouter chat completion sent with models=[particle-ai/particle-1, deepseek/deepseek-v4.1-flash, google/gemini-2.5-flash] where the first two were unavailable: `model` names the fallback that served, and `usage.cost` is billed at that model's price. Ids and text are scrubbed.",
+  "_note": "Recorded shape of an OpenRouter chat completion sent with models=[particle-ai/particle-1, deepseek/deepseek-v4.1-flash, xiaomi/mimo-v2.6-flash] where the first two were unavailable: `model` names the fallback that served, and `usage.cost` is billed at that model's price (412 x $0.14 + 58 x $0.28 per Mtok, MiMo V2.6 Flash's published price on 2026-11-05). Ids and text are scrubbed.",
   "id": "gen-1762300000-fallbackfixture",
-  "provider": "Google",
-  "model": "google/gemini-2.5-flash",
+  "provider": "Xiaomi",
+  "model": "xiaomi/mimo-v2.6-flash",
   "object": "chat.completion",
   "created": 1762300000,
   "choices": [
@@ -23,7 +23,7 @@
     "prompt_tokens": 412,
     "completion_tokens": 58,
     "total_tokens": 470,
-    "cost": 0.0002686,
+    "cost": 0.00007392,
     "is_byok": false,
     "prompt_tokens_details": {"cached_tokens": 0},
     "cost_details": {"upstream_inference_cost": null},

@@ -19,6 +19,8 @@ from test_model_catalog import RAW, entry, variant
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "openrouter" / "chat_fallback_served.json"
 PARTICLE = "particle-ai/particle-1"
+V41 = "deepseek/deepseek-v4.1-flash"
+MIMO = "xiaomi/mimo-v2.6-flash"
 
 
 @pytest.fixture
@@ -29,10 +31,10 @@ def fake(monkeypatch):
 
 
 # --- catalog -------------------------------------------------------------------------------------
-def test_particle_1_is_the_default_orchestrator_and_the_medium_and_high_preset():
+def test_particle_1_is_the_default_orchestrator_and_the_medium_preset():
     cat = mc.load()
     assert cat.default_orchestrator == PARTICLE
-    assert cat.presets == {"low": "google/gemini-2.5-flash", "medium": PARTICLE, "high": PARTICLE}
+    assert cat.presets == {"low": "google/gemma-4-26b-a4b-it", "medium": PARTICLE, "high": "moonshotai/kimi-k2.7-code"}
     p = cat.get(PARTICLE)
     assert (p.input_price, p.output_price, p.context, p.tools, p.reasoning) == (0.05, 0.50, 1048576, True, True)
     assert cat.get("deepseek/deepseek-v4-pro") is not None  # still offered as an option
@@ -40,10 +42,12 @@ def test_particle_1_is_the_default_orchestrator_and_the_medium_and_high_preset()
 
 def test_every_shipped_chain_is_valid_and_every_cloud_model_has_one():
     cat = mc.load()
-    assert cat.chain(PARTICLE) == [PARTICLE, "deepseek/deepseek-v4.1-flash", "google/gemini-2.5-flash"]
-    assert cat.chain("z-ai/glm-5.3-flash") == ["z-ai/glm-5.3-flash", "deepseek/deepseek-v4.1-flash",
-                                               "google/gemini-2.5-flash"]
-    assert cat.chain("google/gemini-2.5-flash") == ["google/gemini-2.5-flash", "deepseek/deepseek-v4.1-flash"]
+    assert cat.chain(PARTICLE) == [PARTICLE, V41, MIMO]
+    assert cat.chain("google/gemma-4-26b-a4b-it") == ["google/gemma-4-26b-a4b-it", "nvidia/nemotron-3.5-lightning",
+                                                      "deepseek/deepseek-v4-flash"]
+    assert cat.chain("moonshotai/kimi-k2.7-code") == ["moonshotai/kimi-k2.7-code", "xiaomi/mimo-v2.6-pro",
+                                                      "deepseek/deepseek-v4-pro"]
+    assert cat.chain("z-ai/glm-5.3-flash") == ["z-ai/glm-5.3-flash", "minimax/minimax-m3.1-flash", "tencent/hy3"]
     for e in cat.entries:
         assert e.fallbacks, e.id
         for f in e.fallbacks:
@@ -59,7 +63,7 @@ def test_every_shipped_chain_is_valid_and_every_cloud_model_has_one():
         (lambda d: entry(d, PARTICLE).update(fallbacks=["z-ai/glm-5.3-flash"]), "lacks a role"),
         (lambda d: entry(d, PARTICLE).update(fallbacks=[PARTICLE]), "distinct"),
         (lambda d: entry(d, PARTICLE).update(fallbacks=["a/1", "b/2", "c/3"]), "at most 2"),
-        (lambda d: entry(d, PARTICLE).update(fallbacks="google/gemini-2.5-flash"), "list of model ids"),
+        (lambda d: entry(d, PARTICLE).update(fallbacks=V41), "list of model ids"),
         (lambda d: entry(d, PARTICLE).update(reasoning="yes"), "reasoning must be"),
     ],
 )
@@ -70,12 +74,10 @@ def test_bad_chains_refuse_to_load(edit, msg):
 
 def test_a_fallback_without_tools_is_refused_for_a_tools_model():
     def edit(d):
-        entry(d, "deepseek/deepseek-v4.1-flash")["tools"] = False
-        entry(d, "deepseek/deepseek-v4.1-flash")["roles"] = ["worker"]  # an orchestrator must have tools
-        entry(d, "z-ai/glm-5.3-flash")["fallbacks"] = ["deepseek/deepseek-v4.1-flash"]
-        for m in d["models"]:  # nothing else may lean on it
+        entry(d, "tencent/hy3")["tools"] = False
+        for m in d["models"]:  # only the worker leans on it
             if m["id"] != "z-ai/glm-5.3-flash":
-                m["fallbacks"] = [f for f in m.get("fallbacks", []) if f != "deepseek/deepseek-v4.1-flash"]
+                m["fallbacks"] = [f for f in m.get("fallbacks", []) if f != "tencent/hy3"]
 
     with pytest.raises(mc.CatalogError, match="no tool calling"):
         mc.parse(variant(e=edit))
@@ -86,7 +88,9 @@ def test_call_params_chain_and_reasoning_by_effort():
     assert mc.call_params(PARTICLE, "medium")["reasoning"] == {"effort": "medium"}
     assert mc.call_params(PARTICLE, "high")["reasoning"] == {"effort": "high"}
     assert mc.call_params(PARTICLE)["reasoning"] == {"effort": "medium"}  # unknown effort: its lowest preset level
-    assert "reasoning" not in mc.call_params("google/gemini-2.5-flash", "high")  # not flagged: left as it was
+    assert mc.call_params("moonshotai/kimi-k2.7-code")["reasoning"] == {"effort": "high"}  # High's own preset
+    assert "reasoning" not in mc.call_params("google/gemma-4-26b-a4b-it")  # Low's preset: Low asks none
+    assert "reasoning" not in mc.call_params("x-ai/grok-4.7", "high")  # not flagged: left as it was
     assert mc.call_params("typesafe/jev-1.13", "high") == {}  # outside the catalog: untouched
 
 
@@ -96,13 +100,13 @@ def test_chat_sends_the_models_array_and_records_the_fallback_that_served(fake):
     with collect_usage() as used:
         res = chat(PARTICLE, "p", key="k", effort="high")
     body = fake.requests[-1]["body"]
-    assert body["models"] == [PARTICLE, "deepseek/deepseek-v4.1-flash", "google/gemini-2.5-flash"]
+    assert body["models"] == [PARTICLE, V41, MIMO]
     assert "model" not in body  # the array alone states the order
     assert body["reasoning"] == {"effort": "high"}
-    assert res.model_served == "google/gemini-2.5-flash" and res.usage.model == "google/gemini-2.5-flash"
-    assert used[0].model == "google/gemini-2.5-flash" and used[0].cost == pytest.approx(0.0002686)
+    assert res.model_served == MIMO and res.usage.model == MIMO
+    assert used[0].model == MIMO and used[0].cost == pytest.approx(0.00007392)
     (row,) = CallStore().calls()
-    assert row["model_requested"] == PARTICLE and row["model_served"] == "google/gemini-2.5-flash"
+    assert row["model_requested"] == PARTICLE and row["model_served"] == MIMO
     assert row["models_requested"] == body["models"] and row["fell_back"] is True
 
 
