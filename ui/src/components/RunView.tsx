@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
-import { engine, errorKind, fallbackWhy, modelName, placement } from "@/lib/friendly";
+import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy } from "@/lib/friendly";
 import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
@@ -43,7 +43,7 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
 
       <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
         {run.subtasks.map((s) => (
-          <SubTaskRow key={s.subtask} s={s} />
+          <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
         ))}
       </ol>
 
@@ -58,7 +58,8 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
   );
 }
 
-function SubTaskRow({ s }: { s: SubTask }) {
+function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
+  if (s.skipped) return <SkippedRow s={s} why={skippedWhy(s.error, steps)} />;
   const live = s.state === "RUNNING" || s.state === "LEASED";
   const took = live ? dur(s.started_ts, Date.now() / 1000) : dur(s.started_ts, s.finished_ts);
   return (
@@ -132,6 +133,23 @@ function StepTruth({ s }: { s: SubTask }) {
       )}
       {noReasoning && <span>no reasoning returned</span>}
     </p>
+  );
+}
+
+/** A step that never ran because a dependency failed: muted, no duration, no cost, no accent. */
+function SkippedRow({ s, why }: { s: SubTask; why: string }) {
+  return (
+    <li className="flex items-start gap-3 px-4 py-3">
+      <span className="mt-1.5">
+        <span aria-hidden="true" className="inline-block h-2 w-2 rounded-sm border border-dashed border-muted" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="truncate text-sm font-medium text-muted">{s.title || s.subtask}</p>
+          <span className="mono shrink-0 text-muted">{why}</span>
+        </div>
+      </div>
+    </li>
   );
 }
 

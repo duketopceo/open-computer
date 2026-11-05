@@ -66,6 +66,7 @@ export interface SubTask {
   ts: number;
   started_ts?: number; // when a worker claimed it; absent for steps that never ran
   finished_ts?: number;
+  skipped?: boolean; // a dependency failed, so the step never ran
   thinking?: string; // reasoning text the step's model calls returned
   router?: RouterInfo; // absent on runs recorded before the router decision was kept
   worker?: WorkerInfo; // absent for steps that made no model call, and on older runs
