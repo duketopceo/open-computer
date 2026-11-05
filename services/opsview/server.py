@@ -36,11 +36,12 @@ from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError, default_approvals_path
 from services.agents.approvals import ApprovalError
 from services.opsview.agentgrants import GrantError, grant_run_hosts
-from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns
+from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns, threads
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
+from services.orchestrator import chat as chat_turns
 from services.orchestrator import engines as goal_engines
 from services.router import model_catalog
 from services.workspace import routes as workspace
@@ -274,6 +275,23 @@ def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
     )
 
 
+def _turn_deps(plan: effort.Plan, who: str) -> threads.Deps:
+    """The real model, run starter and run waiter behind a chat turn. Tests patch this: no model is called."""
+    return threads.Deps(
+        engine=chat_turns.openrouter_engine(plan.model),
+        start_run=lambda goal: _submit_goal(goal, who, plan),
+        load_run=goalruns.get_run,
+        wait_run=threads.wait_for_run,
+    )
+
+
+def _start_turn(tid: str, who: str) -> bool:
+    t = threads.get(tid)
+    p = (t or {}).get("effort") or {}
+    plan = effort.Plan(p.get("effort", effort.default_id()), p.get("model", ""), float(p.get("budget", 0.1)))
+    return threads.start_turn(tid, _turn_deps(plan, who))
+
+
 def _resume_goals() -> None:
     """Re-drive goal runs orphaned by a restart. Fails soft — disk is truth."""
     try:
@@ -303,6 +321,8 @@ GET_ROUTES = [
     (r"/api/effort", "g_api_effort"),
     (r"/api/models", "g_api_models"),
     (r"/api/runs", "g_api_runs"),
+    (r"/api/threads", "g_api_threads"),
+    (r"/api/threads/(?P<id>th_[0-9a-f]{8})", "g_api_thread"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
     (r"/api/agent-jobs", "g_api_agent_jobs"),
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
@@ -339,6 +359,11 @@ POST_ROUTES = [
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})/approvals/(?P<aid>ag_[0-9a-f]{8})/approve", "p_agent_approve"),
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})/approvals/(?P<aid>ag_[0-9a-f]{8})/deny", "p_agent_deny"),
     (r"/api/transcribe", "p_transcribe"),
+    (r"/api/threads", "p_api_thread_new"),
+    (r"/api/threads/clear", "p_api_threads_clear"),
+    (r"/api/threads/(?P<id>th_[0-9a-f]{8})/messages", "p_api_thread_message"),
+    (r"/api/threads/(?P<id>th_[0-9a-f]{8})/delete", "p_api_thread_delete"),
+    (r"/api/threads/(?P<id>th_[0-9a-f]{8})/archive", "p_api_thread_archive"),
     (r"/api/runs/clear", "p_api_runs_clear"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/delete", "p_api_run_delete"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/archive", "p_api_run_archive"),
@@ -631,7 +656,75 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, model_catalog.payload())
 
     def g_api_runs(self, qs):
-        self._json(200, {"runs": goalruns.list_runs(include_archived=qs.get("archived", [""])[0] == "1")})
+        runs = goalruns.list_runs(include_archived=qs.get("archived", [""])[0] == "1", limit=None)
+        if qs.get("threaded", [""])[0] == "0":  # the chat rail: runs that live in a thread are shown there
+            linked = threads.linked_run_ids()
+            runs = [r for r in runs if r["run"] not in linked]
+        self._json(200, {"runs": runs[:30]})
+
+    def g_api_threads(self, qs):
+        self._json(200, {"threads": threads.list_threads(include_archived=qs.get("archived", [""])[0] == "1")})
+
+    def g_api_thread(self, qs, id):
+        t = threads.detail(id)
+        if t is None:
+            return self._json(404, {"error": "no such chat"})
+        self._json(200, t)
+
+    @staticmethod
+    def _message_text(body) -> str | None:
+        text = body.get("text")
+        text = text.strip() if isinstance(text, str) else ""
+        return text if text and len(text) <= threads.TEXT_MAX else None
+
+    def p_api_thread_new(self, who, body):
+        """Open a chat and start working on its first message. No confirm step: the run's own budget cap is the limit."""
+        text = self._message_text(body)
+        if text is None:
+            return self._json(400, {"error": f"A message is required (max {threads.TEXT_MAX} chars)."})
+        try:
+            plan = effort.resolve(body.get("effort"), body.get("model"), body.get("budget"), daily_cap())
+        except ValueError as e:
+            return self._json(422, {"error": str(e)})
+        t = threads.create(text, {"effort": plan.effort, "model": plan.model, "budget": plan.budget})
+        _start_turn(t["id"], who)
+        self._json(200, {"thread": t["id"]})
+
+    def p_api_thread_message(self, who, body, id):
+        text = self._message_text(body)
+        if text is None:
+            return self._json(400, {"error": f"A message is required (max {threads.TEXT_MAX} chars)."})
+        if threads.get(id) is None:
+            return self._json(404, {"error": "no such chat"})
+        if threads.is_working(id):
+            return self._json(409, {"error": "Still working on the last message."})
+        threads.append(id, "user", text)
+        if not _start_turn(id, who):
+            return self._json(409, {"error": "Still working on the last message."})
+        self._json(200, {"ok": True})
+
+    def p_api_thread_delete(self, who, body, id):
+        try:
+            gone = threads.delete(id)
+        except threads.ThreadBusy:
+            return self._json(409, {"error": "This chat is still working. Wait for it to finish."})
+        if not gone:
+            return self._json(404, {"error": "no such chat"})
+        log.info("chat deleted", thread=id, by=who)
+        self._json(200, {"ok": True})
+
+    def p_api_thread_archive(self, who, body, id):
+        on = body.get("archived", True) not in (False, "0", "false", 0)
+        if not threads.archive(id, on):
+            return self._json(404, {"error": "no such chat"})
+        self._json(200, {"ok": True, "archived": on})
+
+    def p_api_threads_clear(self, who, body):
+        if body.get("confirm") not in (True, "1", 1):
+            return self._json(400, {"error": "Confirm clearing finished chats."})
+        n = threads.clear_finished()
+        log.info("finished chats cleared", count=n, by=who)
+        self._json(200, {"cleared": n})
 
     def p_api_run_delete(self, who, body, id):
         try:
@@ -652,7 +745,7 @@ class Handler(BaseHTTPRequestHandler):
     def p_api_runs_clear(self, who, body):
         if body.get("confirm") not in (True, "1", 1):
             return self._json(400, {"error": "Confirm clearing finished runs."})
-        n = goalruns.clear_finished()
+        n = goalruns.clear_finished(threads.linked_run_ids())
         log.info("finished runs cleared", count=n, by=who)
         self._json(200, {"cleared": n})
 
