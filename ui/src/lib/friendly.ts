@@ -6,6 +6,7 @@ const ERROR_KINDS: Record<string, string> = {
   NoPlacement: "Couldn't be placed",
   CommandExitException: "Step failed",
   SandboxWorkerUnavailable: "Sandbox unavailable",
+  SandboxUnavailable: "Sandbox unavailable",
   BudgetHalt: "Over budget",
 };
 
@@ -44,7 +45,6 @@ export function shortId(id?: string): string {
   return id.length > 12 ? id.slice(0, 12) : id;
 }
 
-
 const ERROR_SENTENCES: Record<string, string> = {
   CommandExitException: "The step's program exited with an error.",
   SandboxWorkerUnavailable: "The sandbox could not be started.",
@@ -71,4 +71,32 @@ export function waitingLabel(w: { kind: string; attempt?: number; max?: number }
 /** "decider_unavailable" -> "decider unavailable" */
 export function words(s: string): string {
   return s.replace(/_/g, " ");
+}
+
+/** "deepseek/deepseek-v4-pro" -> "deepseek-v4-pro": the model's own name, without its vendor prefix. */
+export function modelName(id?: string | null): string {
+  return id ? id.slice(id.lastIndexOf("/") + 1) : "";
+}
+
+/** Why the router's first choice did not answer, in plain words ("decider unavailable (404)"); "" when it did. */
+export function fallbackWhy(router?: { fallbacks?: { engine: string; status?: number | null }[] }): string {
+  const fb = router?.fallbacks?.[0];
+  if (!fb) return "";
+  return `${fb.engine} unavailable${fb.status ? ` (${fb.status})` : ""}`;
+}
+
+const WAITING: Record<string, string> = {
+  sandbox_boot: "sandbox",
+};
+
+/** "Waiting for sandbox — attempt 2 of 4" for a requeued step. */
+export function waitingText(kind: string, attempt: number, max: number): string {
+  return `Waiting for ${WAITING[kind] ?? kind.replace(/_/g, " ")} — retrying, attempt ${attempt + 1} of ${max}`;
+}
+
+/** "Skipped — step 2 failed": names the dependency (by its position in the run) whose failure stopped this step. */
+export function skippedWhy(error: string | undefined, steps: { subtask: string }[]): string {
+  const id = /dep '([^']+)' failed/.exec(error ?? "")?.[1];
+  const at = id ? steps.findIndex((x) => x.subtask === id) : -1;
+  return at >= 0 ? `Skipped — step ${at + 1} failed` : "Skipped — an earlier step failed";
 }

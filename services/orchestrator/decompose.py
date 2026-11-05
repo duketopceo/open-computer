@@ -13,7 +13,10 @@ from typing import Callable
 
 import json as _json  # keep import surface obvious for the schema check
 
+from oc.obs import get_logger
 from services.placement import DEVICE_NEEDS
+
+log = get_logger("orchestrator")
 
 # A dependent sees at most this many characters of each prior step's stdout.
 DEP_OUTPUT_CAP = 1500
@@ -39,6 +42,30 @@ _FIELDS = {
 _TIERS = {"cheap", "mid", "frontier"}
 _LATENCY = {"crit", "normal", "bulk"}
 
+# Near-miss values a planner model tends to emit, mapped onto the real enums.
+_LATENCY_ALIASES = {
+    "critical": "crit",
+    "urgent": "crit",
+    "high": "crit",
+    "realtime": "crit",
+    "low": "bulk",
+    "background": "bulk",
+    "batch": "bulk",
+    "medium": "normal",
+    "default": "normal",
+}
+_TIER_ALIASES = {"low": "cheap", "medium": "mid", "high": "frontier"}
+
+
+def _enum(value, allowed: set, aliases: dict):
+    """Lowercase, strip and alias a planner enum value; unknown values pass through unchanged."""
+    if isinstance(value, str):
+        v = value.strip().lower()
+        v = aliases.get(v, v)
+        if v in allowed:
+            return v
+    return value
+
 
 def _canon(raw: dict, i: int) -> dict:
     if not isinstance(raw, dict):
@@ -55,8 +82,8 @@ def _canon(raw: dict, i: int) -> dict:
     deps = raw.get("deps") or []
     if not all(isinstance(d, str) for d in deps):
         raise DecomposeError(f"subtask {sid}: deps must be strings")
-    tier = raw.get("tier", "mid")
-    latency = raw.get("latency", "normal")
+    tier = _enum(raw.get("tier", "mid"), _TIERS, _TIER_ALIASES)
+    latency = _enum(raw.get("latency", "normal"), _LATENCY, _LATENCY_ALIASES)
     if tier not in _TIERS:
         raise DecomposeError(f"subtask {sid}: bad tier {tier!r}")
     if latency not in _LATENCY:
@@ -102,9 +129,28 @@ def _topo(tasks: list[dict]) -> None:
         visit(t["id"], [])
 
 
+def _parse(raw: str) -> list[dict]:
+    text = re.sub(r"^```(json)?\s*|\s*```$", "", raw.strip(), flags=re.M)
+    try:
+        items = _json.loads(text)
+    except ValueError as e:
+        raise DecomposeError(f"engine returned non-JSON: {e}") from e
+    if not isinstance(items, list) or not items:
+        raise DecomposeError("engine returned no subtasks")
+    tasks = [_canon(t, i) for i, t in enumerate(items)]
+    ids = [t["id"] for t in tasks]
+    if len(set(ids)) != len(ids):
+        raise DecomposeError("duplicate subtask ids")
+    _topo(tasks)
+    return tasks
+
+
 def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
-    """goal -> subtask DAG. engine(goal) returns JSON (fences tolerated)."""
-    raw = engine(
+    """goal -> subtask DAG. engine(goal) returns JSON (fences tolerated).
+
+    A plan that fails validation gets one corrective retry with the validator
+    message appended; a second failure raises."""
+    prompt = (
         "Decompose this goal into subtasks. Return ONLY a JSON array; each "
         'item: {"id","title","prompt","deps":[ids],"tier":cheap|mid|frontier,'
         '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool,'
@@ -119,16 +165,13 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         "relative paths or $HOME (never absolute paths like /workspace or /data).\n"
         f"Goal: {goal}"
     )
-    text = re.sub(r"^```(json)?\s*|\s*```$", "", raw.strip(), flags=re.M)
+    raw = engine(prompt)
     try:
-        items = _json.loads(text)
-    except ValueError as e:
-        raise DecomposeError(f"engine returned non-JSON: {e}") from e
-    if not isinstance(items, list) or not items:
-        raise DecomposeError("engine returned no subtasks")
-    tasks = [_canon(t, i) for i, t in enumerate(items)]
-    ids = [t["id"] for t in tasks]
-    if len(set(ids)) != len(ids):
-        raise DecomposeError("duplicate subtask ids")
-    _topo(tasks)
-    return tasks
+        return _parse(raw)
+    except DecomposeError as first:
+        log.warning("plan failed validation, retrying once", error=str(first))
+        retry = (
+            f"{prompt}\n\nYour previous reply was rejected: {first}. "
+            "Reply again with ONLY the corrected JSON array, using exactly the allowed enum values."
+        )
+        return _parse(engine(retry))

@@ -361,6 +361,9 @@ def test_a_requeued_step_stays_running_with_waiting_on_until_it_is_claimed_again
     assert (w["data"]["waiting_on"]["attempt"], w["data"]["waiting_on"]["max"]) == (1, 4)
     assert errors(w) == [] and w["data"]["waiting_on"]["since"] > 0
     Down.up = True
+    from services.orchestrator import runner
+
+    monkeypatch.setattr(runner, "_clock", lambda: time.time() + runner.BOOT_RETRY_DELAY_S)  # past the backoff
     orch.work(wfn)
     last = [e for e in stream(goals) if e["type"] == "step"][-1]["data"]
     assert last["status"] == "done" and "waiting_on" not in last

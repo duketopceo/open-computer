@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -24,6 +25,7 @@ from oc.fsproto import adapter as fs_adapter
 from oc.obs import devtrace
 from services.orchestrator import Orchestrator
 from services.orchestrator.egress import live_egress, requested_hosts
+from services.orchestrator.runner import MAX_STEP_ATTEMPTS
 from services.orchestrator.runcfg import create_ledger, effort_row, ledger_for, model_of
 from services.orchestrator.thinking import PLAN, ThinkingLog, join_thoughts
 from services.placement import place_live
@@ -223,6 +225,15 @@ def get_run(run_id: str) -> dict | None:
     done_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_done"}
     # A task can be claimed again after its lease expires; the latest claim is the attempt that finished.
     start_ts = {r.get("task"): r.get("ts") for r in rows if r.get("event") == "worker_start"}
+    workers: dict[str, list[dict]] = {}  # every attempt that reported what served it, oldest first
+    for r in rows:
+        if isinstance(r.get("worker"), dict):
+            workers.setdefault(r.get("task"), []).append(r["worker"])
+    # The latest start/requeue row decides: a requeue after the last start means the step is waiting to run again.
+    last_row: dict = {}
+    for r in rows:
+        if r.get("event") in ("worker_start", "worker_requeue"):
+            last_row[r.get("task")] = r
     thoughts: dict[str, list[str]] = {}
     for t in sorted(ThinkingLog(d / "thinking.ndjson").rows(), key=lambda t: t.get("ts") or 0):
         key = PLAN if t.get("subtask") == PLAN else t.get("task")
@@ -249,6 +260,11 @@ def get_run(run_id: str) -> dict | None:
             "cost": r.get("cost"),
             "pii": r.get("pii"),
         }
+        if isinstance(r.get("router"), dict):
+            rec["router"] = r["router"]
+        if tid in workers:  # real spend: every attempt's worker cost plus what the router paid to decide
+            rec["worker"] = workers[tid][-1]
+            rec["cost"] = sum(w.get("cost") or 0.0 for w in workers[tid]) + (r.get("cost") or 0.0)
         if state == "DONE":
             try:
                 rec["result"] = fs.collect("orchestrator", tid)
@@ -260,11 +276,23 @@ def get_run(run_id: str) -> dict | None:
             rec["error_kind"] = f.get("kind", "")
             rec["hint"] = f.get("hint", "")
             rec["finished_ts"] = f.get("ts")
+            if f.get("kind") == "DependencyFailed":  # never started: no duration, shown as skipped
+                rec["skipped"] = True
+                rec["started_ts"] = f.get("ts")
         elif tid in done_ts:
             rec["finished_ts"] = done_ts[tid]
         rec["ts"] = r.get("ts")
-        if tid in start_ts:
+        if tid in start_ts and not rec.get("skipped"):
             rec["started_ts"] = start_ts[tid]
+        wait_row = last_row.get(tid)
+        if wait_row and wait_row.get("event") == "worker_requeue" and state not in ("DONE", "FAILED"):
+            rec["waiting_on"] = {
+                "kind": wait_row.get("reason"),
+                "attempt": wait_row.get("attempt"),
+                "max": MAX_STEP_ATTEMPTS,
+                "since": wait_row.get("ts"),
+                "detail": wait_row.get("detail", ""),
+            }
         if tid in thoughts:
             rec["thinking"] = join_thoughts(thoughts[tid])
         subs.append(rec)
@@ -409,13 +437,18 @@ def egress_wait_s() -> float:
     return v if 0 < v < float("inf") else 86400.0
 
 
-def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object]) -> None:
+def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object], sleep=time.sleep) -> None:
     try:
         for _ in range(400):
             res = orch.results(rid)
             if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
                 break
-            if not orch.work(wfn) and not orch.wait_for_egress(rid, timeout=egress_wait_s()):
+            if orch.work(wfn):
+                continue
+            wait = orch.retry_delay()
+            if wait > 0:  # a step is backing off after a sandbox boot failure: wait here, not in the sweep
+                sleep(wait)
+            elif not orch.wait_for_egress(rid, timeout=egress_wait_s()):
                 break
         orch.settle_trace(rid)
     except Exception:

@@ -24,6 +24,29 @@ from .thinking import ThinkingLog, join_thoughts
 
 log = get_logger("worker")
 
+# A sandbox that will not boot is retried through the requeue path: the step is requeued while it has been
+# attempted fewer than REQUEUE_LIMIT times, so an execution count of REQUEUE_LIMIT + 1 is the most a step gets.
+REQUEUE_LIMIT = 3
+MAX_STEP_ATTEMPTS = REQUEUE_LIMIT + 1
+BOOT_RETRY_DELAY_S = 6.0  # gap between attempts, enforced by `not_before` — never slept in the sweep
+_clock = time.time  # injectable: tests move it instead of waiting
+
+
+def _not_before(fs, tid: str) -> float:
+    try:
+        return float((fs._task_dir(tid) / "not_before").read_text().strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
+def retry_delay(fs, agent: str) -> float:
+    """Seconds until the earliest pending task of `agent` that is held by a retry delay may be claimed; 0 when none."""
+    now = _clock()
+    waits = [
+        nb - now for tid in fs.inbox_ids(agent) if fs.pending(tid) and (nb := _not_before(fs, tid)) > now
+    ]
+    return min(waits) if waits else 0.0
+
 
 def _attempts(fs, tid: str) -> int:
     try:
@@ -39,9 +62,8 @@ def _ctx(task: dict, tid: str):
 
 
 def _max_attempts() -> int:
-    """Executions a step gets before a sandbox outage fails it. U5 exports MAX_STEP_ATTEMPTS; until then it is
-    the requeue guard below plus the first run."""
-    return int(globals().get("MAX_STEP_ATTEMPTS", 4))
+    """Executions a step gets before a sandbox outage fails it: the requeue guard plus the first run."""
+    return MAX_STEP_ATTEMPTS
 
 
 def _worker_model(usage) -> str | None:
@@ -55,6 +77,15 @@ def _trace_cost(trace, ledger: CostLedger, run: str) -> None:
         trace.emit("cost", spent_usd=round(st.spend, 6), cap_usd=st.cap or 0.0)
     except Exception as e:  # noqa: BLE001 - a trace read must never fail a finished step
         log.warning("dev trace cost dropped", **error_fields(e))
+
+
+def _worker_view(usage: Usage | None) -> dict:
+    """The audit row's `worker` object: which model served the step and what it cost. Empty when nothing was spent."""
+    if usage is None:
+        return {}
+    return {"worker": {"model": usage.model, "provider": usage.provider, "tokens_in": usage.tokens_in,
+                       "tokens_out": usage.tokens_out, "tokens_reasoning": usage.tokens_reasoning,
+                       "cost": usage.cost}}
 
 
 @dataclass
@@ -92,6 +123,8 @@ def run_once(
 
 def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thinking: ThinkingLog | None) -> bool:
     """One inbox task. True when it was claimed (and so attempted), False when it was held or lost the claim."""
+    if _not_before(fs, tid) > _clock():
+        return False  # backing off after a sandbox boot failure: other steps run meanwhile
     token = None
     if ledger is not None:
         token = ledger.check(task["run"], float(task.get("est_cost", 0.0)))
@@ -115,6 +148,7 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
     t0 = time.monotonic()
     try:
         log.info("task claimed", agent=agent, placement=task.get("placement"), engine=task.get("engine"))
+        task["script_cache"] = str(fs._task_dir(tid) / "script.cache")  # a requeue reuses the generated script
         with collect_reasoning() as thoughts:
             try:
                 result = work_fn(task)
@@ -125,15 +159,30 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
         from .engines import SandboxWorkerUnavailable  # local: avoids import cycle
 
         log.error("task failed", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1), **error_fields(e))
-        if token:
+        spent = getattr(e, "usage", None)
+        if spent is not None and ledger is not None:
+            ledger.record(task["run"], task["subtask"], spent, token=token)  # money spent before the failure
+        elif token:
             ledger.release(task["run"], token)
-        if isinstance(e, SandboxWorkerUnavailable) and _attempts(fs, tid) < 3:
+        if isinstance(e, SandboxWorkerUnavailable) and _attempts(fs, tid) < REQUEUE_LIMIT:
             # Temporary backend outage is not a step failure: release the
-            # lease so the task returns to queued for the next sweep.
-            attempts_file = fs._task_dir(tid) / "attempts"
-            attempts_file.write_text(str(_attempts(fs, tid) + 1))
+            # lease so the task returns to queued, to be claimed after the backoff.
+            attempt = _attempts(fs, tid) + 1
+            not_before = _clock() + BOOT_RETRY_DELAY_S
+            (fs._task_dir(tid) / "attempts").write_text(str(attempt))
+            (fs._task_dir(tid) / "not_before").write_text(repr(not_before))
             fs.expire(tid)
-            audit.append({"event": "worker_requeue", "task": tid, "reason": str(e)[:200]})
+            audit.append(
+                {
+                    "event": "worker_requeue",
+                    "task": tid,
+                    "reason": "sandbox_boot",
+                    "detail": str(e)[:200],
+                    "attempt": attempt,
+                    "not_before": not_before,
+                    **_worker_view(getattr(e, "usage", None)),
+                }
+            )
             if trace is not None:
                 n = _attempts(fs, tid)  # executions made so far (the requeue was just counted); the plan pins this meaning
                 trace.step(task.get("subtask", ""), task.get("title", ""), "running",
@@ -151,6 +200,7 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
                 "kind": type(e).__name__,
                 "error": str(e),
                 "hint": getattr(e, "hint", ""),
+                **_worker_view(getattr(e, "usage", None)),
             }
         )
         report_failure(
@@ -173,11 +223,13 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
             _trace_cost(trace, ledger, task["run"])
     elif token:
         ledger.release(task["run"], token)  # no usage reported: nothing was spent
-    model_served = _worker_model(result.usage) if isinstance(result, WorkResult) else None
+    used = result.usage if isinstance(result, WorkResult) else None
+    model_served = _worker_model(used)
     if isinstance(result, WorkResult):
         result = result.output
     fs.outbox_write(agent, tid, result)
-    audit.append({"event": "worker_done", "task": tid})
+    audit.append({"event": "worker_done", "task": tid,
+                  **_worker_view(used)})
     if trace is not None:
         trace.step(task.get("subtask", ""), task.get("title", ""), "done", model=model_served)
     log.info("task done", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1))

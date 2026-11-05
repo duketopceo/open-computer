@@ -58,12 +58,28 @@ export function Card({ children, className }: { children: ReactNode; className?:
   );
 }
 
-export function Chip({ children, active }: { children: ReactNode; active?: boolean }) {
+export function Chip({
+  children,
+  active,
+  filled,
+  title,
+}: {
+  children: ReactNode;
+  active?: boolean;
+  /** A neutral solid chip, for a fact about the row (the model) rather than a state. */
+  filled?: boolean;
+  title?: string;
+}) {
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-medium",
-        active ? "border-accent bg-accent-soft text-accent" : "border-line text-muted",
+        active
+          ? "border-accent bg-accent-soft text-accent"
+          : filled
+            ? "border-transparent bg-surface-3 text-ink"
+            : "border-line text-muted",
       )}
     >
       {children}

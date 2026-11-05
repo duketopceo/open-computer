@@ -110,14 +110,16 @@ def extract_reasoning(resp: dict) -> str:
 
 
 def total_usage(items: list[Usage]) -> Usage | None:
+    """Sum a step's calls. The first served model and provider win (a step's calls share both in practice)."""
     if not items:
         return None
-    models = sorted({u.model for u in items if u.model})
     return Usage(
-        model=models[0] if len(models) == 1 else ",".join(models) or "unknown",
+        model=next((u.model for u in items if u.model), "unknown"),
         tokens_in=sum(u.tokens_in for u in items),
         tokens_out=sum(u.tokens_out for u in items),
         cost=sum(u.cost for u in items),
+        provider=next((u.provider for u in items if u.provider), None),
+        tokens_reasoning=sum(u.tokens_reasoning for u in items),
     )
 
 
@@ -141,6 +143,11 @@ def parse_response(resp: dict) -> dict:
     cd = u.get("completion_tokens_details") if isinstance(u.get("completion_tokens_details"), dict) else {}
     det = u.get("cost_details") if isinstance(u.get("cost_details"), dict) else {}
     cost = _num(u.get("cost"))
+    upstream = _num(det.get("upstream_inference_cost"))
+    # BYOK: `usage.cost` is only OpenRouter's fee (often 0); the provider's real charge is upstream.
+    byok_upstream = u.get("is_byok") is True and upstream is not None and cost is not None
+    if byok_upstream:
+        cost += upstream
     choices = resp.get("choices") if isinstance(resp.get("choices"), list) else []
     first = choices[0] if choices and isinstance(choices[0], dict) else {}
     gid = resp.get("id") if isinstance(resp.get("id"), str) and resp["id"].startswith("gen-") else None
@@ -155,8 +162,9 @@ def parse_response(resp: dict) -> dict:
         "tokens_reasoning": int(_num(cd.get("reasoning_tokens")) or 0),
         "cost": cost if cost is not None else 0.0,
         "cost_source": "provider" if cost is not None else "none",
-        "upstream_cost": _num(det.get("upstream_inference_cost")),
+        "upstream_cost": upstream,
         "is_byok": u.get("is_byok") if isinstance(u.get("is_byok"), bool) else None,
+        **({"cost_byok_upstream": True} if byok_upstream else {}),
     }
 
 
@@ -290,7 +298,7 @@ def post(
     sink = _collector.get()
     if sink is not None and (parsed["tokens_in"] or parsed["tokens_out"] or parsed["cost_source"] == "provider"):
         sink.append(Usage(parsed["model_served"] or str(base["model_requested"]), parsed["tokens_in"],
-                          parsed["tokens_out"], parsed["cost"]))
+                          parsed["tokens_out"], parsed["cost"], parsed["provider"], parsed["tokens_reasoning"]))
     thoughts = _reasoning.get()
     if thoughts is not None:
         text = extract_reasoning(resp)
@@ -323,7 +331,8 @@ def chat(
     text = text if isinstance(text, str) else ""
     u = None
     if row["tokens_in"] or row["tokens_out"] or row["cost_source"] == "provider":
-        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"])
+        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"], row["provider"],
+                  row["tokens_reasoning"])
     return ChatResult(text=text, usage=u, cost=row["cost"], generation_id=row["generation_id"],
                       model_served=row["model_served"], provider=row["provider"], finish_reason=row["finish_reason"],
                       latency_ms=row["latency_ms"], cost_source=row["cost_source"], call_id=row["call_id"],

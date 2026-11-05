@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
-import { engine, errorKind, placement } from "@/lib/friendly";
+import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { hasStream } from "@/lib/runEvents";
-import { Dot, StateWord } from "./primitives";
+import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
 export function RunView({ run, compact = false }: { run: RunDetail; compact?: boolean }) {
@@ -62,7 +62,7 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
 
       <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
         {run.subtasks.map((s) => (
-          <SubTaskRow key={s.subtask} s={s} />
+          <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
         ))}
       </ol>
 
@@ -77,7 +77,8 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
   );
 }
 
-function SubTaskRow({ s }: { s: SubTask }) {
+function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
+  if (s.skipped) return <SkippedRow s={s} why={skippedWhy(s.error, steps)} />;
   const live = s.state === "RUNNING" || s.state === "LEASED";
   const took = live ? dur(s.started_ts, Date.now() / 1000) : dur(s.started_ts, s.finished_ts);
   return (
@@ -109,6 +110,16 @@ function SubTaskRow({ s }: { s: SubTask }) {
             </span>
           )}
         </p>
+        {s.waiting_on && s.state === "QUEUED" && (
+          <p className="mt-1 text-xs text-muted" title={s.waiting_on.detail}>
+            <span aria-hidden="true">– </span>
+            {waitingText(s.waiting_on.kind, s.waiting_on.attempt, s.waiting_on.max)}
+            {dur(s.waiting_on.since, Date.now() / 1000) && (
+              <span className="mono"> · {dur(s.waiting_on.since, Date.now() / 1000)}</span>
+            )}
+          </p>
+        )}
+        <StepTruth s={s} />
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "AWAITING-APPROVAL" && (
           <p className="mt-1 text-xs text-accent">
@@ -125,6 +136,46 @@ function SubTaskRow({ s }: { s: SubTask }) {
           </p>
         )}
         {s.thinking && <Thinking text={s.thinking} className="mt-2" />}
+      </div>
+    </li>
+  );
+}
+
+/** Which model served the step and who routed it, as two chips; plus a plain note when no reasoning came back. */
+function StepTruth({ s }: { s: SubTask }) {
+  const why = fallbackWhy(s.router);
+  const noReasoning = s.state === "DONE" && s.worker?.tokens_reasoning === 0 && !s.thinking;
+  if (!s.worker && !s.router && !noReasoning) return null;
+  return (
+    <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+      {s.worker && (
+        <Chip filled title={`Model ${s.worker.model}${s.worker.provider ? ` via ${s.worker.provider}` : ""}`}>
+          <span className="mono">{modelName(s.worker.model)}</span>
+        </Chip>
+      )}
+      {s.router && engine(s.router.engine) && (
+        <Chip title={why ? `Routed by ${engine(s.router.engine)} — ${why}` : undefined}>
+          routed by {engine(s.router.engine)}
+          {why && <span className="sr-only"> — {why}</span>}
+        </Chip>
+      )}
+      {noReasoning && <span>no reasoning returned</span>}
+    </p>
+  );
+}
+
+/** A step that never ran because a dependency failed: muted, no duration, no cost, no accent. */
+function SkippedRow({ s, why }: { s: SubTask; why: string }) {
+  return (
+    <li className="flex items-start gap-3 px-4 py-3">
+      <span className="mt-1.5">
+        <span aria-hidden="true" className="inline-block h-2 w-2 rounded-sm border border-dashed border-muted" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="truncate text-sm font-medium text-muted">{s.title || s.subtask}</p>
+          <span className="mono shrink-0 text-muted">{why}</span>
+        </div>
       </div>
     </li>
   );

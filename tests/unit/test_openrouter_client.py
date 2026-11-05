@@ -309,3 +309,59 @@ def test_reasoning_is_never_requested(fake):
         chat("m", "p", key="k")
     body = fake.requests[-1]["body"]
     assert "reasoning" not in body and "include_reasoning" not in body
+
+
+# --- BYOK cost -----------------------------------------------------------------------------------
+# Shape recorded from a real BYOK call (anonymized): `cost` 0, `is_byok` true, the charge in upstream cost.
+BYOK_UPSTREAM = 0.0102635
+
+
+def _byok_chat(fake, *, fee=0.0, upstream=BYOK_UPSTREAM):
+    fake.chat_replies.append(chat_reply("x", cost=fee, model="deepseek/deepseek-v4-pro", provider="DeepInfra",
+                                        byok_upstream=upstream))
+    with collect_usage() as used:
+        res = chat("deepseek/deepseek-v4-pro", "p", key="k")
+    return res, used
+
+
+def test_byok_zero_fee_counts_the_upstream_charge(fake):
+    res, used = _byok_chat(fake)
+    assert res.cost == pytest.approx(0.0102635) and res.cost_source == "provider"
+    (row,) = CallStore().calls()
+    assert row["cost"] == pytest.approx(0.0102635) and row["cost_source"] == "provider"
+    assert row["cost_byok_upstream"] is True and row["upstream_cost"] == BYOK_UPSTREAM and row["is_byok"] is True
+    assert total_usage(used).cost == pytest.approx(0.0102635)  # what the run ledger sees
+
+
+def test_byok_fee_and_upstream_charge_add(fake):
+    res, _ = _byok_chat(fake, fee=0.0005, upstream=0.0103)
+    assert res.cost == pytest.approx(0.0108)
+
+
+def test_byok_call_is_not_counted_as_missing_cost(fake):
+    _byok_chat(fake)
+    (g,) = summarize(CallStore().calls(), "model")
+    assert g["no_cost_reported"] == 0 and g["cost"] == pytest.approx(0.0102635)
+
+
+def test_byok_call_logs_at_info_not_warning(fake, capsys):
+    obs.log.configure(force=True)
+    _byok_chat(fake)
+    rows = [json.loads(ln) for ln in capsys.readouterr().err.splitlines() if ln.startswith("{")]
+    (call,) = [r for r in rows if r["msg"].startswith("openrouter call")]
+    assert call["level"] == "INFO" and call["msg"] == "openrouter call"
+
+
+def test_non_byok_zero_cost_stays_zero(fake):
+    fake.chat_replies.append(chat_reply("x", cost=0.0))
+    res = chat("m", "p", key="k")
+    (row,) = CallStore().calls()
+    assert res.cost == 0.0 and row["cost"] == 0.0 and "cost_byok_upstream" not in row
+
+
+def test_reconcile_does_not_flag_a_byok_row(fake):
+    call = {"cost": 0.0108, "tokens_in": 10, "tokens_out": 5, "cost_byok_upstream": True}
+    stats = {"total_cost": 0.0005, "upstream_inference_cost": 0.0103, "is_byok": True, "tokens_prompt": 10,
+             "tokens_completion": 5}
+    assert compare(call, stats)["status"] == "reconciled"
+    assert compare({**call, "cost": 0.0005}, stats)["status"] == "mismatch"  # the fee alone would have disagreed

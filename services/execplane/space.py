@@ -218,7 +218,7 @@ class SpaceAdapter:
                 **payload,
             )
         except Exception as e:
-            log.error("sandbox boot failed", backend="space", error=type(e).__name__)
+            log.error("sandbox boot failed", backend="space", error=type(e).__name__, detail=str(e)[:200])
             try:
                 record("failed", reason=type(e).__name__)
             except Exception:

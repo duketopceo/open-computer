@@ -21,6 +21,13 @@ plog = get_logger("placement")
 PARKED = "device/parked"  # mailbox for device steps with no eligible device; drained on heartbeat (P1)
 
 
+def _router_view(d) -> dict:
+    """The decision as the run page shows it. Tolerant of routers that return only route/tier/engine/cost."""
+    return {"engine": d.engine, "model": getattr(d, "model_used", None) or getattr(d, "router_model", None),
+            "confidence": getattr(d, "confidence", None), "ms": getattr(d, "ms", None),
+            "fallbacks": getattr(d, "fallbacks", [])}
+
+
 def device_mailbox(device_id: str) -> str:
     return f"device/{device_id}"
 
@@ -138,6 +145,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "route": decision.route,
         "engine": decision.engine,
         "cost": decision.cost,
+        "router": _router_view(decision),
         "placement": placement.target,
         "mailbox": dst,
         "reason": placement.reason,

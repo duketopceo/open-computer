@@ -123,3 +123,44 @@ def test_missing_key_still_fails_clean(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(engines.WorkerUnavailable):
         engines.work_fn(api_key="")({"placement": "cloud-OpenRouter", "prompt": "p"})
+
+
+def test_byok_worker_spend_reaches_the_ledger_and_trips_the_cap(fake, tmp_path):
+    # BYOK replies carry cost 0 (the fee) and the real charge upstream; only counting it can trip a $0.01 cap
+    plan = json.dumps([{"id": s, "title": s, "prompt": s, "deps": [], "est_cost": 0.0001} for s in "abc"])
+    fake.chat_replies += [chat_reply(plan, cost=0.0)] + [
+        chat_reply("x", cost=0.0, model="deepseek/deepseek-v4-pro", byok_upstream=0.009) for _ in range(3)]
+    led = CostLedger(tmp_path / "cost.ndjson", default_cap=0.010)
+    orch = Orchestrator(tmp_path / "o", ledger=led, place_fn=cloud)
+    run_id = orch.submit("g", engines.decompose_engine(api_key="k"))
+    orch.work(engines.work_fn(api_key="k"))
+    st = led.state(run_id)
+    assert st.spend == pytest.approx(0.018) and st.state == "paused_cap"
+
+
+def test_a_paid_call_in_a_step_that_then_fails_still_counts(fake, monkeypatch, tmp_path):
+    from services.execplane.client import ExecResult
+
+    class Plane:
+        def sandboxes_available(self):
+            return True
+
+        def make_sandbox(self, **kw):
+            class SB:
+                def exec(self, cmd):
+                    return ExecResult(returncode=1, stdout="", stderr="boom")
+
+                def close(self):
+                    pass
+
+            return SB()
+
+    monkeypatch.setattr(engines, "_plane", lambda: Plane())
+    fake.chat_replies += [chat_reply(json.dumps([{"id": "a", "title": "A", "prompt": "p", "deps": []}]), cost=0.0),
+                          chat_reply("```bash\nexit 1\n```", cost=0.0, byok_upstream=0.004)]
+    led = CostLedger(tmp_path / "cost.ndjson", default_cap=1.0)
+    orch = Orchestrator(tmp_path / "o", ledger=led, place_fn=lambda *a, **k: Placement("cloud-sandbox", "t"))
+    run_id = orch.submit("g", engines.decompose_engine(api_key="k"))
+    orch.work(engines.work_fn(api_key="k"))
+    assert [r["event"] for r in orch.audit.rows() if r["event"].startswith("worker_")][-1] == "worker_fail"
+    assert led.total(run_id) == pytest.approx(0.004)  # the failed step's script-writer call was paid for
