@@ -1347,7 +1347,7 @@ test("@timeline three steps render as cards in first-seen order with model and r
   assert.ok(await first.getByText("Model deepseek-v4-pro").isVisible());
   assert.ok(await first.getByText("Routed by jev").isVisible());
   assert.ok(await first.getByText("decider unavailable (404)").isVisible());
-  assert.ok(await first.getByText("$0.01", { exact: true }).isVisible(), "cost is the worker call's real cost");
+  assert.ok(await first.getByText("$0.0103", { exact: true }).isVisible(), "cost is the worker call's real cost, to the digit");
   await ctx.close();
 });
 
