@@ -83,8 +83,33 @@ _SCRIPT_PROMPT = (
     "write files ONLY inside the current working directory (use relative paths — system paths "
     "outside the workdir are read-only); always print the absolute path (realpath) of every file you create "
     "so the next step can find it; if an expected input file is not where you thought, run "
-    "`find . -name '*pattern*'` before failing; keep stdout under 4000 characters; exit nonzero on failure.\nTask: "
+    "`find . -name '*pattern*'` before failing; keep stdout under 4000 characters; exit nonzero on failure. "
+    "If you write Python, put it inside a `python3 - <<'PY'` heredoc.\nTask: "
 )
+
+_PY_FENCE_TAGS = {"python", "python3", "py"}
+_PY_FIRST_LINE = re.compile(r"(import\s+\w|from\s+[\w.]+\s+import\s|def\s+\w+\s*\(|class\s+\w)")
+_PY_WARNINGS = "PYTHONWARNINGS=ignore::SyntaxWarning,ignore::DeprecationWarning"
+_ERR_TAIL = 1200
+
+
+def _split_program(reply: str) -> tuple[str, str]:
+    """Model reply -> (program text, "python" | "shell"): fence tag first, then a shebang, then a leading
+    import/from/def/class line. Anything else runs as shell, the contract the prompt asks for."""
+    text = reply.strip()
+    tag = ""
+    m = re.match(r"```(\w*)", text)
+    if m:
+        tag = m.group(1).lower()
+    program = re.sub(r"^```\w*\n?|\n?```$", "", text).strip()
+    if tag in _PY_FENCE_TAGS:
+        return program, "python"
+    if tag:
+        return program, "shell"
+    first = program.split("\n", 1)[0]
+    if re.match(r"#!.*\bpython", first) or _PY_FIRST_LINE.match(next((ln for ln in program.splitlines() if ln.strip()), "")):
+        return program, "python"
+    return program, "shell"
 
 
 _RUN_SANDBOX_IDLE_S = 900.0
@@ -248,7 +273,7 @@ def sandbox_work(
         raise SandboxWorkerUnavailable(f"{backend} sandbox control plane unreachable")
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
     script, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
-    script = re.sub(r"^```\w*\n?|\n?```$", "", script.strip()).strip()
+    script, kind = _split_program(script)
     if not script:
         raise RuntimeError("script planner emitted empty output")
     # S5: only approved hosts (a human grant, a built-in default or OC_EGRESS_ALLOW) ever reach
@@ -256,12 +281,14 @@ def sandbox_work(
     run_id = str(task.get("run") or "")
     hosts = set(task.get("egress_hosts") or [])
     b64 = base64.b64encode(script.encode()).decode()
+    runner = f"{_PY_WARNINGS} python3 -" if kind == "python" else "bash"
+    cmd = f"echo {b64} | base64 -d | {runner}"
     if run_id:
         res = None
         for attempt in range(2):  # transient VM/control-plane errors get exactly one retry
             ent = _acquire_run_sandbox(plane, run_id, hosts)
             try:
-                res = ent["sb"].exec(f"echo {b64} | base64 -d | bash")
+                res = ent["sb"].exec(cmd)
             except Exception:
                 _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
                 if attempt == 1:
@@ -273,11 +300,11 @@ def sandbox_work(
     else:
         sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)
         try:
-            res = sb.exec(f"echo {b64} | base64 -d | bash")
+            res = sb.exec(cmd)
         finally:
             sb.close()
     if res.returncode != 0:
-        detail = (res.stderr or res.stdout or "").strip()[:400]
+        detail = (res.stderr or res.stdout or "").strip()[-_ERR_TAIL:]  # the end carries the cause
         raise RuntimeError(f"sandbox exec rc={res.returncode}: {detail}")
     return res.stdout[:64_000]
 
