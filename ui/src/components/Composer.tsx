@@ -19,18 +19,27 @@ function micError(e: unknown): string {
 }
 
 export function Composer({
-  onRun,
+  onSend,
   disabled,
   busy,
   starter,
+  showEffort = false,
+  placeholder = "Message",
+  autoFocus = false,
+  rows = 3,
 }: {
-  onRun: (goal: string, opts: GoalOptions) => void;
+  onSend: (text: string, opts: GoalOptions) => void;
   disabled?: boolean;
   busy?: boolean;
   starter?: string;
+  /** The effort picker belongs to a new chat; inside a thread the chat keeps the effort it started with. */
+  showEffort?: boolean;
+  placeholder?: string;
+  autoFocus?: boolean;
+  rows?: number;
 }) {
   const [value, setValue] = useState("");
-  const effort = useFetch(getEffort, []);
+  const effort = useFetch(() => (showEffort ? getEffort() : Promise.resolve(null)), [showEffort]);
   const catalog = effort.data;
   const [choice, setChoice] = useState<EffortChoice | null>(null);
   // Until the user picks, the server's default level is selected.
@@ -153,8 +162,13 @@ export function Composer({
     }
   }
 
-  const canRun = value.trim().length > 0 && !disabled && !busy && rec === "idle" && !effort.loading && opts !== null;
-  const run = () => opts && onRun(value.trim(), opts);
+  const needsEffort = showEffort && effort.loading;
+  const canRun = value.trim().length > 0 && !disabled && !busy && rec === "idle" && !needsEffort && opts !== null;
+  const run = () => {
+    if (!opts) return;
+    onSend(value.trim(), showEffort ? opts : {});
+    setValue("");
+  };
 
   const mic = (
     <button
@@ -190,20 +204,21 @@ export function Composer({
               if (canRun) run();
             }
           }}
-          rows={3}
+          rows={rows}
           maxLength={4000}
-          placeholder="What should the computer do?"
-          aria-label="Describe a goal"
+          autoFocus={autoFocus}
+          placeholder={placeholder}
+          aria-label="Message"
           className="w-full resize-none border-0 bg-transparent p-2 text-[15px] leading-relaxed text-ink outline-none placeholder:text-muted"
         />
         <div className="flex flex-wrap items-start justify-between gap-2 px-1">
           <div className="min-w-0 flex-1 basis-full sm:basis-0">
-            {catalog ? (
+            {showEffort && catalog ? (
               <EffortPicker catalog={catalog} value={picked} onChange={setChoice} disabled={disabled || busy} lead={mic} />
             ) : (
               <div className="flex items-center gap-2">
                 {mic}
-                {effort.error && (
+                {showEffort && effort.error && (
                   <p className="text-xs text-muted" role="status">
                     Effort levels unavailable; the server default applies.
                   </p>
@@ -212,7 +227,7 @@ export function Composer({
             )}
           </div>
           <Button variant="primary" className="ml-auto" disabled={!canRun} aria-busy={busy} onClick={run}>
-            {busy ? "Sending…" : rec === "recording" ? "Listening…" : "Run"}
+            {busy ? "Sending…" : rec === "recording" ? "Listening…" : "Send"}
           </Button>
         </div>
       </div>

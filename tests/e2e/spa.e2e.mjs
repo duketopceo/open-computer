@@ -36,7 +36,7 @@ after(async () => { await browser?.close(); server?.kill(); });
 
 const json = (status, body) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 
-async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup } = {}) {
+async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, path = "/" } = {}) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", colorScheme: scheme });
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
@@ -44,20 +44,20 @@ async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup } 
   await page.route("**/api/runs*", (r) => r.fulfill(json(200, { runs: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   if (setup) await setup(page);
-  await page.goto(base + "/", { waitUntil: "networkidle" });
+  await page.goto(base + path, { waitUntil: "networkidle" });
   return { ctx, page };
 }
 
 const RUN = {
   run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, declared: 1, worker_failures: [],
   subtasks: [{ subtask: "s1", title: "say hi", state: "DONE", route: "cheap", engine: "jev", placement: "cloud-a",
-    reason: "", gate_required: false, cost: 0.000026, pii: false, result: "hi", ts: 1, finished_ts: 2 }],
+    reason: "", gate_required: false, cost: 0.000026, pii: [], result: "hi", ts: 1, finished_ts: 2 }],
 };
 
 for (const w of [1440, 390]) {
   test(`@a11y spa axe: 0 violations at ${w}px`, async () => {
     const { ctx, page } = await open({ w });
-    await page.getByRole("textbox", { name: "Describe a goal" }).waitFor();
+    await page.getByRole("textbox", { name: "Message" }).waitFor();
     await page.evaluate(AXE);
     const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
     assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${w}`);
@@ -66,44 +66,54 @@ for (const w of [1440, 390]) {
   });
 }
 
-test("@flow double Run sends one goal; failed confirm keeps the card and retries", async () => {
+const THREAD = (over = {}) => ({
+  id: "th_e2e00001", title: "say hi", created: 1, updated: 2, archived: false, working: false,
+  effort: { effort: "low", model: "google/gemini-2.5-flash", budget: 0.1 },
+  messages: [
+    { role: "user", text: "say hi", ts: 1 },
+    { role: "assistant", text: "Sending a greeting.", ts: 2 },
+    { role: "run", text: "say hi", run: "g_e2e01", goal: "say hi", ts: 3 },
+    { role: "assistant", text: "Done: it said hi.", ts: 4 },
+  ],
+  runs: { g_e2e01: { ...RUN, run: "g_e2e01" } },
+  ...over,
+});
+
+test("@flow chat: double Send opens one chat, a failed send keeps the text, retry lands in the thread with the run inline", async () => {
   let posts = 0;
-  let failConfirm = true;
+  let fail = true;
   const { ctx, page } = await open({
     routes: {
-      "**/goals": async (r) => {
+      "**/api/threads*": async (r) => {
+        if (new URL(r.request().url()).pathname !== "/api/threads") return r.fallback();
+        if (r.request().method() !== "POST") return r.fulfill(json(200, { threads: [] }));
         posts++;
-        const body = JSON.parse(r.request().postData() || "{}");
-        if (body.confirm !== "1") {
-          await new Promise((res) => setTimeout(res, 300)); // window for a double click
-          return r.fulfill(json(200, { needs_confirm: true, cap: 5 }));
-        }
-        if (failConfirm) return r.fulfill(json(500, { error: "orchestrator down" }));
-        return r.fulfill(json(200, { run: "g_e2e01" }));
+        await new Promise((res) => setTimeout(res, 300)); // window for a double click
+        if (fail) return r.fulfill(json(500, { error: "orchestrator down" }));
+        return r.fulfill(json(200, { thread: "th_e2e00001" }));
       },
-      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+      "**/api/threads/th_e2e00001": (r) => r.fulfill(json(200, THREAD())),
     },
   });
-  await page.getByRole("textbox", { name: "Describe a goal" }).fill("say hi");
-  const run = page.getByRole("button", { name: "Run", exact: true });
-  await run.click();
-  await run.click({ force: true, timeout: 1000 }).catch(() => {}); // second click while pending
-  await page.getByRole("heading", { name: "Run this?" }).waitFor();
-  assert.equal(posts, 1, "pending submit must block a second request");
-
-  await page.getByRole("button", { name: "Run it" }).click();
+  const box = page.getByRole("textbox", { name: "Message" });
+  await box.fill("say hi");
+  const send = page.getByRole("button", { name: /^Send/ }); // the label reads "Sending…" while pending
+  await send.dispatchEvent("click");
+  await send.dispatchEvent("click"); // a second press while the first is pending
   await page.getByRole("alert").filter({ hasText: "orchestrator down" }).waitFor();
-  assert.ok(await page.getByRole("heading", { name: "Run this?" }).isVisible(), "card kept after failure");
+  assert.equal(posts, 1, "pending send must block a second request");
+  assert.equal(await box.inputValue(), "say hi", "the text survives a failed send");
 
-  failConfirm = false;
-  await page.getByRole("button", { name: "Try again" }).click();
-  await page.getByText("<$0.0001").first().waitFor(); // micro-cost renders nonzero
-  assert.equal(await page.getByRole("heading", { name: "Run this?" }).count(), 0);
+  fail = false;
+  await send.click();
+  await page.getByText("Done: it said hi.").waitFor();
+  assert.ok(await page.getByText("Sending a greeting.").isVisible());
+  assert.ok(await page.getByRole("list", { name: "Conversation" }).getByText("<$0.0001").first().isVisible(), "the run renders inline");
   await ctx.close();
 });
 
 test("@errors unreachable API shows the connection banner", async () => {
-  const { ctx, page } = await open({ routes: { "**/api/runs*": (r) => r.abort("connectionrefused") } });
+  const { ctx, page } = await open({ routes: { "**/api/threads*": (r) => r.abort("connectionrefused") } });
   await page.getByRole("status").filter({ hasText: "Connection lost" }).waitFor();
   await ctx.close();
 });
@@ -111,8 +121,8 @@ test("@errors unreachable API shows the connection banner", async () => {
 test("@errors expired session shows sign-in and disables the composer", async () => {
   const { ctx, page } = await open({ routes: { "**/api/session": (r) => r.fulfill(json(401, { error: "Sign in again." })) } });
   await page.getByRole("status").filter({ hasText: "Your session expired" }).waitFor();
-  await page.getByRole("textbox", { name: "Describe a goal" }).fill("anything");
-  assert.ok(await page.getByRole("button", { name: "Run", exact: true }).isDisabled());
+  await page.getByRole("textbox", { name: "Message" }).fill("anything");
+  assert.ok(await page.getByRole("button", { name: "Send", exact: true }).isDisabled());
   await ctx.close();
 });
 
@@ -122,10 +132,11 @@ test("@errors a missing run offers retry instead of spinning forever", async () 
       "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_gone", goal: "x", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
       "**/api/runs/g_gone": (r) => r.fulfill(json(404, { error: "no such run" })),
     },
+    path: "/#g_gone",
   });
   await page.getByRole("alert").filter({ hasText: "no longer exists" }).waitFor();
-  await page.getByRole("button", { name: "New goal" }).click();
-  await page.getByRole("textbox", { name: "Describe a goal" }).waitFor();
+  await page.getByRole("main").getByRole("button", { name: "New chat", exact: true }).click();
+  await page.getByRole("textbox", { name: "Message" }).waitFor();
   await ctx.close();
 });
 
@@ -274,7 +285,7 @@ test("@nav in-app not-found offers a way home", async () => {
   await page.evaluate(() => { history.pushState(null, "", "/nope"); dispatchEvent(new PopStateEvent("popstate")); });
   await page.getByRole("heading", { level: 1, name: "Not found" }).waitFor();
   await page.getByRole("link", { name: "Back to the computer" }).click();
-  await page.getByRole("textbox", { name: "Describe a goal" }).waitFor();
+  await page.getByRole("textbox", { name: "Message" }).waitFor();
   await ctx.close();
 });
 
@@ -508,6 +519,7 @@ test("nav: Sandboxes is current only for declared routes, and a same-URL click a
 
 test("focus: the first client-side navigation from / lands on main; an audit filter submit keeps focus in the input", async () => {
   let { ctx, page } = await open();
+  await page.getByText("Operator", { exact: true }).click(); // the operator links sit in a closed disclosure
   await page.getByRole("navigation", { name: "Operator" }).getByRole("link", { name: "Devices" }).click();
   await page.getByRole("heading", { level: 1, name: "Devices" }).waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.id), "main");
@@ -836,22 +848,19 @@ function goalApi() {
     posts,
     routes: {
       "**/api/effort": (r) => r.fulfill(json(200, EFFORT)),
-      "**/goals": (r) => {
-        const body = JSON.parse(r.request().postData() || "{}");
-        posts.push(body);
-        if (body.confirm !== "1") {
-          const lv = EFFORT.levels.find((l) => l.id === (body.effort ?? "low"));
-          return r.fulfill(json(200, { needs_confirm: true, cap: 1, effort: lv.id, model: body.model ?? lv.model, budget: body.budget ?? lv.budget }));
-        }
-        return r.fulfill(json(200, { run: "g_e2e01" }));
+      "**/api/threads*": (r) => {
+        if (new URL(r.request().url()).pathname !== "/api/threads") return r.fallback();
+        if (r.request().method() !== "POST") return r.fulfill(json(200, { threads: [] }));
+        posts.push(JSON.parse(r.request().postData() || "{}"));
+        return r.fulfill(json(200, { thread: "th_e2e00001" }));
       },
-      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+      "**/api/threads/th_e2e00001": (r) => r.fulfill(json(200, THREAD())),
     },
   };
 }
 
-const goalBox = (page) => page.getByRole("textbox", { name: "Describe a goal" });
-const runBtn = (page) => page.getByRole("button", { name: "Run", exact: true });
+const goalBox = (page) => page.getByRole("textbox", { name: "Message" });
+const runBtn = (page) => page.getByRole("button", { name: "Send", exact: true });
 
 test("@flow effort: server default is selected, Advanced is closed, and the caption names the model and budget", async () => {
   const api = goalApi();
@@ -866,23 +875,17 @@ test("@flow effort: server default is selected, Advanced is closed, and the capt
   await ctx.close();
 });
 
-test("@flow effort: High is sent with the goal, shown on the confirm card, and kept when confirming", async () => {
+test("@flow effort: High is sent with the first message and there is no confirm step", async () => {
   const api = goalApi();
   const { ctx, page } = await open({ routes: api.routes });
   await goalBox(page).fill("say hi");
   await page.locator("label", { hasText: "High" }).click(); // the visible label, as a user clicks it
   await page.getByText("up to $1.00 per run").waitFor();
   await runBtn(page).click();
-  const card = page.getByRole("heading", { name: "Run this?" }).locator("xpath=..");
-  await card.waitFor();
-  assert.deepEqual(api.posts[0], { goal: "say hi", effort: "high" }); // no model or budget unless Advanced was used
-  const text = await card.innerText();
-  assert.match(text, /high/i);
-  assert.match(text, /x-ai\/grok-4\.7/);
-  assert.match(text, /up to \$1\.00 for this run/);
-  await page.getByRole("button", { name: "Run it" }).click();
-  await page.getByText("<$0.0001").first().waitFor();
-  assert.deepEqual(api.posts[1], { goal: "say hi", effort: "high", confirm: "1" });
+  await page.getByText("Done: it said hi.").waitFor(); // straight into the thread
+  assert.deepEqual(api.posts, [{ text: "say hi", effort: "high" }]); // no model or budget unless Advanced was used
+  assert.equal(await page.getByRole("heading", { name: "Run this?" }).count(), 0);
+  assert.equal(await page.getByRole("radio").count(), 0, "inside a thread the effort picker is gone");
   await ctx.close();
 });
 
@@ -894,7 +897,7 @@ test("@flow effort: keyboard only: arrow keys change the level and Enter in the 
   assert.ok(await page.getByRole("radio", { name: "Medium" }).isChecked());
   await goalBox(page).fill("say hi");
   await goalBox(page).press("Enter");
-  await page.getByRole("heading", { name: "Run this?" }).waitFor();
+  await page.getByText("Done: it said hi.").waitFor();
   assert.equal(api.posts[0].effort, "medium");
   await ctx.close();
 });
@@ -914,8 +917,8 @@ test("@flow effort: Advanced holds a model and a budget; both are sent, and an o
   await adv.click(); // collapsed, the override is still in force and says so
   await page.getByText("· changed").waitFor();
   await runBtn(page).click();
-  await page.getByRole("heading", { name: "Run this?" }).waitFor();
-  assert.deepEqual(api.posts[0], { goal: "say hi", effort: "low", model: "deepseek/deepseek-v4-pro", budget: 0.25 });
+  await page.getByText("Done: it said hi.").waitFor();
+  assert.deepEqual(api.posts[0], { text: "say hi", effort: "low", model: "deepseek/deepseek-v4-pro", budget: 0.25 });
   await ctx.close();
 });
 
@@ -926,8 +929,8 @@ test("@errors effort: if the effort list cannot load, Run still works with the s
   assert.equal(await page.getByRole("radio").count(), 0);
   await goalBox(page).fill("say hi");
   await runBtn(page).click();
-  await page.getByRole("heading", { name: "Run this?" }).waitFor();
-  assert.deepEqual(api.posts[0], { goal: "say hi" });
+  await page.getByText("Done: it said hi.").waitFor();
+  assert.deepEqual(api.posts[0], { text: "say hi" });
   await ctx.close();
 });
 
@@ -942,6 +945,7 @@ test("@flow effort: a run shows its effort, model and spend, and a budget pause 
         "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
         "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, withEffort(effort))),
       },
+      path: "/#g_e2e01",
     });
     await page.getByText(`effort ${effort.id} · ${effort.model}`).waitFor();
     assert.equal(await page.getByRole("status").filter({ hasText: "Paused · budget" }).count(), paused ? 1 : 0);
@@ -1131,24 +1135,25 @@ function cleanupApi(rows) {
   return { calls, routes };
 }
 
-test("@cleanup delete asks in place, then removes the run; a working run offers no delete", async () => {
+test("@cleanup (earlier runs) delete asks in place, then removes the run; a working run offers no delete", async () => {
   const rows = [row("goal_0000000a", "old junk"), row("goal_0000000b", "still going", false)];
   const { calls, routes } = cleanupApi(rows);
   const { ctx, page } = await open({ routes });
+  await page.getByText("Earlier runs").click();
   const junk = page.locator("div.group", { hasText: "old junk" });
   await junk.hover();
-  await junk.getByRole("button", { name: "Delete run" }).click();
-  await page.getByText("Delete this run?").waitFor();
+  await junk.getByRole("button", { name: "Delete" }).click();
+  await page.getByText("Delete this?").waitFor();
   await page.getByRole("button", { name: "Keep" }).click();
   assert.deepEqual(calls, [], "Keep must not call the API");
   await junk.hover();
-  await junk.getByRole("button", { name: "Delete run" }).click();
+  await junk.getByRole("button", { name: "Delete" }).click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByText("old junk").waitFor({ state: "detached" });
   assert.deepEqual(calls, [["delete", "goal_0000000a", {}]]);
   const busy = page.locator("div.group", { hasText: "still going" });
   await busy.hover();
-  assert.equal(await busy.getByRole("button", { name: "Delete run" }).count(), 0);
+  assert.equal(await busy.getByRole("button", { name: "Delete" }).count(), 0);
   await ctx.close();
 });
 
@@ -1156,14 +1161,15 @@ test("@cleanup archive moves a run under Archived and restore brings it back", a
   const rows = [row("goal_0000000a", "keep me around")];
   const { calls, routes } = cleanupApi(rows);
   const { ctx, page } = await open({ routes });
+  await page.getByText("Earlier runs").click();
   const r = page.locator("div.group", { hasText: "keep me around" });
   await r.hover();
-  await r.getByRole("button", { name: "Archive run" }).click();
+  await r.getByRole("button", { name: "Archive" }).click();
   await page.getByText("Archived (1)").waitFor();
   await page.getByText("Archived (1)").click();
   const a = page.locator("div.group", { hasText: "keep me around" });
   await a.hover();
-  await a.getByRole("button", { name: "Restore run" }).click();
+  await a.getByRole("button", { name: "Restore" }).click();
   await page.getByText("Archived (1)").waitFor({ state: "detached" });
   assert.deepEqual(calls.map((c) => [c[0], c[2].archived]), [["archive", true], ["archive", false]]);
   await ctx.close();
@@ -1173,6 +1179,7 @@ test("@cleanup Clear finished confirms, removes only finished runs, keeps workin
   const rows = [row("goal_0000000a", "done one"), row("goal_0000000b", "done two"), row("goal_0000000c", "running one", false)];
   const { calls, routes } = cleanupApi(rows);
   const { ctx, page } = await open({ routes });
+  await page.getByText("Earlier runs").click();
   await page.getByRole("button", { name: "Clear finished" }).click();
   await page.getByRole("button", { name: "Remove 2" }).click();
   await page.getByText("done one").waitFor({ state: "detached" });
@@ -1187,8 +1194,108 @@ for (const scheme of ["light", "dark"]) {
     const rows = [row("goal_0000000a", "Summarise the audit log"), row("goal_0000000b", "Map the dataset", false), row("goal_0000000c", "Old experiment", true, true)];
     const { routes } = cleanupApi(rows);
     const { ctx, page } = await open({ routes, scheme, w: 1100, h: 640 });
+    await page.getByText("Earlier runs").click();
     await page.locator("div.group", { hasText: "Summarise" }).hover();
     if (process.env.OC_SHOTS) await page.screenshot({ path: `${process.env.OC_SHOTS}/cleanup-${scheme}.png` });
     await ctx.close();
   });
 }
+
+// ---- chat: a thread continues, shows runs inline, and can be removed
+function threadApi(state = {}) {
+  const th = { ...THREAD(), ...state };
+  const calls = [];
+  const sum = () => ({ id: th.id, title: th.title, ts: 2, archived: th.archived, working: th.working, finished: !th.working });
+  return {
+    th, calls,
+    routes: {
+      "**/api/threads*": (r) => {
+        const u = new URL(r.request().url());
+        if (u.pathname === "/api/threads") return r.fulfill(json(200, { threads: th.deleted ? [] : [sum()] }));
+        return r.fallback();
+      },
+      "**/api/threads/th_e2e00001": (r) => r.fulfill(th.deleted ? json(404, { error: "no such chat" }) : json(200, th)),
+      "**/api/threads/th_e2e00001/*": (r) => {
+        const op = new URL(r.request().url()).pathname.split("/").pop();
+        const body = JSON.parse(r.request().postData() || "{}");
+        calls.push([op, body]);
+        if (op === "delete") th.deleted = true;
+        if (op === "messages") { th.working = true; th.messages.push({ role: "user", text: body.text, ts: 5 }); }
+        return r.fulfill(json(200, { ok: true }));
+      },
+    },
+  };
+}
+
+test("@chat a follow-up continues the same thread: one POST to that thread, message shows at once, no effort picker", async () => {
+  const api = threadApi();
+  const { ctx, page } = await open({ routes: { ...api.routes, "**/api/effort": (r) => r.fulfill(json(200, EFFORT)) }, path: "/#th_e2e00001" });
+  await page.getByText("Done: it said hi.").waitFor();
+  assert.equal(await page.getByRole("radio").count(), 0);
+  const box = page.getByRole("textbox", { name: "Message" });
+  await box.fill("now make it louder");
+  await box.press("Enter");
+  await page.getByRole("list", { name: "Conversation" }).getByText("now make it louder").waitFor();
+  await page.getByRole("status").filter({ hasText: "Working" }).waitFor();
+  assert.deepEqual(api.calls, [["messages", { text: "now make it louder" }]]);
+  await ctx.close();
+});
+
+test("@chat deleting a chat asks first and returns to a new chat", async () => {
+  const api = threadApi();
+  const { ctx, page } = await open({ routes: api.routes, path: "/#th_e2e00001" });
+  await page.getByText("Done: it said hi.").waitFor();
+  const row = page.locator("div.group", { hasText: "say hi" });
+  await row.hover();
+  await row.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Keep" }).click();
+  assert.deepEqual(api.calls, []);
+  await row.hover();
+  await row.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  assert.deepEqual(api.calls, [["delete", {}]]);
+  await ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  for (const w of [1440, 390]) {
+    test(`@a11y chat axe: home and thread, 0 violations at ${w}px, ${scheme}`, async () => {
+      const api = threadApi();
+      const { ctx, page } = await open({ w, scheme, routes: { ...api.routes, "**/api/effort": (r) => r.fulfill(json(200, EFFORT)) } });
+      await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+      const scan = async (label) => {
+        await page.evaluate(AXE);
+        const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+        assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${w} ${scheme} ${label}`);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no horizontal scroll ${label}`);
+        if (process.env.OC_SHOTS) await page.screenshot({ path: `${process.env.OC_SHOTS}/chat-${label}-${scheme}-${w}.png` });
+      };
+      await scan("home");
+      await page.goto(base + "/#th_e2e00001");
+      await page.getByText("Done: it said hi.").waitFor();
+      await scan("thread");
+      await ctx.close();
+    });
+  }
+}
+
+test("@flow run page: only steps with detected PII say private; an empty list and a legacy null say nothing", async () => {
+  const step = (id, pii) => ({ ...RUN.subtasks[0], subtask: id, title: `step ${id}`, pii });
+  const run = { ...RUN, declared: 3, subtasks: [step("a", []), step("b", ["email", "ssn"]), step("c", null)] };
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 3, states: {}, ts: 1 }] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByText("step b").waitFor();
+  const label = page.getByText("private details");
+  assert.equal(await label.count(), 1);
+  assert.equal(await label.getAttribute("title"), "Detected: email, ssn");
+  assert.ok(await page.locator("li", { hasText: "step b" }).getByText("private details").isVisible());
+  assert.equal(await page.locator("li", { hasText: "step a" }).getByText("private details").count(), 0);
+  assert.equal(await page.locator("li", { hasText: "step c" }).getByText("private details").count(), 0);
+  await ctx.close();
+});

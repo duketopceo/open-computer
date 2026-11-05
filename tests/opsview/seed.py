@@ -113,6 +113,7 @@ def seed(base: Path, now: float | None = None) -> dict:
         "OC_ROUTER_LEDGER": str(ledger),
         "OC_RUNS_DIR": str(base / "runs"),
         "OC_GOALS_DIR": str(base / "goals"),
+        "OC_THREADS_DIR": str(base / "threads"),
         "OC_ROOT": str(base),
         "pending": 3,
     }

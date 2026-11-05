@@ -126,17 +126,17 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | Id | Phase | Unit | Status |
 |---|---|---|---|
 | OC-068 | P3 | Routing truth: effort model for every step, local models opt-in (`OC_LOCAL_MODELS`), PII held for approval, real model and cost per step, durable/automation effort | open |
-| OC-069 | P3 | Run page truth: no false "private" label, show the served model | open |
-| OC-070 | P3 | Thread store, `/api/threads` and SSE stream, legacy runs read-through | open |
+| OC-069 | P3 | Run page truth: no false "private" label, show the served model | partial: the false "private" label is fixed (every step said it because an empty list is truthy); the served model and cost per step still need OC-068 to record them |
+| OC-070 | P3 | Thread store, `/api/threads` and SSE stream, legacy runs read-through | partial: file-per-thread store, `/api/threads` list, detail (with its runs inlined), create, message, delete, archive, clear (this PR); polling, not SSE; legacy runs read through `/api/runs` |
 | OC-071 | P3 | OpenRouter client: tool calling and streaming | open |
-| OC-072 | P3 | App shell: Perplexity-style sidebar (New, Computer, Automations, Artifacts, Plugins; Pinned, Projects, Recents), texture, mobile | open |
-| OC-073 | P3 | Orchestrator turn loop: user-picked model, tools, budgets, approvals, steer, interrupt | open |
+| OC-072 | P3 | App shell: Perplexity-style sidebar (New, Computer, Automations, Artifacts, Plugins; Pinned, Projects, Recents), texture, mobile | partial: New chat, Agent jobs, Chats and Earlier runs in the rail, Operator collapsed (this PR); Computer, Automations, Artifacts, Plugins, Pinned and Projects not built |
+| OC-073 | P3 | Orchestrator turn loop: user-picked model, tools, budgets, approvals, steer, interrupt | partial: one model call per turn over the whole thread, decides reply, ask or run, sees each run's real output and can run again (max 3 runs per message), stops on approval or budget pause (this PR); no tool calling, steer or interrupt yet |
 | OC-074 | P3 | Built-in tools: sandbox, files, artifacts, ask the owner | open |
 | OC-075 | P3 | Web search and fetch tools | open |
 | OC-076 | P3 | Subagents with carved budgets | open |
 | OC-077 | P4 | Context compaction for long threads | open |
 | OC-078 | P4 | Durable thread workflow on Temporal | open |
-| OC-079 | P3 | Thread view: streaming chat, step and tool cards, inline approvals | open |
+| OC-079 | P3 | Thread view: streaming chat, step and tool cards, inline approvals | partial: thread view with inline run cards, working state, one box, optimistic send (this PR); no streaming, no inline approval card, no tool cards |
 | OC-080 | P3 | Settings and the Developer area | open |
 | OC-081 | P3 | Artifacts page | open |
 | OC-082 | P4 | MCP client and the Plugins page (connectors and skills) | open |
@@ -149,6 +149,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-089 | P3 | Finish the React move: run pages ported, cutover, operator pages under Developer | open |
 | OC-090 | P3 | Projects, pinned threads, notifications bell and thread search | open |
 | OC-091 | P3 | Usage view from the cost ledger | open |
+| OC-093 | P3 | Delete, archive and bulk-clear for runs and chats, so the rail never fills with junk | runs: #109; chats: this PR |
 | OC-092 | P3 | Cloudflare-hosted console frontend: Worker serves `ui/dist` and proxies `/api/*` (incl. SSE) to the tunnel, offline screen, Access policy | plan: docs/plans/2026-11-01-001-feat-cloudflare-hosted-frontend-plan.md (awaiting owner OK) |
 
 ## Landed since 2026-10-14

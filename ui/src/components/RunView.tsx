@@ -4,7 +4,8 @@ import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, placement } from "@/lib/friendly";
 import { Dot, StateWord } from "./primitives";
 
-export function RunView({ run }: { run: RunDetail }) {
+/** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
+export function RunView({ run, compact = false }: { run: RunDetail; compact?: boolean }) {
   const states = count(run);
   const active = run.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED");
   const [, setTick] = useState(0);
@@ -14,13 +15,13 @@ export function RunView({ run }: { run: RunDetail }) {
     return () => clearInterval(t);
   }, [active]);
   return (
-    <div className="mx-auto w-full max-w-3xl animate-fade-up">
-      <header className="mb-6">
-        <h1 className="font-display text-2xl leading-snug text-ink">{run.goal}</h1>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+    <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
+      <header className={compact ? "mb-3" : "mb-6"}>
+        {!compact && <h1 className="font-display text-2xl leading-snug text-ink">{run.goal}</h1>}
+        <div className={compact ? "flex flex-wrap items-center gap-2 text-xs" : "mt-3 flex flex-wrap items-center gap-2 text-xs"}>
           <StateWord state={aggregate(states, active)} />
           <span className="mono text-muted">
-            {states.done}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
+            {states.DONE}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
             {run.started != null ? dur(run.started, run.ended ?? Date.now() / 1000) : ""}
           </span>
           <span className="mono text-muted">origin {run.origin}</span>
@@ -83,7 +84,11 @@ function SubTaskRow({ s }: { s: SubTask }) {
           <span className="mono">{s.route || "route —"}</span>
           <span>·</span>
           <span className="mono">{placement(s.placement)}</span>
-          {s.pii && <span className="text-accent">· private</span>}
+          {(s.pii?.length ?? 0) > 0 && (
+            <span className="text-accent" title={`Detected: ${(s.pii ?? []).join(", ")}`}>
+              · private details
+            </span>
+          )}
         </p>
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "AWAITING-APPROVAL" && (

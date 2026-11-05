@@ -1,55 +1,61 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ApiError,
-  errorMessage,
   archiveRun,
+  archiveThread,
   clearFinishedRuns,
+  clearFinishedThreads,
+  createThread,
   deleteRun,
+  deleteThread,
+  errorMessage,
   getRun,
+  getThread,
   listAgentJobs,
   listRuns,
+  listThreads,
   pollMs,
+  sendMessage,
   session,
-  submitGoal,
-  type GoalOptions,
-  type GoalReply,
   type AgentJobSummary,
+  type GoalOptions,
   type RunDetail,
   type RunSummary,
   type Session,
+  type ThreadDetail,
+  type ThreadSummary,
 } from "@/lib/api";
 import { AgentJobs } from "@/components/AgentJobs";
 import { Composer } from "@/components/Composer";
 import { RunView } from "@/components/RunView";
 import { Sidebar } from "@/components/Sidebar";
+import { ThreadView } from "@/components/ThreadView";
 import { Button } from "@/components/primitives";
 
-const STARTERS = [
-  { title: "Build an ASCII editor", body: "Build an interactive ASCII editor with drawing tools and undo/redo." },
-  { title: "Map a dataset", body: "Create an interactive map of the geographic density of a public dataset." },
-  { title: "Write a haiku", body: "Write a haiku about receipts and render it as a text file." },
-];
-
-// What the banner says about the backend link — independent of any one action.
+// What the banner says about the backend link, independent of any one action.
 type Link = "ok" | "offline" | "auth";
+
+const isThread = (id: string | null) => !!id && id.startsWith("th_");
+const runActive = (r: RunDetail | null | undefined) =>
+  !!r?.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED" || s.state === "QUEUED" || s.state === "AWAITING-APPROVAL");
 
 export default function App() {
   const [sess, setSess] = useState<Session | null>(null);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [run, setRun] = useState<RunDetail | null>(null);
-  const [runError, setRunError] = useState("");
-  const [confirm, setConfirm] = useState<{ goal: string; opts: GoalOptions; plan: GoalReply; error?: string } | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [starter, setStarter] = useState<string | undefined>();
+  const [selError, setSelError] = useState("");
+  const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState<string | undefined>();
   const [error, setError] = useState("");
   const [link, setLink] = useState<Link>("ok");
-  const [view, setView] = useState<"runs" | "agents">("runs");
+  const [view, setView] = useState<"chat" | "agents">("chat");
   const [jobs, setJobs] = useState<AgentJobSummary[] | null>(null);
   const [jobsError, setJobsError] = useState("");
 
-  // Responses for a run the user has navigated away from must be dropped.
+  // Responses for something the user has navigated away from must be dropped.
   // Synced at commit (not render): concurrent React may abandon a render.
   const selectedRef = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -66,16 +72,26 @@ export default function App() {
 
   const refreshRuns = useCallback(
     () =>
-      listRuns(true).then((r) => {
+      // The chat list owns the link signal: this one may fail without flapping the banner, and never clears it.
+      listRuns(true, true).then((r) => {
         setRuns(r);
-        noteSuccess();
         return r;
+      }),
+    [],
+  );
+
+  const refreshThreads = useCallback(
+    () =>
+      listThreads().then((t) => {
+        setThreads(t);
+        noteSuccess();
+        return t;
       }),
     [noteSuccess],
   );
 
   // Never rejects: failures land in jobsError (inline retry) and the link banner. A success here
-  // must not clear "offline": the runs poll owns that signal.
+  // must not clear "offline": the lists poll owns that signal.
   const refreshJobs = useCallback(
     () =>
       listAgentJobs()
@@ -97,8 +113,7 @@ export default function App() {
   const jobsActive = !!jobs?.some((j) => j.status === "running" || j.awaiting_approval);
   useEffect(() => {
     if (link === "auth") return;
-    const ms = pollMs(link, jobsActive);
-    const id = setInterval(refreshJobs, ms);
+    const id = setInterval(refreshJobs, pollMs(link, jobsActive));
     return () => clearInterval(id);
   }, [link, jobsActive, refreshJobs]);
 
@@ -113,233 +128,190 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    session()
-      .then(setSess)
-      .catch(noteFailure);
-    refreshRuns()
-      .then((r) => {
-        if (r.length && selectedRef.current === null) setSelected(r[0].run);
-      })
-      .catch((e) => {
-        noteFailure(e);
-        setError(errorMessage(e, "Could not load runs."));
-      });
-  }, [noteFailure, refreshRuns]);
+    session().then(setSess).catch(noteFailure);
+    refreshThreads().catch((e) => {
+      noteFailure(e);
+      setError(errorMessage(e, "Could not load chats."));
+    });
+    refreshRuns().catch(noteFailure);
+  }, [noteFailure, refreshThreads, refreshRuns]);
 
-  const fetchRun = useCallback(
-    (id: string) =>
-      getRun(id)
+  const fetchSelected = useCallback(
+    (id: string) => {
+      const stale = () => selectedRef.current !== id;
+      const fail = (e: unknown) => {
+        if (stale()) return;
+        noteFailure(e);
+        if (e instanceof ApiError && e.status === 404) setSelError(isThread(id) ? "This chat no longer exists." : "This run no longer exists.");
+        else if (!(e instanceof ApiError && e.kind === "network")) setSelError(errorMessage(e, "Could not load."));
+      };
+      const ok = () => {
+        setSelError("");
+        noteSuccess();
+      };
+      if (isThread(id)) {
+        return getThread(id)
+          .then((t) => {
+            if (stale()) return;
+            setThread(t);
+            ok();
+          })
+          .catch(fail);
+      }
+      return getRun(id)
         .then((r) => {
-          if (selectedRef.current !== id) return; // stale: selection moved on
+          if (stale()) return;
           setRun(r);
-          setRunError("");
-          noteSuccess();
+          ok();
         })
-        .catch((e) => {
-          if (selectedRef.current !== id) return;
-          noteFailure(e);
-          if (e instanceof ApiError && e.status === 404) setRunError("This run no longer exists.");
-          else if (!(e instanceof ApiError && e.kind === "network")) setRunError(errorMessage(e, "Could not load run."));
-        }),
+        .catch(fail);
+    },
     [noteFailure, noteSuccess],
   );
 
   useEffect(() => {
-    setRun(null); // never show the previous run under a new selection
-    setRunError("");
-    if (selected) fetchRun(selected);
-  }, [selected, fetchRun]);
+    setThread(null); // never show the previous conversation under a new selection
+    setRun(null);
+    setSelError("");
+    if (selected) fetchSelected(selected);
+  }, [selected, fetchSelected]);
 
-  // Poll: runs rail + selected run. Fast while a run is active, slow when idle;
+  // Poll the rail and the open item. Fast while something is working, slow when idle;
   // backs off while the link is down, stops once the session is gone.
-  const active = !!run?.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED" || s.state === "QUEUED" || s.state === "AWAITING-APPROVAL");
+  const active = !!thread?.working || Object.values(thread?.runs ?? {}).some(runActive) || runActive(run);
   useEffect(() => {
     if (link === "auth") return;
-    const ms = pollMs(link, active);
     const id = setInterval(() => {
+      refreshThreads().catch(noteFailure);
       refreshRuns().catch(noteFailure);
-      if (selected) fetchRun(selected);
-    }, ms);
+      if (selected) fetchSelected(selected);
+    }, pollMs(link, active));
     return () => clearInterval(id);
-  }, [selected, active, link, refreshRuns, fetchRun, noteFailure]);
+  }, [selected, active, link, refreshThreads, refreshRuns, fetchSelected, noteFailure]);
 
-  function onRun(goal: string, opts: GoalOptions) {
-    if (submitting) return;
+  function select(id: string | null) {
+    setView("chat");
     setError("");
-    setSubmitting(true);
-    submitGoal(goal, false, opts)
-      .then((r) => {
-        if (r.run) select(r.run);
-        else if (r.needs_confirm) setConfirm({ goal, opts, plan: r });
-        else setError("The server didn't start a run or ask to confirm. Try again.");
-      })
-      .catch((e) => {
-        noteFailure(e);
-        setDraft(goal); // keep what they typed
-        setError(errorMessage(e, "Could not submit."));
-      })
-      .finally(() => setSubmitting(false));
+    setDraft(undefined);
+    setSelected(id || null);
+    history.replaceState(null, "", id ? `#${id}` : location.pathname);
   }
 
-  function confirmRun() {
-    if (!confirm || submitting) return;
-    const { goal, opts } = confirm;
-    setSubmitting(true);
-    setConfirm({ ...confirm, error: undefined });
-    submitGoal(goal, true, opts)
-      .then((r) => {
-        if (!r.run) throw new Error("The server accepted the goal but returned no run id.");
-        setConfirm(null); // only once it actually started
-        select(r.run);
+  // The message appears at once; the server answers in the background and the poll fills the reply in.
+  function onSend(text: string, opts: GoalOptions) {
+    if (sending) return;
+    setError("");
+    setDraft(undefined);
+    setSending(true);
+    const failed = (e: unknown) => {
+      noteFailure(e);
+      setDraft(text); // keep what they typed
+      setError(errorMessage(e, "Could not send."));
+      if (selected) fetchSelected(selected);
+    };
+    if (isThread(selected) && thread) {
+      setThread({ ...thread, working: true, messages: [...thread.messages, { role: "user", text, ts: Date.now() / 1000 }] });
+      sendMessage(thread.id, text)
+        .then(() => fetchSelected(thread.id))
+        .catch(failed)
+        .finally(() => setSending(false));
+    } else {
+      createThread(text, opts)
+        .then((r) => {
+          select(r.thread);
+          refreshThreads().catch(noteFailure);
+        })
+        .catch(failed)
+        .finally(() => setSending(false));
+    }
+  }
+
+  // Cleanup: refresh the rail and, if the open item is gone, drop back to a new chat.
+  const cleanup = <T,>(call: () => Promise<T>, fail: string, goneIds: () => string[]) => {
+    setError("");
+    const gone = goneIds();
+    call()
+      .then(() => {
+        if (selected && gone.includes(selected)) select(null);
+        refreshThreads().catch(noteFailure);
         refreshRuns().catch(noteFailure);
       })
       .catch((e) => {
         noteFailure(e);
-        setConfirm((c) => (c ? { ...c, error: errorMessage(e, "Could not start the run.") } : c));
-      })
-      .finally(() => setSubmitting(false));
-  }
-
-  function cancelConfirm() {
-    if (submitting) return;
-    if (confirm) setDraft(confirm.goal);
-    setConfirm(null);
-  }
-
-  // Cleanup: each call refreshes the rail and, if the open run is gone, drops back to the composer.
-  function afterCleanup(removed: string[]) {
-    if (selected && removed.includes(selected)) setSelected(null);
-    refreshRuns().catch(noteFailure);
-  }
-
-  function onDelete(id: string) {
-    setError("");
-    deleteRun(id)
-      .then(() => afterCleanup([id]))
-      .catch((e) => {
-        noteFailure(e);
-        setError(errorMessage(e, "Could not delete the run."));
+        setError(errorMessage(e, fail));
       });
-  }
+  };
 
-  function onArchive(id: string, archived: boolean) {
-    archiveRun(id, archived)
-      .then(() => afterCleanup(archived ? [id] : []))
-      .catch((e) => {
-        noteFailure(e);
-        setError(errorMessage(e, "Could not archive the run."));
-      });
-  }
+  const chats = {
+    onDelete: (id: string) => cleanup(() => deleteThread(id), "Could not delete the chat.", () => [id]),
+    onArchive: (id: string, a: boolean) => cleanup(() => archiveThread(id, a), "Could not archive the chat.", () => (a ? [id] : [])),
+    onClear: () =>
+      cleanup(clearFinishedThreads, "Could not clear finished chats.", () => threads.filter((t) => t.finished && !t.archived).map((t) => t.id)),
+  };
+  const earlier = {
+    onDelete: (id: string) => cleanup(() => deleteRun(id), "Could not delete the run.", () => [id]),
+    onArchive: (id: string, a: boolean) => cleanup(() => archiveRun(id, a), "Could not archive the run.", () => (a ? [id] : [])),
+    onClear: () =>
+      cleanup(clearFinishedRuns, "Could not clear finished runs.", () => runs.filter((r) => r.finished && !r.archived).map((r) => r.run)),
+  };
 
-  function onClear() {
-    const gone = runs.filter((r) => r.finished).map((r) => r.run);
-    clearFinishedRuns()
-      .then(() => afterCleanup(gone))
-      .catch((e) => {
-        noteFailure(e);
-        setError(errorMessage(e, "Could not clear finished runs."));
-      });
-  }
-
-  function select(id: string) {
-    setSelected(id);
-    setStarter(undefined);
-    setDraft(undefined);
-  }
-
+  const gone = selected && selError;
   return (
     <div className="flex h-full">
       <Sidebar
+        threads={threads}
         runs={runs}
         selected={selected}
         identity={sess?.identity ?? ""}
         view={view}
         onAgents={() => setView("agents")}
-        onDelete={onDelete}
-        onArchive={onArchive}
-        onClear={onClear}
         pending={(jobs ?? []).reduce((n, j) => n + (j.pending || 0), 0)}
         onSelect={(id) => {
-          if (submitting) return;
-          setView("runs");
-          setConfirm(null);
-          setError("");
-          setSelected(id || null);
+          if (!sending) select(id || null);
         }}
+        chats={chats}
+        earlier={earlier}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
         {link !== "ok" && <LinkBanner link={link} />}
         {view === "agents" ? (
-          <AgentJobs
-            jobs={jobs}
-            jobsError={jobsError}
-            link={link}
-            onRefresh={refreshJobs}
-            onOk={noteSuccess}
-            onFail={noteFailure}
-          />
-        ) : (
-        <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-6 py-10">
-          {error && (
-            <p className="mb-4 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
-              {error}
+          <AgentJobs jobs={jobs} jobsError={jobsError} link={link} onRefresh={refreshJobs} onOk={noteSuccess} onFail={noteFailure} />
+        ) : gone ? (
+          <div className="m-auto flex flex-col items-center gap-3 px-6 text-center">
+            <p className="text-sm text-urgent" role="alert">
+              {selError}
             </p>
-          )}
-
-          {confirm ? (
-            <ConfirmCard
-              goal={confirm.goal}
-              plan={confirm.plan}
-              error={confirm.error}
-              busy={submitting}
-              onRun={confirmRun}
-              onCancel={cancelConfirm}
-            />
-          ) : run ? (
+            <div className="flex gap-2">
+              <Button variant="subtle" onClick={() => selected && fetchSelected(selected)}>
+                Retry
+              </Button>
+              <Button variant="ghost" onClick={() => select(null)}>
+                New chat
+              </Button>
+            </div>
+          </div>
+        ) : selected && isThread(selected) && thread ? (
+          <ThreadView thread={thread} onSend={onSend} busy={sending} disabled={link === "auth"} error={error} />
+        ) : selected && !isThread(selected) && run ? (
+          <div className="mx-auto w-full max-w-3xl px-6 py-10">
             <RunView run={run} />
-          ) : selected && runError ? (
-            <div className="flex flex-col items-center gap-3 text-center">
-              <p className="text-sm text-urgent" role="alert">
-                {runError}
+          </div>
+        ) : selected ? (
+          <div className="m-auto flex flex-col items-center gap-3 text-muted" role="status">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-accent" />
+            <p className="text-sm">Loading…</p>
+          </div>
+        ) : (
+          <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-6 py-10">
+            {error && (
+              <p className="mb-4 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
+                {error}
               </p>
-              <div className="flex gap-2">
-                <Button variant="subtle" onClick={() => fetchRun(selected)}>
-                  Retry
-                </Button>
-                <Button variant="ghost" onClick={() => setSelected(null)}>
-                  New goal
-                </Button>
-              </div>
-            </div>
-          ) : selected ? (
-            <div className="flex flex-col items-center gap-3 text-muted" role="status">
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-accent" />
-              <p className="text-sm">Loading run…</p>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center">
-              <h1 className="font-display text-3xl text-ink">What should the computer do?</h1>
-              <p className="mt-2 mb-8 max-w-md text-center text-sm text-muted">
-                Describe an outcome. It decomposes, routes, places and runs each step — here you
-                watch the machinery, not just the answer.
-              </p>
-              <Composer onRun={onRun} starter={starter ?? draft} busy={submitting} disabled={link === "auth"} />
-              <div className="mt-6 grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
-                {STARTERS.map((s) => (
-                  <button
-                    key={s.title}
-                    onClick={() => setStarter(s.body)}
-                    className="rounded-xl border border-line bg-surface-1 p-3 text-left shadow-card transition-transform hover:-translate-y-0.5"
-                  >
-                    <p className="text-sm font-medium text-ink">{s.title}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">{s.body}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+            <h1 className="mb-6 text-center font-display text-3xl text-ink">What are we working on?</h1>
+            <Composer onSend={onSend} starter={draft} busy={sending} disabled={link === "auth"} showEffort autoFocus />
+          </div>
         )}
       </main>
     </div>
@@ -356,55 +328,6 @@ function LinkBanner({ link }: { link: Exclude<Link, "ok"> }) {
       <Button variant="subtle" className="h-7" onClick={() => window.location.reload()}>
         {link === "auth" ? "Sign in again" : "Reload"}
       </Button>
-    </div>
-  );
-}
-
-function ConfirmCard({
-  goal,
-  plan,
-  error,
-  busy,
-  onRun,
-  onCancel,
-}: {
-  goal: string;
-  plan: GoalReply;
-  error?: string;
-  busy: boolean;
-  onRun: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="mx-auto w-full max-w-xl animate-fade-up rounded-2xl border border-line bg-surface-1 p-5 shadow-card">
-      <h2 className="font-display text-xl text-ink">Run this?</h2>
-      <p className="mt-2 text-sm text-ink">{goal}</p>
-      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted">Effort</dt>
-        <dd className="mono capitalize">{plan.effort}</dd>
-        <dt className="text-muted">Model</dt>
-        <dd className="mono break-all">{plan.model}</dd>
-        <dt className="text-muted">Budget</dt>
-        <dd className="mono">up to ${(plan.budget ?? 0).toFixed(2)} for this run</dd>
-      </dl>
-      <p className="mt-3 text-xs leading-relaxed text-muted">
-        A planner call decomposes the goal; subtasks placed cloud-* run against OpenRouter with that
-        model. The run pauses when it reaches its budget; nothing is cancelled. Anything flagged
-        private stays local or waits for approval.
-      </p>
-      {error && (
-        <p className="mt-3 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="mt-4 flex items-center gap-2">
-        <Button variant="primary" onClick={onRun} disabled={busy} aria-busy={busy}>
-          {busy ? "Starting…" : error ? "Try again" : "Run it"}
-        </Button>
-        <Button variant="subtle" onClick={onCancel} disabled={busy}>
-          Cancel
-        </Button>
-      </div>
     </div>
   );
 }

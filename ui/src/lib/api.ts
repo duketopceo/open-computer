@@ -38,7 +38,8 @@ export interface SubTask {
   reason: string;
   gate_required: boolean;
   cost: number;
-  pii: boolean;
+  /** PII categories the gate found in the step's prompt; empty means none. */
+  pii?: string[] | null;
   result?: string;
   error?: string;
   error_kind?: string;
@@ -149,9 +150,51 @@ export async function csrf(): Promise<string> {
   return s.csrf;
 }
 
-export async function listRuns(withArchived = false): Promise<RunSummary[]> {
-  return (await json<{ runs?: RunSummary[] }>(withArchived ? "/api/runs?archived=1" : "/api/runs")).runs ?? [];
+export async function listRuns(withArchived = false, looseOnly = false): Promise<RunSummary[]> {
+  const q = [withArchived && "archived=1", looseOnly && "threaded=0"].filter(Boolean).join("&");
+  return (await json<{ runs?: RunSummary[] }>("/api/runs" + (q ? "?" + q : ""))).runs ?? [];
 }
+
+// ---- chat threads
+export interface ThreadSummary {
+  id: string;
+  title: string;
+  ts: number;
+  archived: boolean;
+  working: boolean;
+  finished: boolean;
+}
+
+export interface ThreadMessage {
+  role: "user" | "assistant" | "run";
+  text: string;
+  ts: number;
+  run?: string;
+  goal?: string;
+  ask?: boolean;
+  error?: boolean;
+}
+
+export interface ThreadDetail extends Omit<ThreadSummary, "ts" | "finished"> {
+  created: number;
+  updated: number;
+  effort: { effort: string; model: string; budget: number };
+  messages: ThreadMessage[];
+  runs: Record<string, RunDetail | null>;
+}
+
+export async function listThreads(withArchived = true): Promise<ThreadSummary[]> {
+  return (await json<{ threads?: ThreadSummary[] }>(withArchived ? "/api/threads?archived=1" : "/api/threads")).threads ?? [];
+}
+export const getThread = (id: string) => json<ThreadDetail>(`/api/threads/${encodeURIComponent(id)}`);
+export const createThread = (text: string, opts: GoalOptions = {}) =>
+  postJson<{ thread: string }>("/api/threads", { text, ...opts });
+export const sendMessage = (id: string, text: string) =>
+  postJson<{ ok: true }>(`/api/threads/${encodeURIComponent(id)}/messages`, { text });
+export const deleteThread = (id: string) => postJson<{ ok: true }>(`/api/threads/${encodeURIComponent(id)}/delete`, {});
+export const archiveThread = (id: string, archived: boolean) =>
+  postJson<{ ok: true }>(`/api/threads/${encodeURIComponent(id)}/archive`, { archived });
+export const clearFinishedThreads = () => postJson<{ cleared: number }>("/api/threads/clear", { confirm: true });
 
 export const deleteRun = (id: string) => postJson<{ ok: true }>(`/api/runs/${encodeURIComponent(id)}/delete`, {});
 export const archiveRun = (id: string, archived: boolean) =>

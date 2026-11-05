@@ -27,3 +27,10 @@
     @apply inline-flex items-center rounded-full border border-line bg-surface-1 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted;
   }
 }
+
+/* Reduced motion: show the settled state at once instead of fading in. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up {
+    animation: none;
+  }
+}

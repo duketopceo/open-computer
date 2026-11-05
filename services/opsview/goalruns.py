@@ -144,11 +144,11 @@ def archive_run(run_id: str, archived: bool = True) -> bool:
     return True
 
 
-def clear_finished() -> int:
-    """Delete every finished run that nothing is driving. Returns how many were removed."""
+def clear_finished(keep: frozenset[str] | set[str] = frozenset()) -> int:
+    """Delete every finished run that nothing is driving, except ids in `keep`. Returns how many were removed."""
     n = 0
     for r in list_runs(include_archived=True, limit=None):
-        if _finished(r["states"]) and delete_run_quiet(r["run"]):
+        if r["run"] not in keep and _finished(r["states"]) and delete_run_quiet(r["run"]):
             n += 1
     return n
 
