@@ -15,7 +15,7 @@ from typing import Callable
 from dataclasses import dataclass
 
 from oc.fsproto import AlreadyLeased
-from oc.obs import bind, error_fields, get_logger
+from oc.obs import bind, devtrace, error_fields, get_logger
 from services.cost import CostLedger, Usage
 from services.openrouter import collect_reasoning
 from services.telemetry import report_failure
@@ -36,6 +36,25 @@ def _ctx(task: dict, tid: str):
     """Bind the id spine carried on the task body for the duration of a log/work block."""
     return bind(run_id=task.get("run"), subtask=task.get("subtask"), task=tid, chat_id=task.get("chat"),
                 service="worker")
+
+
+def _max_attempts() -> int:
+    """Executions a step gets before a sandbox outage fails it. U5 exports MAX_STEP_ATTEMPTS; until then it is
+    the requeue guard below plus the first run."""
+    return int(globals().get("MAX_STEP_ATTEMPTS", 4))
+
+
+def _worker_model(usage) -> str | None:
+    model = getattr(usage, "model", None)
+    return model if isinstance(model, str) and model else None
+
+
+def _trace_cost(trace, ledger: CostLedger, run: str) -> None:
+    try:
+        st = ledger.state(run)
+        trace.emit("cost", spent_usd=round(st.spend, 6), cap_usd=st.cap or 0.0)
+    except Exception as e:  # noqa: BLE001 - a trace read must never fail a finished step
+        log.warning("dev trace cost dropped", **error_fields(e))
 
 
 @dataclass
@@ -90,6 +109,9 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
         audit.append({"event": "worker_start", "run": task.get("run"), "task": tid, "subtask": task.get("subtask")})
     except OSError as e:
         log.warning("worker_start not recorded", agent=agent, **error_fields(e))
+    trace = devtrace.tracer(run_id=task.get("run"), actor="worker")
+    if trace is not None:  # a re-claim after a requeue lands here too: a plain running event ends the wait
+        trace.step(task.get("subtask", ""), task.get("title", ""), "running")
     t0 = time.monotonic()
     try:
         log.info("task claimed", agent=agent, placement=task.get("placement"), engine=task.get("engine"))
@@ -112,6 +134,14 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
             attempts_file.write_text(str(_attempts(fs, tid) + 1))
             fs.expire(tid)
             audit.append({"event": "worker_requeue", "task": tid, "reason": str(e)[:200]})
+            if trace is not None:
+                n = _attempts(fs, tid)  # the requeue was just counted: this is the attempt about to run
+                trace.step(task.get("subtask", ""), task.get("title", ""), "running",
+                           model=_worker_model(getattr(e, "usage", None)),
+                           waiting_on={"kind": "sandbox_boot", "attempt": n + 1, "max": _max_attempts(),
+                                       "since": devtrace.now(), "detail": devtrace.text(str(e), 200)})
+                trace.error(devtrace.entity("err", f"{tid}_{n}"), type(e).__name__, str(e), task.get("subtask"),
+                            hint=devtrace.text(getattr(e, "hint", ""), 300) or None, recoverable=True)
             return True
         fs.fail(tid)
         audit.append(
@@ -130,14 +160,25 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
             exc=e,
             run=task["run"], task=tid, subtask=task.get("subtask", ""),
         )
+        if trace is not None:
+            trace.step(task.get("subtask", ""), task.get("title", ""), "failed", detail=devtrace.text(str(e), 300),
+                       model=_worker_model(getattr(e, "usage", None)))
+            trace.error(devtrace.entity("err", f"{tid}_{_attempts(fs, tid) + 1}"), type(e).__name__, str(e),
+                        task.get("subtask"), hint=devtrace.text(getattr(e, "hint", ""), 300) or None,
+                        recoverable=False)
         return True
     if isinstance(result, WorkResult) and result.usage is not None and ledger is not None:
         ledger.record(task["run"], task["subtask"], result.usage, token=token)
+        if trace is not None:
+            _trace_cost(trace, ledger, task["run"])
     elif token:
         ledger.release(task["run"], token)  # no usage reported: nothing was spent
+    model_served = _worker_model(result.usage) if isinstance(result, WorkResult) else None
     if isinstance(result, WorkResult):
         result = result.output
     fs.outbox_write(agent, tid, result)
     audit.append({"event": "worker_done", "task": tid})
+    if trace is not None:
+        trace.step(task.get("subtask", ""), task.get("title", ""), "done", model=model_served)
     log.info("task done", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1))
     return True

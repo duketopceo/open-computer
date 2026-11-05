@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from oc.obs import bind, get_logger
+from oc.obs import bind, devtrace, get_logger
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError, default_approvals_path
 from services.agents.approvals import ApprovalError
@@ -324,6 +324,9 @@ GET_ROUTES = [
     (r"/api/threads", "g_api_threads"),
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})", "g_api_thread"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/events", "g_api_run_events"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/events\.jsonl", "g_api_run_events_jsonl"),
+    (r"/api/dev", "g_api_dev"),
     (r"/api/agent-jobs", "g_api_agent_jobs"),
     (r"/api/agent-jobs/(?P<id>[0-9a-f]{10})", "g_api_agent_job"),
     (r"/api/approvals", "g_api_approvals"),
@@ -364,6 +367,7 @@ POST_ROUTES = [
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})/messages", "p_api_thread_message"),
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})/delete", "p_api_thread_delete"),
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})/archive", "p_api_thread_archive"),
+    (r"/api/dev", "p_api_dev"),
     (r"/api/runs/clear", "p_api_runs_clear"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/delete", "p_api_run_delete"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/archive", "p_api_run_archive"),
@@ -766,6 +770,33 @@ class Handler(BaseHTTPRequestHandler):
         if r is None:
             return self._json(404, {"error": "no such run"})
         self._json(200, r)
+
+    def g_api_run_events(self, qs, id):
+        code, body = goalruns.run_events(id, qs.get("after", [None])[0])
+        self._json(code, body)
+
+    def g_api_run_events_jsonl(self, qs, id):
+        code, body = goalruns.run_events_jsonl(id)
+        if code != 200:
+            return self._json(code, body)
+        self._send(200, body, "application/x-ndjson", {
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{id}-events.jsonl"',
+        })
+
+    def g_api_dev(self, qs):
+        self._json(200, devtrace.status())
+
+    def p_api_dev(self, who, body):
+        on = body.get("trace")
+        if not isinstance(on, bool):
+            return self._json(400, {"error": "trace must be true or false."})
+        try:
+            devtrace.write_setting(on)
+        except OSError as e:
+            return self._json(500, {"error": f"Could not save the setting: {type(e).__name__}"})
+        log.info("dev trace setting changed", trace=on)
+        self._json(200, devtrace.status())
 
     def g_api_agent_jobs(self, qs):
         self._json(200, {"jobs": agentjobs.list_jobs()})

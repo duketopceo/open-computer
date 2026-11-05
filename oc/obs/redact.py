@@ -20,6 +20,10 @@ _PAIRS = {("api", "key"), ("private", "key"), ("access", "key"), ("secret", "key
 _VALUE_PATTERNS = [
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}"),  # OpenAI/OpenRouter-style keys (sk-or-v1-...)
+    re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{8,}"),  # Stripe secret keys
+    re.compile(r"AIza[A-Za-z0-9_-]{20,}"),  # Google API keys
+    # PEM private key block; an unterminated block is redacted to the end of the string
+    re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)", re.S),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}"),  # JWT
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"),
     re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),

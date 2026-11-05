@@ -28,12 +28,50 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from oc.obs import context as obs_context
+from oc.obs import devtrace, error_fields, get_logger
 from services.router.model_catalog import DEFAULT_WORKER_MODEL
 
 from services.openrouter import OpenRouterError, collect_usage, total_usage
 from services.openrouter import chat as or_chat
 
 from .runner import WorkResult
+
+
+log = get_logger("engines")
+
+
+class _CommandTrace:
+    """Dev trace of one sandbox command: a `tool_call` shell.exec, running while it executes, then its rc and
+    output tails. A no-op unless the run has a stream; tracing never changes the command's outcome."""
+
+    def __init__(self, task: dict, script: str):
+        self.trace = devtrace.tracer(run_id=str(task.get("run") or ""), actor="worker")
+        self.t0 = time.monotonic()
+        if self.trace is None:
+            return
+        task_id = obs_context.current().get("task") or "task"
+        self.id = devtrace.entity("tool", f"{task_id}_{int(time.time() * 1000)}")
+        self.step = devtrace.entity("step", task.get("subtask") or "x")
+        self.command = devtrace.text(script)
+        self.trace.emit("tool_call", id=self.id, name="shell.exec", status="running", step=self.step,
+                        command=self.command)
+
+    def finish(self, res=None, exc: BaseException | None = None) -> None:
+        if self.trace is None:
+            return
+        try:
+            rc = getattr(res, "returncode", None)
+            self.trace.emit(
+                "tool_call", id=self.id, name="shell.exec", status="ok" if rc == 0 else "error", step=self.step,
+                command=self.command, rc=rc if isinstance(rc, int) else None,
+                stdout_tail=devtrace.tail(getattr(res, "stdout", "")) if res is not None else None,
+                stderr_tail=devtrace.tail(getattr(res, "stderr", "")) if res is not None else None,
+                summary=devtrace.text(f"{type(exc).__name__}: {exc}", 300) if exc is not None else None,
+                duration_ms=int((time.monotonic() - self.t0) * 1000),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("dev trace command dropped", **error_fields(e))
 
 
 class WorkerUnavailable(RuntimeError):
@@ -260,15 +298,18 @@ def sandbox_work(
         res = None
         for attempt in range(2):  # transient VM/control-plane errors get exactly one retry
             ent = _acquire_run_sandbox(plane, run_id, hosts)
+            ct = _CommandTrace(task, script)
             try:
                 res = ent["sb"].exec(f"echo {b64} | base64 -d | bash")
-            except Exception:
+            except Exception as e:
+                ct.finish(exc=e)
                 _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
                 if attempt == 1:
                     raise
                 continue
             finally:
                 _release_run_sandbox(ent)
+            ct.finish(res)
             break
     else:
         sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)

@@ -59,6 +59,10 @@ QUERIES = [
     "?approve=1&id=ap_00000000",
     "?inline=1",
     "?cmd=rm%20-rf",
+    "?after=-3",
+    "?after=abc",
+    "?after=99999999999999999999999",
+    "?after=1&after=2",
 ]
 
 

@@ -150,6 +150,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-090 | P3 | Projects, pinned threads, notifications bell and thread search | open |
 | OC-091 | P3 | Usage view from the cost ledger | open |
 | OC-093 | P3 | Delete, archive and bulk-clear for runs and chats, so the rail never fills with junk | runs: #109; chats: this PR |
+| OC-095 | P3 | Dev telemetry spine: per-run event stream, events API and JSONL export (dev mode) | this PR |
 | OC-092 | P3 | Cloudflare-hosted console frontend: Worker serves `ui/dist` and proxies `/api/*` (incl. SSE) to the tunnel, offline screen, Access policy | plan: docs/plans/2026-11-01-001-feat-cloudflare-hosted-frontend-plan.md (awaiting owner OK) |
 
 ## Landed since 2026-10-14

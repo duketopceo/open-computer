@@ -19,10 +19,10 @@ from its own clock or from anything outside the stream.
 |---|---|
 | `id` | `"<goal>:<seq>"`. Stable and unique. |
 | `v` | Always `1`. A breaking change bumps it; readers must refuse an unknown `v`. |
-| `goal` | `g_` + lowercase letters, digits, underscore. |
+| `goal` | `g_` + lowercase letters, digits, underscore, or a console run id `goal_` + 8 hex digits (the dev trace stream). |
 | `seq` | Integer, **gapless and strictly increasing per goal, starting at 1**. It is also the SSE `id`. Assigned by the log under a lock, never by the producer. |
 | `ts` | Epoch seconds, millisecond precision. Non-decreasing. The UI computes every elapsed time and "ago" from event `ts`, never from `Date.now()`. |
-| `type` | One of `run step tool_call source artifact change approval cost note error`. |
+| `type` | One of `run step tool_call source artifact change approval cost note error route llm_call`. |
 | `actor` | Optional `{name, session, kind}`. Drives the provenance glint (section 10): anything an agent created is attributed. |
 | `data` | Per-type payload below. `additionalProperties: false` everywhere, so a typo fails validation instead of silently vanishing. |
 
@@ -39,19 +39,28 @@ Entity ids: lowercase prefix, underscore, body (`step_fetch`, `tool_s1`, `ap_pus
 
 ### `run`: the goal's lifecycle
 `status` (`queued planning running waiting paused done failed cancelled`); `reason` when waiting or paused
-(`approval plan_approval cap loop_guard user error`); optional `title`, `goal_text`, `summary`, `model`, `cap_usd`, and
+(`approval plan_approval cap loop_guard user error sandbox queue`); optional `title`, `goal_text`, `summary`, `model`, `cap_usd`, and
 `box {template ttl_s cpu mem_mb disk_mb network_allow[]}` (feeds the Box tab). **A run at its cap is `paused` with
 `reason: "cap"`, never `cancelled`.** `done`, `failed` and `cancelled` are terminal; the SSE stream ends after one.
 
 ### `step`: the plan
 `id`, `title`, `status` (`pending running done failed skipped`); optional `parent`, `kind` (`step subagent sandbox`),
-`agent` (name of the sub-agent or sandbox on that row), `detail`. Only `running` steps shimmer; at most one at a time.
+`agent` (name of the sub-agent or sandbox on that row), `detail`, and (dev trace) `model` (the worker model that served
+the step) and `waiting_on {kind, attempt, max, since, detail}`. Only `running` steps shimmer; at most one at a time.
 `subagent` and `sandbox` rows get **Stop** and **Send note**.
+
+A requeued step stays `status: running` with `waiting_on` set (`kind: "sandbox_boot"`, `attempt` = the attempt about to
+run, `max` = attempts allowed, `since` = epoch seconds). "Waiting" is a display state the reducer derives: the next `step`
+event that carries no `waiting_on` ends the wait, even though upsert normally keeps absent fields (`oc.events.entities`
+implements this exception). `skipped` is a dependency failure.
 
 ### `tool_call`
 `id`, `name` (`web.search`, `web.fetch`, `shell.exec`, `fs.write`, `git.push`...), `status` (`running ok error`); optional
 `step`, `summary`, `destination` (host or path), `output_tail[]` (last <= 50 lines; feeds the Box terminal),
-`duration_ms`, `repeat` (consecutive identical calls so far; **the loop guard pauses at 3**), `cost_usd`.
+`duration_ms`, `repeat` (consecutive identical calls so far; **the loop guard pauses at 3**), `cost_usd`. A sandbox
+command (dev trace) is `name: "shell.exec"` and also carries `command` (the program text), `rc`, `stdout_tail[]` and
+`stderr_tail[]` (each <= 50 lines, <= 4 KB). It is written twice under one id: `running` when it starts, then `ok` or
+`error` with the result.
 
 ### `source`
 `id`, `n`, `url`, `title`; optional `domain`, `snippet`, `fetched`, `fetched_at`, `content_hash`, `cited_by[]`. `n` is the
@@ -100,7 +109,56 @@ renders `1-3`). File citations are `[path:line]` and open Changes at that line.
 
 ### `error`
 `id`, `code`, `message`; optional `hint` (what to do next), `step`, `recoverable`. Copy follows section 12: what went
-wrong and what to do, no apology.
+wrong and what to do, no apology. In the dev trace `code` is the error kind (the exception class, `DependencyFailed`,
+`NoPlacement`).
+
+### `route`: the router's decision (dev trace)
+`id`, `route`, `tier`, `engine` (`decider`, `jev` or `table`); optional `step`, `model` (the decider model that
+answered), `router_model`, `confidence`, `cost_usd`, `ms`, `placement` (where the step was placed) and `fallbacks[]
+{engine, kind, status, reason}`: the engines tried and skipped before this decision, each with its HTTP status and a short
+redacted reason.
+
+### `llm_call`: one model request (dev trace)
+`id`, `kind`, `status` (`ok error`); optional `step`, `model_requested`, `model_served`, `provider`, `tokens_in`,
+`tokens_out`, `tokens_cached`, `tokens_reasoning`, `cost_usd`, `latency_ms`, `generation_id`, `reasoning` (the text the
+model returned, <= 16 000 characters), `detail`, and for a failed call `error_class`, `http_status`, `error`. `kind` is
+`plan` (the planner), `work` (a step), `decision` (the router's decider), `thread` (a chat turn) or the client's own kind.
+The planner's output is one extra row, id `call_plan`, whose `detail` is the plan JSON (no cost: the planner's HTTP call
+is its own `plan` row).
+
+## Dev trace: a per-run stream, and a content-capture mode
+
+With dev trace on, every console run writes this same contract to `<run dir>/events.ndjson` (goal id = the run id,
+`goal_<8 hex>`), extended additively: `route` and `llm_call`, the `tool_call` command fields, `step.waiting_on`/`model`
+and the two new `run.reason` values. `v` stays `1`. The stream records the run lifecycle, the planner's output, each step's
+pending/running/done/failed/skipped transitions, each routing decision, each model call, each sandbox command, each wait and
+each error. The orchestrator, the console's worker threads and the `oc-worker` service all append to the one file.
+
+**Dev trace is a content-capture mode.** The stream holds program text, command output, plan JSON and model reasoning, like
+`OC_OBS_CAPTURE_CONTENT=1` does for logs, but only for the runs that opted in. Every content field is redacted in full
+(`oc.obs.redact`) and only then capped (tails: 50 lines and 4 KB; program text and plan 16 000 characters; reasoning 16 000
+characters, with a `[truncated]` marker), so a cut never leaves part of a key. The console asks for confirmation before it
+turns dev trace on. See [`docs/runbooks/observability.md`](../runbooks/observability.md#dev-trace-a-live-per-run-event-stream).
+
+Entity ids must match the schema's `ref` pattern: steps are `step_<subtask id>` (lowercased, every other character `_`, so
+subtask `t1` is `step_t1`), model calls `call_<call id>`, routes `route_<subtask id>`, commands `tool_<task id>_<n>`, errors
+`err_<id>`.
+
+The gate is decided once per run, at submit: a run has a stream if `OC_DEV_TRACE=1` or `dev.json` (next to the goals
+directory) holds `{"trace": true}` at that moment. Producers emit only while the run's `events.ndjson` exists, so
+flipping the setting mid-run never splits a run, and with it off nothing is written and no provider request changes.
+
+### Dev trace API
+
+* `GET /api/runs/<id>/events?after=<seq>` returns `{"events": [...], "last_seq": n, "finished": bool}`, at most 500
+  events per call. `last_seq` is the last event returned (or the clamped cursor when there is none): pass it back as
+  `after`. `finished` is true once the terminal `run` event has been delivered. A negative cursor reads from the start, a
+  cursor past the end returns nothing, a non-integer is `400`.
+* `GET /api/runs/<id>/events.jsonl` downloads the whole stream (`application/x-ndjson`, `Content-Disposition: attachment`).
+* Both are `404` with `{"error": "dev trace off for this run"}` for a run without a stream, send `Cache-Control: no-store`,
+  and have no side effects.
+* `GET /api/dev` returns `{"trace": bool, "env": bool, "active": bool}` (the file, the environment variable, either);
+  `POST /api/dev {"trace": true|false}` writes the file (strict booleans only, session, `Origin` and CSRF as every POST).
 
 ## Transport: `GET /goals/<id>/events`
 
@@ -169,7 +227,10 @@ em.run("done", summary="...")
 ```
 
 Every call validates before anything is written, so a bad event raises and leaves no gap in `seq`. `MemoryLog` is for
-tests and replay; `FileLog` is one append-only NDJSON file per goal (`<dir>/<goal>.ndjson`), tolerant of a torn last line.
+tests and replay; `FileLog` is one append-only NDJSON file per goal (`<dir>/<goal>.ndjson`, or one fixed file such as a
+run's `events.ndjson` with `FileLog(dir, "events.ndjson")`), tolerant of a torn last line. Appends are safe across
+processes: they take an `flock` on a sibling `.lock` file, read only the last line to find the next `seq` and write with one
+`O_APPEND` write. Readers take no lock and never create the lock file.
 `oc.events.validate.validate(event)` and `errors(event)` check any event against the schema without a third-party library.
 
 ## Projection rules (what the UI may and may not do)

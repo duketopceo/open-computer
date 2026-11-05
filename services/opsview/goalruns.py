@@ -19,7 +19,9 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from oc.events import FileLog
 from oc.fsproto import adapter as fs_adapter
+from oc.obs import devtrace
 from services.orchestrator import Orchestrator
 from services.orchestrator.egress import live_egress, requested_hosts
 from services.orchestrator.runcfg import create_ledger, effort_row, ledger_for, model_of
@@ -35,7 +37,7 @@ _STATES = ("QUEUED", "LEASED", "RUNNING", "DONE", "FAILED", "AWAITING-APPROVAL")
 
 
 def runs_dir() -> Path:
-    return Path(os.environ.get("OC_GOALS_DIR", str(Path.home() / ".local/share/oc/goals")))
+    return devtrace.goals_dir()
 
 
 _live: dict[str, Orchestrator] = {}
@@ -301,6 +303,49 @@ def get_run(run_id: str) -> dict | None:
     return out
 
 
+EVENTS_PAGE = 500
+_NO_TRACE = {"error": "dev trace off for this run"}
+
+
+def _stream_dir(run_id: str) -> tuple[Path | None, dict | None]:
+    d = _run_path(run_id)
+    if d is None:
+        return None, {"error": "no such run"}
+    if not devtrace.enabled_for(run_dir=d):
+        return None, _NO_TRACE
+    return d, None
+
+
+def run_events(run_id: str, after: str | None = None) -> tuple[int, dict]:
+    """One page of a run's dev trace after cursor `after` (a seq): `(status, body)`.
+
+    `last_seq` is the last event returned, or the clamped cursor when there is none, so passing it back as
+    `after` never skips or repeats an event. `finished` is true only once the terminal `run` event has been
+    delivered, so a client that sees it can stop polling."""
+    d, err = _stream_dir(run_id)
+    if d is None:
+        return 404, err
+    try:
+        cursor = max(0, int(after)) if after not in (None, "") else 0
+    except ValueError:
+        return 400, {"error": "after must be a whole number"}
+    log = FileLog(d, devtrace.STREAM)
+    tail = log.last_seq(run_id)
+    cursor = min(cursor, tail)
+    page = log.read(run_id, cursor)[:EVENTS_PAGE]
+    last = page[-1]["seq"] if page else cursor
+    return 200, {"events": page, "last_seq": last, "finished": last >= tail and log.finished(run_id)}
+
+
+def run_events_jsonl(run_id: str) -> tuple[int, dict | bytes]:
+    """The whole stream as NDJSON bytes (complete lines only), or `(404, error)`."""
+    d, err = _stream_dir(run_id)
+    if d is None:
+        return 404, err
+    raw = (d / devtrace.STREAM).read_bytes()
+    return 200, raw[: raw.rfind(b"\n") + 1]
+
+
 def _effort_view(run_dir: Path, run_id: str, row: dict) -> dict:
     """What the run was started with, plus live spend. `paused` means the budget stopped new work (nothing cancelled)."""
     view = {"id": row.get("effort"), "model": row.get("model"), "budget": row.get("budget"), "spent": 0.0, "paused": False}
@@ -331,6 +376,8 @@ def submit(
     rid = "goal_" + uuid.uuid4().hex[:8]
     run_dir = runs_dir() / rid
     run_dir.mkdir(parents=True, exist_ok=True)
+    if devtrace.requested():  # decided once, here: the run either traces from its first event or never does
+        devtrace.enable(run_dir)
     ledger = create_ledger(run_dir, rid, budget, by or "owner") if budget is not None else None
     orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger, egress=live_egress())
     if budget is not None:
@@ -370,6 +417,7 @@ def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object]) -> None:
                 break
             if not orch.work(wfn) and not orch.wait_for_egress(rid, timeout=egress_wait_s()):
                 break
+        orch.settle_trace(rid)
     except Exception:
         pass  # the audit rows + task files on disk remain the truth
 

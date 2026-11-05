@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 from oc.fsproto import adapter as fs_adapter
-from oc.obs import bind, error_fields, get_logger
+from oc.obs import bind, devtrace, error_fields, get_logger
 from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
 from services.placement import place
@@ -107,7 +107,15 @@ class Orchestrator:
         with bind(run_id=run_id, chat_id=chat_id, service="orchestrator"):
             return self._submit(goal, engine, run_id, origin, device_id)
 
+    def _trace(self, run_id: str):
+        """The run's dev-trace writer, or None unless the run was submitted with dev trace on."""
+        return devtrace.tracer(run_id=run_id, run_dir=self.root, actor="orchestrator")
+
     def _submit(self, goal: str, engine, run_id: str, origin: str, device_id: str | None) -> str:
+        trace = self._trace(run_id)
+        if trace is not None:
+            first_line = (goal.strip().splitlines() or [""])[0]
+            trace.run("running", title=devtrace.text(first_line)[:80] or "Goal", goal_text=devtrace.text(goal, 4000))
         try:
             with collect_usage() as used, collect_reasoning() as thoughts:
                 try:
@@ -118,6 +126,9 @@ class Orchestrator:
             planned = total_usage(used)
             if planned is not None and self.ledger is not None:
                 self.ledger.record(run_id, "_plan", planned)  # planner spend counts against the run's cap
+            if trace is not None:  # the planner's output; its HTTP calls are their own llm_call rows
+                trace.emit("llm_call", id="call_plan", kind="plan", status="ok",
+                           detail=devtrace.text(json.dumps(subs)))
         except Exception as e:
             fail_row: dict = {
                 "event": "run_failed",
@@ -132,6 +143,9 @@ class Orchestrator:
                 fail_row["device_id"] = device_id
             self.audit.append(fail_row)
             log.error("run failed before dispatch", origin=origin, **error_fields(e))
+            if trace is not None:
+                trace.error("err_decompose", type(e).__name__, str(e), hint=devtrace.text(getattr(e, "hint", ""), 300) or None)
+                trace.run("failed", reason="error")
             raise
         self.dispatches[run_id] = []
         self._subtasks[run_id] = {s["id"]: s for s in subs}
@@ -147,6 +161,8 @@ class Orchestrator:
             submit_row["device_id"] = device_id
         if run_id in self._chat:
             submit_row["chat"] = self._chat[run_id]
+        if trace is not None:
+            submit_row["dev_trace"] = True
         log.info("run submitted", goal_chars=len(goal), subtasks=len(subs), origin=origin,
                  planner_cost=getattr(planned, "cost", None))
         if log.enabled_debug():
@@ -156,6 +172,9 @@ class Orchestrator:
         tmp = self.root / "plan.json.tmp"
         tmp.write_text(json.dumps(subs))
         os.replace(tmp, self.root / "plan.json")
+        if trace is not None:
+            for s in subs:
+                trace.step(s["id"], s["title"], "pending")
         self._request_egress(run_id, goal, subs)
         self.dispatch_ready(run_id)
         return run_id
@@ -318,6 +337,11 @@ class Orchestrator:
         self.fs.fail(tid)
         reason = f"dep '{blocked_by}' failed — cannot run"
         log.warning("dep failed: tombstoned dependent", subtask=sub["id"], blocked_by=blocked_by, task=tid)
+        trace = self._trace(run_id)
+        if trace is not None:
+            trace.step(sub["id"], sub["title"], "skipped", detail=devtrace.text(reason, 300))
+            trace.error(devtrace.entity("err", tid), "DependencyFailed", reason, sub["id"],
+                        hint="rerun the goal, or fix the failed dep and resume the run")
         rec = {
             "event": "dispatch",
             "run": run_id,
@@ -408,6 +432,16 @@ class Orchestrator:
     def results(self, run_id: str) -> dict:
         return collect_run(self.fs, self.dispatches[run_id], list(self._subtasks[run_id]))
 
+    def settle_trace(self, run_id: str) -> None:
+        """Write the terminal `run` event once every step has settled (no-op without dev trace)."""
+        trace = self._trace(run_id)
+        if trace is None or trace.finished():
+            return
+        res = self.results(run_id)
+        if res and all(r["state"] in ("DONE", "FAILED") for r in res.values()):
+            failed = any(r["state"] == "FAILED" for r in res.values())
+            trace.run("failed", reason="error") if failed else trace.run("done")
+
     def run(
         self,
         goal: str,
@@ -427,6 +461,7 @@ class Orchestrator:
             if not self.work(work_fn, agent):
                 break
         out = self.results(run_id)
+        self.settle_trace(run_id)
         with bind(run_id=run_id, chat_id=self._chat.get(run_id), service="orchestrator"):
             states: dict[str, int] = {}
             for r in out.values():

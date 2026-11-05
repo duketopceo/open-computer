@@ -49,7 +49,7 @@ def world(tmp_path, monkeypatch):
     ])
     write(events / "goal-1.ndjson", [{"goal": RUN, "seq": 1, "type": "run", "ts": ts0 + 8, "data": {"status": "done"}}])
     for k, v in (("OC_LOG_DIR", logd), ("OC_ROOT", root), ("OC_COST_LEDGER", tmp_path / "cost.ndjson"),
-                 ("OC_EVENTS_DIR", events)):
+                 ("OC_EVENTS_DIR", events), ("OC_GOALS_DIR", tmp_path / "goals")):
         monkeypatch.setenv(k, str(v))
     return tmp_path
 
@@ -100,6 +100,19 @@ def test_limit_and_unknown_id_and_torn_lines(world, capsys):
     assert len(lines) == 2
     rc, lines, err = run(capsys, "--run", "nope")
     assert rc == 1 and lines == [] and "no matching rows" in err
+
+
+def test_a_runs_dev_trace_stream_is_a_source(world, capsys):
+    rid = "goal_0123abcd"
+    ts0 = 1793188800.0
+    write(world / "goals" / rid / "events.ndjson", [
+        {"id": f"{rid}:1", "v": 1, "goal": rid, "seq": 1, "ts": ts0 + 9, "type": "run", "data": {"status": "running"}}])
+    write(world / "goals" / "goal_ffffffff" / "events.ndjson", [
+        {"id": "goal_ffffffff:1", "v": 1, "goal": "goal_ffffffff", "seq": 1, "ts": ts0 + 9, "type": "run", "data": {"status": "running"}}])
+    rc, lines, _ = run(capsys, "--run", rid)
+    assert rc == 0 and len(lines) == 1 and lines[0].split()[1] == "events" and "event run" in lines[0]
+    rc, lines, _ = run(capsys, "--run", rid, "--sources")
+    assert any(f"{rid}/events.ndjson" in ln for ln in lines)
 
 
 def test_sources_lists_what_it_reads_and_what_is_missing(world, capsys, monkeypatch):
