@@ -181,6 +181,19 @@ def parse_response(resp: dict) -> dict:
     }
 
 
+def _fallback_fields(base: dict, parsed: dict) -> dict:
+    """`fell_back: true` when a fallback chain was sent and a later model served (OpenRouter may append a dated
+    suffix to the served id, so a served id that starts with the first choice is still the first choice)."""
+    chain, served = base.get("models_requested"), parsed.get("model_served")
+    if not chain or not served:
+        return {}
+    first = str(chain[0])
+    fell = not (served == first or served.startswith(first + "-") or served.startswith(first + ":"))
+    if fell:
+        log.warning("openrouter fallback served the call", requested=first, served=served)
+    return {"fell_back": fell}
+
+
 def _error_class(e: BaseException) -> tuple[str, int | None]:
     if isinstance(e, urllib.error.HTTPError):
         return f"http_{e.code}", e.code
@@ -200,19 +213,6 @@ def _record(store: CallStore | None, row: dict) -> None:
         from oc.obs import log as _l
 
         _l._count_failure(None, None)
-
-
-def _fallback_fields(base: dict, parsed: dict) -> dict:
-    """`fell_back: true` when a fallback chain was sent and a later model served (OpenRouter may append a dated
-    suffix to the served id, so a served id that starts with the first choice is still the first choice)."""
-    chain, served = base.get("models_requested"), parsed.get("model_served")
-    if not chain or not served:
-        return {}
-    first = str(chain[0])
-    fell = not (served == first or served.startswith(first + "-") or served.startswith(first + ":"))
-    if fell:
-        log.warning("openrouter fallback served the call", requested=first, served=served)
-    return {"fell_back": fell}
 
 
 def post(
