@@ -396,3 +396,89 @@ def test_script_cache_skips_the_second_model_call(monkeypatch, boot_sleeps, tmp_
     assert len(calls) == 1
     assert base64.b64decode(good.sb.seen[0].split()[1]).decode() == "echo hello"
     engines._RUN_SANDBOXES.clear()
+
+
+# --- Python replies run as Python; failures report the end of stderr (KTD2) ---
+
+
+def _reply(monkeypatch, text):
+    monkeypatch.setattr(engines, "_chat", lambda *a, **k: (text, 0.0))
+
+
+def _decoded_runner(plane):
+    cmd = plane.sb.seen[0]
+    head, _, tail = cmd.partition(" | base64 -d | ")
+    return base64.b64decode(head.split()[1]).decode(), tail
+
+
+def test_python_fence_runs_under_python3_not_bash(monkeypatch):
+    _reply(monkeypatch, "```python\nimport os\nprint(os.getcwd())\n```")
+    plane = _FakePlane()
+    engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    program, runner = _decoded_runner(plane)
+    assert program == "import os\nprint(os.getcwd())"
+    assert "python3" in runner and "bash" not in runner
+    assert "PYTHONWARNINGS=ignore::SyntaxWarning,ignore::DeprecationWarning" in runner
+
+
+def test_untagged_fence_starting_with_import_is_python(monkeypatch):
+    _reply(monkeypatch, "```\nimport sys\nprint(sys.argv)\n```")
+    plane = _FakePlane()
+    engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    assert "python3" in _decoded_runner(plane)[1]
+
+
+def test_untagged_program_starting_with_print_is_python(monkeypatch):
+    _reply(monkeypatch, "```\nprint('hello')\n```")
+    plane = _FakePlane()
+    engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    assert "python3" in _decoded_runner(plane)[1]
+
+
+def test_shebang_python_without_a_tag_is_python(monkeypatch):
+    _reply(monkeypatch, "#!/usr/bin/env python3\nprint('hi')")
+    plane = _FakePlane()
+    engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    assert "python3" in _decoded_runner(plane)[1]
+
+
+def test_bash_fence_containing_a_python_heredoc_stays_shell(monkeypatch):
+    _reply(monkeypatch, "```bash\npython3 - <<'PY'\nimport os\nPY\n```")
+    plane = _FakePlane()
+    engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    runner = _decoded_runner(plane)[1]
+    assert runner.strip() == "bash"
+
+
+def test_shell_tagged_fence_holding_python_code_still_runs_python(monkeypatch):
+    # The reply that failed with "bash: line 2: import: command not found": a Python program under a shell tag.
+    for reply in ("```bash\n#!/usr/bin/env python3\nimport os\nprint(os.getcwd())\n```",
+                  "```sh\n# build the module\nimport termios\nprint(1)\n```"):
+        plane = _FakePlane()
+        _reply(monkeypatch, reply)
+        engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+        assert "python3" in _decoded_runner(plane)[1], reply
+
+
+def test_failure_detail_is_the_end_of_stderr_not_the_head(scripted):
+    warnings = "".join(f'<stdin>:{n}: SyntaxWarning: "\\ " is an invalid escape sequence\n' for n in range(30))
+    err = warnings + "Traceback (most recent call last):\n  File \"<stdin>\", line 71, in <module>\nIndexError: list index out of range\n"
+    plane = _FakePlane(rc=1, out="", err=err)
+    with pytest.raises(RuntimeError) as e:
+        engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    msg = str(e.value)
+    assert msg.endswith("IndexError: list index out of range")
+    assert "rc=1" in msg
+
+
+def test_failure_detail_falls_back_to_stdout_tail(scripted):
+    plane = _FakePlane(rc=2, out="x" * 3000 + "final cause", err="")
+    with pytest.raises(RuntimeError) as e:
+        engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane)
+    assert str(e.value).endswith("final cause")
+
+
+def test_python_reply_with_warnings_on_stderr_succeeds(monkeypatch):
+    _reply(monkeypatch, "```python\nprint('r')\n```")
+    plane = _FakePlane(rc=0, out="r\n", err='<stdin>:3: SyntaxWarning: "\\ " is an invalid escape sequence\n')
+    assert engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane) == "r\n"

@@ -53,3 +53,10 @@ const WAITING: Record<string, string> = {
 export function waitingText(kind: string, attempt: number, max: number): string {
   return `Waiting for ${WAITING[kind] ?? kind.replace(/_/g, " ")} — retrying, attempt ${attempt + 1} of ${max}`;
 }
+
+/** "Skipped — step 2 failed": names the dependency (by its position in the run) whose failure stopped this step. */
+export function skippedWhy(error: string | undefined, steps: { subtask: string }[]): string {
+  const id = /dep '([^']+)' failed/.exec(error ?? "")?.[1];
+  const at = id ? steps.findIndex((x) => x.subtask === id) : -1;
+  return at >= 0 ? `Skipped — step ${at + 1} failed` : "Skipped — an earlier step failed";
+}

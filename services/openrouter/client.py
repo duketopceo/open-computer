@@ -141,6 +141,11 @@ def parse_response(resp: dict) -> dict:
     cd = u.get("completion_tokens_details") if isinstance(u.get("completion_tokens_details"), dict) else {}
     det = u.get("cost_details") if isinstance(u.get("cost_details"), dict) else {}
     cost = _num(u.get("cost"))
+    upstream = _num(det.get("upstream_inference_cost"))
+    # BYOK: `usage.cost` is only OpenRouter's fee (often 0); the provider's real charge is upstream.
+    byok_upstream = u.get("is_byok") is True and upstream is not None and cost is not None
+    if byok_upstream:
+        cost += upstream
     choices = resp.get("choices") if isinstance(resp.get("choices"), list) else []
     first = choices[0] if choices and isinstance(choices[0], dict) else {}
     gid = resp.get("id") if isinstance(resp.get("id"), str) and resp["id"].startswith("gen-") else None
@@ -155,8 +160,9 @@ def parse_response(resp: dict) -> dict:
         "tokens_reasoning": int(_num(cd.get("reasoning_tokens")) or 0),
         "cost": cost if cost is not None else 0.0,
         "cost_source": "provider" if cost is not None else "none",
-        "upstream_cost": _num(det.get("upstream_inference_cost")),
+        "upstream_cost": upstream,
         "is_byok": u.get("is_byok") if isinstance(u.get("is_byok"), bool) else None,
+        **({"cost_byok_upstream": True} if byok_upstream else {}),
     }
 
 

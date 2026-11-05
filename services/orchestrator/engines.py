@@ -86,8 +86,34 @@ _SCRIPT_PROMPT = (
     "write files ONLY inside the current working directory (use relative paths — system paths "
     "outside the workdir are read-only); always print the absolute path (realpath) of every file you create "
     "so the next step can find it; if an expected input file is not where you thought, run "
-    "`find . -name '*pattern*'` before failing; keep stdout under 4000 characters; exit nonzero on failure.\nTask: "
+    "`find . -name '*pattern*'` before failing; keep stdout under 4000 characters; exit nonzero on failure. "
+    "If you write Python, put it inside a `python3 - <<'PY'` heredoc.\nTask: "
 )
+
+_PY_FENCE_TAGS = {"python", "python3", "py"}
+_PY_FIRST_LINE = re.compile(r"(import\s+\w|from\s+[\w.]+\s+import\s|def\s+\w+\s*\(|class\s+\w|print\()")
+_PY_WARNINGS = "PYTHONWARNINGS=ignore::SyntaxWarning,ignore::DeprecationWarning"
+_ERR_TAIL = 1200
+
+
+def _split_program(reply: str) -> tuple[str, str]:
+    """Model reply -> (program text, "python" | "shell"): a python fence tag, else a python shebang, else a first
+    code line (comments skipped) that only Python would start with. Anything else runs as shell, the contract the
+    prompt asks for. A shell tag does not win over Python content: models mislabel fences, and `import` under bash
+    is ImageMagick, never what was meant."""
+    text = reply.strip()
+    m = re.match(r"```(\w*)", text)
+    tag = m.group(1).lower() if m else ""
+    program = re.sub(r"^```\w*\n?|\n?```$", "", text).strip()
+    if tag in _PY_FENCE_TAGS:
+        return program, "python"
+    lines = [ln.strip() for ln in program.splitlines() if ln.strip()]
+    if lines and re.match(r"#!.*\bpython", lines[0]):
+        return program, "python"
+    first_code = next((ln for ln in lines if not ln.startswith("#")), "")
+    if _PY_FIRST_LINE.match(first_code):
+        return program, "python"
+    return program, "shell"
 
 
 _RUN_SANDBOX_IDLE_S = 900.0
@@ -259,7 +285,7 @@ def sandbox_work(
             reply = None
     if reply is None:
         reply, _ = _chat(OR_CHAT, model, _SCRIPT_PROMPT + task["prompt"], key=key, timeout=90)
-    script = re.sub(r"^```\w*\n?|\n?```$", "", reply.strip()).strip()
+    script, kind = _split_program(reply)
     if not script:
         raise RuntimeError("script planner emitted empty output")
     if cache is not None:
@@ -272,12 +298,14 @@ def sandbox_work(
     run_id = str(task.get("run") or "")
     hosts = set(task.get("egress_hosts") or [])
     b64 = base64.b64encode(script.encode()).decode()
+    runner = f"{_PY_WARNINGS} python3 -" if kind == "python" else "bash"
+    cmd = f"echo {b64} | base64 -d | {runner}"
     if run_id:
         res = None
         for attempt in range(2):  # transient VM/control-plane errors get exactly one retry
             ent = _acquire_run_sandbox(plane, run_id, hosts)
             try:
-                res = ent["sb"].exec(f"echo {b64} | base64 -d | bash")
+                res = ent["sb"].exec(cmd)
             except Exception as e:
                 _invalidate_run_sandbox(run_id, ent)  # VM-level failure (rc != 0 is a script failure, not this)
                 boot = isinstance(e, SandboxUnavailable)
@@ -294,13 +322,13 @@ def sandbox_work(
     else:
         sb = plane.make_sandbox(egress_allowlist=sorted(hosts), timeout=300)
         try:
-            res = sb.exec(f"echo {b64} | base64 -d | bash")
+            res = sb.exec(cmd)
         except SandboxUnavailable as e:
             raise SandboxWorkerUnavailable(str(e)) from e
         finally:
             sb.close()
     if res.returncode != 0:
-        detail = (res.stderr or res.stdout or "").strip()[:400]
+        detail = (res.stderr or res.stdout or "").strip()[-_ERR_TAIL:]  # the end carries the cause
         raise RuntimeError(f"sandbox exec rc={res.returncode}: {detail}")
     return res.stdout[:64_000]
 
@@ -404,10 +432,14 @@ def work_fn(
         if target.startswith("local"):
             return local_work(task)
         with collect_usage() as used:
-            if target == "cloud-sandbox":
-                out = sandbox_work(task, model=or_model, api_key=key)
-            else:  # cloud-OpenRouter and anything unrecognized-but-cloud
-                out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
+            try:
+                if target == "cloud-sandbox":
+                    out = sandbox_work(task, model=or_model, api_key=key)
+                else:  # cloud-OpenRouter and anything unrecognized-but-cloud
+                    out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
+            except Exception as e:
+                e.usage = total_usage(used)  # paid calls made before the failure still count (the runner records it)
+                raise
         usage = total_usage(used)
         # Provider-reported spend goes to the run's cost ledger (the cap enforces on real dollars).
         return WorkResult(out, usage) if usage is not None else out

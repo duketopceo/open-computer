@@ -297,6 +297,23 @@ def test_drive_loop_waits_out_the_backoff_instead_of_stranding_the_run(boot_run)
     assert len(sleeps) == 1 and 0 < sleeps[0] <= runner.BOOT_RETRY_DELAY_S
 
 
+def test_twice_invalid_plan_renders_failed_with_the_validator_message(console, monkeypatch, tmp_path):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    bad = json.dumps([{"id": "t1", "title": "A", "prompt": "a", "latency": "whenever"}])
+    calls = []
+
+    def planner(prompt):
+        calls.append(prompt)
+        return bad
+
+    rid = goalruns.submit("Bad enums", planner, lambda task: "x", by="test")
+    got = goalruns.get_run(rid)
+    assert len(calls) == 2
+    assert got["error_kind"] == "DecomposeError"
+    assert "t1" in got["error"] and "whenever" in got["error"]
+    assert goalruns.list_runs()[0]["states"]["FAILED"] == 1
+
+
 def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
     import time
     from services.orchestrator.engines import LocalModelUnavailable
@@ -389,7 +406,7 @@ def test_thinking_rows_attach_to_steps_and_plan(console, monkeypatch, tmp_path):
     a, b = got["subtasks"]
     assert got["plan_thinking"] == "plan reasons"
     assert a["thinking"] == "step reasons" and a["started_ts"] == 12.0 and a["finished_ts"] == 14.0
-    assert "started_ts" not in b and b["finished_ts"] == 15.0 and "thinking" not in b  # tombstone never ran
+    assert b["started_ts"] == b["finished_ts"] == 15.0 and b["skipped"] is True and "thinking" not in b  # never ran
 
 
 def test_reclaimed_step_uses_latest_start_and_joins_thinking(console, monkeypatch, tmp_path):
@@ -408,3 +425,21 @@ def test_reclaimed_step_uses_latest_start_and_joins_thinking(console, monkeypatc
     (s,) = goalruns.get_run(rid)["subtasks"]
     assert s["started_ts"] == 80.0
     assert s["thinking"] == "attempt one\n\nattempt two"
+
+
+def test_dependent_failed_step_is_skipped_with_no_duration(console, monkeypatch, tmp_path):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_5e1b0000"
+    _write_run(tmp_path, rid, [
+        {"event": "run_submit", "run": rid, "goal": "g", "subtasks": 2, "ts": 10.0},
+        {"event": "dispatch", "run": rid, "task": "t1", "subtask": "a", "ts": 11.0},
+        {"event": "worker_start", "run": rid, "task": "t1", "subtask": "a", "ts": 12.0},
+        {"event": "worker_fail", "run": rid, "task": "t1", "subtask": "a", "kind": "RuntimeError",
+         "error": "sandbox exec rc=1", "ts": 14.0},
+        {"event": "dispatch", "run": rid, "task": "t2", "subtask": "b", "ts": 40.0},
+        {"event": "worker_fail", "run": rid, "task": "t2", "subtask": "b", "kind": "DependencyFailed",
+         "error": "dep 'a' failed — cannot run", "ts": 40.5},
+    ])
+    a, b = goalruns.get_run(rid)["subtasks"]
+    assert "skipped" not in a and a["started_ts"] == 12.0
+    assert b["skipped"] is True and b["started_ts"] == b["finished_ts"] == 40.5

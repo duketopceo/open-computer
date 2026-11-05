@@ -129,7 +129,10 @@ def _run_task(fs, audit, agent, work_fn, ttl, ledger, tid: str, task: dict, thin
         from .engines import SandboxWorkerUnavailable  # local: avoids import cycle
 
         log.error("task failed", agent=agent, ms=round((time.monotonic() - t0) * 1000, 1), **error_fields(e))
-        if token:
+        spent = getattr(e, "usage", None)
+        if spent is not None and ledger is not None:
+            ledger.record(task["run"], task["subtask"], spent, token=token)  # money spent before the failure
+        elif token:
             ledger.release(task["run"], token)
         if isinstance(e, SandboxWorkerUnavailable) and _attempts(fs, tid) < REQUEUE_LIMIT:
             # Temporary backend outage is not a step failure: release the
