@@ -319,6 +319,7 @@ GET_ROUTES = [
     (r"/assets/(?P<file>[^/]+)", "g_asset"),
     (r"/api/session", "g_api_session"),
     (r"/api/effort", "g_api_effort"),
+    (r"/api/voice", "g_api_voice"),
     (r"/api/models", "g_api_models"),
     (r"/api/runs", "g_api_runs"),
     (r"/api/threads", "g_api_threads"),
@@ -655,6 +656,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def g_api_effort(self, qs):
         self._json(200, effort.catalog(daily_cap()))
+
+    def g_api_voice(self, qs):
+        """Whether dictation can run. No audio is uploaded; the mic UI checks this first."""
+        ok = bool(os.environ.get("GROQ_API_KEY", "").strip())
+        self._json(200, {"available": ok, **({} if ok else {"reason": "voice not configured"})})
 
     def g_api_models(self, qs):
         self._json(200, model_catalog.payload())

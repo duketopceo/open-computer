@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, getEffort, transcribe, type GoalOptions } from "@/lib/api";
+import { ApiError, errorMessage, getEffort, transcribe, voiceStatus, type GoalOptions } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useFetch } from "@/lib/useFetch";
 import { EffortPicker, toOptions, type EffortChoice } from "./EffortPicker";
@@ -90,11 +90,32 @@ export function Composer({
     }
     if (rec !== "idle") return;
     setErr("");
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setErr("Voice input isn't supported in this browser.");
+    setRec("starting");
+    // Probe the server before asking for the mic so a missing Groq key never
+    // prompts for permission only to fail after a recording.
+    try {
+      const status = await voiceStatus();
+      if (cancelledRef.current) return;
+      if (!status.available) {
+        setErr(status.reason === "voice not configured" ? "Dictation isn’t available on this server." : status.reason || "Dictation isn’t available.");
+        setRec("idle");
+        return;
+      }
+    } catch (e) {
+      if (cancelledRef.current) return;
+      if (e instanceof ApiError && e.status === 503) {
+        setErr("Dictation isn’t available on this server.");
+      } else {
+        setErr(errorMessage(e, "Couldn’t check dictation."));
+      }
+      setRec("idle");
       return;
     }
-    setRec("starting");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setErr("Voice input isn't supported in this browser.");
+      setRec("idle");
+      return;
+    }
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });

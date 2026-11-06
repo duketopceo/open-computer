@@ -119,6 +119,8 @@ test("@flow chat: double Send opens one chat, a failed send keeps the text, retr
 test("@errors unreachable API shows the connection banner", async () => {
   const { ctx, page } = await open({ routes: { "**/api/threads*": (r) => r.abort("connectionrefused") } });
   await page.getByRole("status").filter({ hasText: "Connection lost" }).waitFor();
+  await page.getByRole("textbox", { name: "Message" }).fill("anything");
+  assert.ok(await page.getByRole("button", { name: "Send", exact: true }).isDisabled(), "offline disables send; never queues");
   await ctx.close();
 });
 
@@ -127,6 +129,52 @@ test("@errors expired session shows sign-in and disables the composer", async ()
   await page.getByRole("status").filter({ hasText: "Your session expired" }).waitFor();
   await page.getByRole("textbox", { name: "Message" }).fill("anything");
   assert.ok(await page.getByRole("button", { name: "Send", exact: true }).isDisabled());
+  await ctx.close();
+});
+
+test("@chat Operator stays collapsed by default and has no fake Attachments/Projects/Teammates chrome", async () => {
+  const { ctx, page } = await open();
+  assert.equal(await page.getByRole("navigation", { name: "Operator" }).count(), 0);
+  await page.getByText("Operator", { exact: true }).click();
+  await page.getByRole("navigation", { name: "Operator" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: /Attachments|Projects|Teammates|Customize|Search/ }).count(), 0);
+  assert.equal(await page.getByRole("radio", { name: /Search|Computer/ }).count(), 0);
+  await ctx.close();
+});
+
+test("@chat dictation unavailable before recording when voice is not configured", async () => {
+  const { ctx, page } = await open({
+    routes: { "**/api/voice": (r) => r.fulfill(json(200, { available: false, reason: "voice not configured" })) },
+  });
+  await page.getByRole("button", { name: "Dictate" }).click();
+  await page.getByRole("alert").filter({ hasText: /Dictation isn’t available|Dictation isn't available/ }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Dictate" }).getAttribute("aria-label"), "Dictate");
+  await ctx.close();
+});
+
+test("@chat awaiting-approval run shows Open Approvals from the inline run card", async () => {
+  const run = {
+    ...RUN,
+    subtasks: [
+      {
+        ...RUN.subtasks[0],
+        state: "AWAITING-APPROVAL",
+        approval: "ap_e2e01",
+        finished_ts: null,
+      },
+    ],
+  };
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/threads": (r) => r.fulfill(json(200, { threads: [{ id: "th_e2e00001", title: "say hi", ts: 1, archived: false, working: true, finished: false }] })),
+      "**/api/threads/th_e2e00001": (r) =>
+        r.fulfill(json(200, THREAD({ working: true, runs: { g_e2e01: run }, messages: THREAD().messages.slice(0, 3) }))),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+    },
+    path: "/#th_e2e00001",
+  });
+  await page.getByRole("status").filter({ hasText: "Needs approval" }).waitFor();
+  assert.ok(await page.getByRole("link", { name: "Open Approvals" }).isVisible());
   await ctx.close();
 });
 
@@ -247,7 +295,7 @@ test("@nav every SPA nav entry deep-links with one current item; unported entrie
   const { ctx, page } = await openAt("/devices");
   const nav = page.getByRole("navigation", { name: "Console" });
   const entries = await nav.getByRole("link").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
-  assert.deepEqual(entries.map(([t]) => t), ["Computer", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace"]);
+  assert.deepEqual(entries.map(([t]) => t), ["Chat", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace"]);
   for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit"]) {
     const { ctx: c2, page: p2 } = await openAt(href);
     if (href !== "/") {
