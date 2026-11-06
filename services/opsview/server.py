@@ -660,7 +660,10 @@ class Handler(BaseHTTPRequestHandler):
     def g_api_voice(self, qs):
         """Whether dictation can run. No audio is uploaded; the mic UI checks this first."""
         ok = bool(os.environ.get("GROQ_API_KEY", "").strip())
-        self._json(200, {"available": ok, **({} if ok else {"reason": "voice not configured"})})
+        body = {"available": ok}
+        if not ok:
+            body["reason"] = "voice not configured"
+        self._json(200, body)
 
     def g_api_models(self, qs):
         self._json(200, model_catalog.payload())

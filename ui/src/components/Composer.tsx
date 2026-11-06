@@ -5,7 +5,7 @@ import { useFetch } from "@/lib/useFetch";
 import { EffortPicker, toOptions, type EffortChoice } from "./EffortPicker";
 import { Button } from "./primitives";
 
-type RecState = "idle" | "starting" | "recording" | "transcribing";
+type RecState = "idle" | "probing" | "starting" | "recording" | "transcribing";
 
 // Whisper's 25 MB upload cap is ~20+ min of opus; stop well before it.
 const MAX_RECORDING_MS = 120_000;
@@ -90,7 +90,7 @@ export function Composer({
     }
     if (rec !== "idle") return;
     setErr("");
-    setRec("starting");
+    setRec("probing");
     // Probe the server before asking for the mic so a missing Groq key never
     // prompts for permission only to fail after a recording.
     try {
@@ -116,6 +116,7 @@ export function Composer({
       setRec("idle");
       return;
     }
+    setRec("starting");
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -195,7 +196,7 @@ export function Composer({
     <button
       type="button"
       onClick={toggleVoice}
-      disabled={disabled || busy || rec === "starting" || rec === "transcribing"}
+      disabled={disabled || busy || rec === "probing" || rec === "starting" || rec === "transcribing"}
       aria-label={rec === "recording" ? "Stop recording" : "Dictate"}
       title="Dictate (Groq LPU)"
       className={cn(
@@ -203,7 +204,7 @@ export function Composer({
         rec === "recording" ? "bg-urgent text-on-accent" : "text-muted hover:bg-surface-3",
       )}
     >
-      {rec === "transcribing" || rec === "starting" ? (
+      {rec === "transcribing" || rec === "probing" || rec === "starting" ? (
         <span className="h-3 w-3 animate-pulse rounded-full border border-line-strong" />
       ) : (
         <MicIcon />
@@ -254,11 +255,13 @@ export function Composer({
       </div>
       {rec !== "idle" && (
         <p className="mt-2 text-center text-xs text-muted" role="status">
-          {rec === "starting"
-            ? "Waiting for the microphone…"
-            : rec === "recording"
-              ? "Listening — click the mic to finish (2 min max)."
-              : "Transcribing…"}
+          {rec === "probing"
+            ? "Checking dictation…"
+            : rec === "starting"
+              ? "Waiting for the microphone…"
+              : rec === "recording"
+                ? "Listening — click the mic to finish (2 min max)."
+                : "Transcribing…"}
         </p>
       )}
       {err && (
