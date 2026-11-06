@@ -308,7 +308,7 @@ export default function App() {
             </div>
           </div>
         ) : selected && isThread(selected) && thread ? (
-          {/* link must be "ok": auth and offline both disable compose */}
+          // link must be "ok": auth and offline both disable compose
           <ThreadView thread={thread} onSend={onSend} busy={sending} disabled={link !== "ok"} error={error} />
         ) : selected && !isThread(selected) && run ? (
           <div className="mx-auto w-full max-w-3xl px-6 py-10">
