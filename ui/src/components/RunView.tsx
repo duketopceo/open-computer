@@ -9,6 +9,7 @@ import { Chip, Dot, StateWord } from "./primitives";
 export function RunView({ run, compact = false }: { run: RunDetail; compact?: boolean }) {
   const states = count(run);
   const active = run.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED");
+  const awaiting = run.subtasks.find((s) => s.state === "AWAITING-APPROVAL");
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!active) return;
@@ -55,6 +56,20 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
           <p className="mt-3 rounded-lg border border-attention bg-attention-soft px-3 py-2 text-sm text-attention" role="status">
             <span className="mono uppercase tracking-wider">Paused · budget</span> This run reached its{" "}
             {cost(run.effort.budget)} budget. Nothing was cancelled; the remaining steps stay queued.
+          </p>
+        )}
+        {awaiting && (
+          <p className="mt-3 rounded-lg border border-attention bg-attention-soft px-3 py-2 text-sm text-attention" role="status">
+            <span className="mono uppercase tracking-wider">Needs approval</span> A step is waiting on you.{" "}
+            <a
+              href="/approvals"
+              className="font-medium underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              Open Approvals
+            </a>
+            {awaiting.approval ? (
+              <span className="mono text-muted"> · {awaiting.approval}</span>
+            ) : null}
           </p>
         )}
         {run.plan_thinking && <Thinking text={run.plan_thinking} className="mt-3" />}

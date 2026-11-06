@@ -308,7 +308,8 @@ export default function App() {
             </div>
           </div>
         ) : selected && isThread(selected) && thread ? (
-          <ThreadView thread={thread} onSend={onSend} busy={sending} disabled={link === "auth"} error={error} />
+          // link must be "ok": auth and offline both disable compose
+          <ThreadView thread={thread} onSend={onSend} busy={sending} disabled={link !== "ok"} error={error} />
         ) : selected && !isThread(selected) && run ? (
           <div className="mx-auto w-full max-w-3xl px-6 py-10">
             <RunView run={run} />
@@ -326,7 +327,14 @@ export default function App() {
               </p>
             )}
             <h1 className="mb-6 text-center font-display text-3xl text-ink">What are we working on?</h1>
-            <Composer onSend={onSend} starter={draft} busy={sending} disabled={link === "auth"} showEffort autoFocus />
+            <Composer
+              onSend={onSend}
+              starter={draft}
+              busy={sending}
+              disabled={link !== "ok"}
+              showEffort
+              autoFocus
+            />
           </div>
         )}
       </main>

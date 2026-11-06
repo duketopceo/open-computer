@@ -293,6 +293,15 @@ export async function submitGoal(goal: string, confirm: boolean, opts: GoalOptio
   return postJson("/goals", { goal, ...opts, confirm: confirm ? "1" : undefined });
 }
 
+export interface VoiceStatus {
+  available: boolean;
+  reason?: string;
+}
+
+export async function voiceStatus(): Promise<VoiceStatus> {
+  return json<VoiceStatus>("/api/voice");
+}
+
 export async function transcribe(audio: Blob): Promise<string> {
   const token = await csrf();
   const form = new FormData();
