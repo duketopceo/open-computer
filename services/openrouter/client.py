@@ -8,6 +8,12 @@ Every chat call carries the model's catalog fallback chain as OpenRouter's nativ
 (services/router/model_catalog.py `call_params`); the row records the chain asked (`models_requested`), the model
 that served (`model_served`, from the response) and `fell_back` when that is not the first choice.
 
+Transport: chat completions go through OpenRouter's official Python SDK (`openrouter`, pinned in pyproject); the
+SDK owns auth, attribution headers, timeouts and HTTP error typing. A response-capture hook keeps the raw body,
+because the SDK's typed result drops `provider` and `cost_details` (both recorded here) and rejects bodies that
+lack optional-in-practice fields. The SDK has no `/alpha/decisions` endpoint, so that one call (`post` without
+`sdk=True`) stays on urllib.
+
 Env: OC_OPENROUTER_BASE_URL (default https://openrouter.ai/api/v1), plus the attribution variables in
 `services.openrouter.attribution`.
 """
@@ -23,6 +29,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+import httpx
+from openrouter import OpenRouter
+from openrouter import errors as or_errors
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -197,6 +207,16 @@ def _fallback_fields(base: dict, parsed: dict) -> dict:
 
 
 def _error_class(e: BaseException) -> tuple[str, int | None]:
+    if isinstance(e, or_errors.OpenRouterError):
+        if e.status_code < 400:  # a 2xx the SDK could not parse (e.g. an HTML page): not an HTTP failure
+            return "bad_response", None
+        return f"http_{e.status_code}", e.status_code
+    if isinstance(e, (or_errors.ResponseValidationError, json.JSONDecodeError)):
+        return "bad_response", None
+    if isinstance(e, httpx.TimeoutException):
+        return "timeout", None
+    if isinstance(e, (httpx.TransportError, httpx.InvalidURL)):
+        return "network", None
     if isinstance(e, urllib.error.HTTPError):
         return f"http_{e.code}", e.code
     if isinstance(e, (socket.timeout, TimeoutError)) or isinstance(getattr(e, "reason", None), socket.timeout):
@@ -254,6 +274,42 @@ def _trace_call(ctx: dict, row: dict, resp: dict | None = None) -> None:
         log.warning("dev trace call dropped", **error_fields(e))
 
 
+def _urllib_send(url: str, data: bytes, key: str, timeout: float) -> dict:
+    req = urllib.request.Request(url, data=data, headers=_headers(key), method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read()
+    resp = json.loads(raw)
+    if not isinstance(resp, dict):
+        raise ValueError("response is not a JSON object")
+    return resp
+
+
+def _sdk_send(body: dict, key: str, timeout: float) -> dict:
+    """POST /chat/completions through the official SDK; returns the raw response body as a dict."""
+    kw = dict(body)
+    messages = kw.pop("messages")
+    captured: list[bytes] = []
+
+    def _grab(r: httpx.Response) -> None:
+        r.read()
+        captured.append(r.content)
+
+    hdrs = {k: v for k, v in _headers("").items() if k.lower() not in ("content-type", "authorization")}
+    with httpx.Client(event_hooks={"response": [_grab]}) as hc:
+        client = OpenRouter(api_key=key or None, server_url=base_url(), client=hc)
+        try:
+            client.chat.send(messages=messages, timeout_ms=int(timeout * 1000), http_headers=hdrs,
+                             retries=None, **kw)  # no SDK retries: the SDK default is ~1h of 5XX backoff
+        except or_errors.ResponseValidationError:
+            # A 2xx whose shape the typed model rejects: the raw body is still the truth we record.
+            if not captured:
+                raise
+    raw = json.loads(captured[-1]) if captured else None
+    if not isinstance(raw, dict):
+        raise ValueError("response is not a JSON object")
+    return raw
+
+
 def post(
     url: str,
     payload: dict,
@@ -264,8 +320,10 @@ def post(
     model: str | None = None,
     body_fields: bool = True,
     store: CallStore | None = None,
+    sdk: bool = False,
 ) -> tuple[dict, dict]:
-    """POST JSON to OpenRouter with attribution; returns (response, call_row). Always records a row."""
+    """POST JSON to OpenRouter with attribution; returns (response, call_row). Always records a row.
+    `sdk=True` sends through the official SDK (chat completions); otherwise urllib (`/alpha/decisions`)."""
     ctx = context.current()
     body = {**(attribution.request_fields(kind, model) if body_fields else {}), **payload}
     data = json.dumps(body).encode()
@@ -280,16 +338,11 @@ def post(
         ).hexdigest()[:16],
         **{k: ctx[k] for k in ("run_id", "subtask", "task", "chat_id", "trace_id", "goal", "service") if k in ctx},
     }
-    req = urllib.request.Request(url, data=data, headers=_headers(key), method="POST")
     log.debug("openrouter request", call_id=call_id, kind=kind, model=base["model_requested"], bytes=len(data))
     t0 = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read()
+        resp = _sdk_send(body, key, timeout) if sdk else _urllib_send(url, data, key, timeout)
         latency = int((time.monotonic() - t0) * 1000)
-        resp = json.loads(raw)
-        if not isinstance(resp, dict):
-            raise ValueError("response is not a JSON object")
     except Exception as e:
         latency = int((time.monotonic() - t0) * 1000)
         klass, status = _error_class(e)
@@ -299,6 +352,8 @@ def post(
                 detail = e.read().decode("utf-8", "replace")[:300]
             except Exception:
                 pass
+        elif isinstance(e, or_errors.OpenRouterError):
+            detail = str(getattr(e, "body", "") or "")[:300]
         msg = f"{url} -> HTTP {status}: {detail or getattr(e, 'reason', e)}" if status else f"{url} -> {type(e).__name__}: {e}"
         msg = redact_str(msg)  # provider error bodies can echo credentials; never let them reach logs or audit
         row = {**base, "status": "error", "error_class": klass, "http_status": status, "latency_ms": latency,
@@ -362,7 +417,7 @@ def chat(
     if isinstance(body.get("models"), list) and len(body["models"]) > 1:
         body.pop("model")  # the `models` array alone states the order
     resp, row = post(f"{base_url()}/chat/completions", body,
-                     key=key, timeout=timeout, kind=kind, model=model, store=store)
+                     key=key, timeout=timeout, kind=kind, model=model, store=store, sdk=True)
     try:
         text = resp["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:

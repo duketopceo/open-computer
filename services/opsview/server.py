@@ -36,7 +36,7 @@ from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError, default_approvals_path
 from services.agents.approvals import ApprovalError
 from services.opsview.agentgrants import GrantError, grant_run_hosts
-from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns, threads
+from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns, or_connect, threads
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -349,6 +349,8 @@ GET_ROUTES = [
     (r"/approvals", "g_spa_route"),
     (r"/router", "g_spa_route"),
     (r"/audit", "g_spa_route"),
+    (r"/settings", "g_spa_route"),
+    (r"/api/openrouter", "g_api_openrouter"),
     (r"/api/devices", "g_api_devices"),
     (r"/api/sandboxes", "g_api_sandboxes"),
     (r"/api/router", "g_api_router"),
@@ -374,6 +376,9 @@ POST_ROUTES = [
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
     (r"/api/router/test", "p_api_router_test"),
+    (r"/api/openrouter/connect", "p_api_or_connect"),
+    (r"/api/openrouter/complete", "p_api_or_complete"),
+    (r"/api/openrouter/disconnect", "p_api_or_disconnect"),
     (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_api_approve"),
     (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_api_sendback"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
@@ -652,6 +657,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def g_api_session(self, qs):
         self._json(200, {"csrf": self._csrf(), "identity": self._identity() or "", "cap": daily_cap()})
+
+    def g_api_openrouter(self, qs):
+        self._json(200, or_connect.status())
+
+    def _or_call(self, fn, *args):
+        try:
+            self._json(200, fn(*args))
+        except or_connect.ConnectError as e:
+            self._json(400, {"error": str(e)})
+
+    def p_api_or_connect(self, who, body):
+        self._or_call(or_connect.start, str(body.get("origin", "")), self.headers.get("Host", ""))
+
+    def p_api_or_complete(self, who, body):
+        self._or_call(or_connect.complete, body.get("code"), body.get("state"))
+
+    def p_api_or_disconnect(self, who, body):
+        self._or_call(or_connect.disconnect)
 
     def g_api_effort(self, qs):
         self._json(200, effort.catalog(daily_cap()))
