@@ -365,3 +365,22 @@ def test_reconcile_does_not_flag_a_byok_row(fake):
              "tokens_completion": 5}
     assert compare(call, stats)["status"] == "reconciled"
     assert compare({**call, "cost": 0.0005}, stats)["status"] == "mismatch"  # the fee alone would have disagreed
+
+
+# ---- official SDK transport ------------------------------------------------------------------------------
+
+
+def test_sdk_transport_does_not_retry_a_5xx(fake):
+    fake.chat_replies.append(503)
+    with pytest.raises(OpenRouterError) as ei:
+        chat("m", "p", key="k")
+    assert ei.value.status == 503 and len([r for r in fake.requests if r["path"].endswith("/chat/completions")]) == 1
+
+
+def test_sdk_transport_keeps_fields_the_typed_result_drops(fake, tmp_path):
+    reply = chat_reply("hi", cost=0.002, model="vendor/served")
+    reply.pop("system_fingerprint", None)  # the SDK's typed result rejects this body; the call must still count
+    reply["provider"] = "Acme"
+    fake.chat_replies.append(reply)
+    r = chat("m", "p", key="k", store=CallStore(tmp_path / "calls.ndjson"))
+    assert (r.text, r.provider, r.model_served, r.cost_source) == ("hi", "Acme", "vendor/served", "provider")

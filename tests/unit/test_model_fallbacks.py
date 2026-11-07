@@ -120,9 +120,9 @@ def test_first_choice_serving_is_not_a_fallback_even_with_a_dated_suffix(fake):
 
 
 def test_explicit_params_win_and_unknown_models_pass_through(fake):
-    chat(PARTICLE, "p", key="k", models=[PARTICLE], reasoning={"exclude": True})
+    chat(PARTICLE, "p", key="k", models=[PARTICLE], reasoning={"max_tokens": 64})
     body = fake.requests[-1]["body"]
-    assert body["models"] == [PARTICLE] and body["model"] == PARTICLE and body["reasoning"] == {"exclude": True}
+    assert body["models"] == [PARTICLE] and body["model"] == PARTICLE and body["reasoning"] == {"max_tokens": 64}
     chat("vendor/model", "p", key="k")
     body = fake.requests[-1]["body"]
     assert body["model"] == "vendor/model" and "models" not in body and "reasoning" not in body

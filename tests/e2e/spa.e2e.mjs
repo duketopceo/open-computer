@@ -247,8 +247,8 @@ test("@nav every SPA nav entry deep-links with one current item; unported entrie
   const { ctx, page } = await openAt("/devices");
   const nav = page.getByRole("navigation", { name: "Console" });
   const entries = await nav.getByRole("link").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
-  assert.deepEqual(entries.map(([t]) => t), ["Computer", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace"]);
-  for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit"]) {
+  assert.deepEqual(entries.map(([t]) => t), ["Computer", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace", "Settings"]);
+  for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit", "/settings"]) {
     const { ctx: c2, page: p2 } = await openAt(href);
     if (href !== "/") {
       assert.equal(await p2.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').count(), 1, href);
@@ -1669,5 +1669,39 @@ test("@flow run page: a step skipped because a dependency failed says so and sho
   assert.equal(await row.getByText(/\$/).count(), 0, "no cost");
   assert.equal(await row.getByText("FAILED", { exact: true }).count(), 0);
   assert.equal(await page.locator("li", { hasText: "step a" }).getByText("FAILED", { exact: true }).count(), 1);
+  await ctx.close();
+});
+
+test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges once, Disconnect resets", async () => {
+  let connected = false;
+  const posts = [];
+  const { ctx, page } = await open({
+    path: "/settings",
+    routes: {
+      "**/api/openrouter**": async (r) => {
+        const u = new URL(r.request().url());
+        if (r.request().method() === "GET") return r.fulfill(json(200, { connected, source: connected ? "omaseal" : null }));
+        posts.push([u.pathname, r.request().postData()]);
+        if (u.pathname.endsWith("/connect")) return r.fulfill(json(200, { url: base + "/__or_signin?x=1" }));
+        connected = u.pathname.endsWith("/complete");
+        return r.fulfill(json(200, { connected, source: connected ? "omaseal" : null }));
+      },
+      "**/__or_signin*": (r) => r.fulfill({ status: 200, contentType: "text/html", body: "<title>OpenRouter sign-in (mock)</title>" }),
+    },
+  });
+  await page.getByText("Not connected.").waitFor();
+  await page.getByRole("button", { name: "Connect OpenRouter" }).click();
+  await page.waitForURL("**/__or_signin*");
+  assert.deepEqual(JSON.parse(posts[0][1]), { origin: base });
+  // OpenRouter sends the user back with ?code=...; the console exchanges it once and cleans the URL.
+  await page.goto(base + "/settings?code=abc123&oc_state=st1", { waitUntil: "networkidle" });
+  await page.getByText("Connected. Your key is stored in the host keyring").waitFor();
+  const done = posts.filter(([p]) => p.endsWith("/complete"));
+  assert.equal(done.length, 1);
+  assert.deepEqual(JSON.parse(done[0][1]), { code: "abc123", state: "st1" });
+  assert.equal(new URL(page.url()).search, "");
+  await page.getByRole("button", { name: "Disconnect" }).click();
+  await page.getByText("Not connected.").waitFor();
+  assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0], "no key or code in browser storage");
   await ctx.close();
 });

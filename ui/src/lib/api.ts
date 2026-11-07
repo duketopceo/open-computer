@@ -566,3 +566,15 @@ export const autoAction = (id: string, verb: "pause" | "trigger" | "delete") =>
   postJson(`/automations/${encodeURIComponent(id)}/${verb}`, {});
 export const newAutomation = (goal: string, every_minutes: number) =>
   postJson("/automations", { goal, every_minutes });
+
+// ---- OpenRouter connection (OAuth PKCE; the server holds the verifier and stores the key in omaseal)
+export interface OpenRouterStatus {
+  connected: boolean;
+  source: "omaseal" | "env" | null;
+}
+export const getOpenRouter = () => json<OpenRouterStatus>("/api/openrouter");
+export const startOpenRouterConnect = () =>
+  postJson<{ url: string }>("/api/openrouter/connect", { origin: window.location.origin });
+export const completeOpenRouterConnect = (code: string, state: string) =>
+  postJson<OpenRouterStatus>("/api/openrouter/complete", { code, state });
+export const disconnectOpenRouter = () => postJson<OpenRouterStatus>("/api/openrouter/disconnect", {});
