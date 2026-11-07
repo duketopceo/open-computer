@@ -73,3 +73,39 @@ jobs:
     steps:
       - name: Record approved commit
         run: echo "Approved commit $GITHUB_SHA for production"
+
+  # Runs on the owner's self-hosted runner (omarchy-max, user systemd service).
+  # Push-to-main only (job-level `if`, never pull_request) and it checks out no
+  # code: the only thing executed is the host's own ~/bin/oc-deploy, with the
+  # exact merged SHA. Gated by `production` approval via `needs`.
+  deploy:
+    name: deploy (omarchy-max)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [production-approval]
+    runs-on: [self-hosted, omarchy-max, oc-deploy]
+    timeout-minutes: 20
+    permissions: {}
+    concurrency:
+      group: oc-deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy exact merged SHA
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha" >&2; exit 1; }
+          src="$HOME/Documents/github/personal/open-computer"
+          git -C "$src" fetch -q origin main
+          head="$(git -C "$src" rev-parse origin/main)"
+          if [ "$head" != "$DEPLOY_SHA" ] && git -C "$src" merge-base --is-ancestor "$DEPLOY_SHA" "$head"; then
+            echo "main advanced to $head; skipping stale $DEPLOY_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Deploying \`$DEPLOY_SHA\` to omarchy-max" >> "$GITHUB_STEP_SUMMARY"
+          if "$HOME/bin/oc-deploy" "$DEPLOY_SHA"; then
+            echo "Result: live (health check passed)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Result: FAILED health check; oc-deploy rolled back" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
