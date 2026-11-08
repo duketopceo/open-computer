@@ -36,7 +36,7 @@ from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError, default_approvals_path
 from services.agents.approvals import ApprovalError
 from services.opsview.agentgrants import GrantError, grant_run_hosts
-from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns, or_connect, threads
+from services.opsview import artifacts, agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns, or_connect, threads
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -324,6 +324,9 @@ GET_ROUTES = [
     (r"/api/threads", "g_api_threads"),
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})", "g_api_thread"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/artifacts", "g_api_run_artifacts"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/artifacts\.zip", "g_api_run_artifacts_zip"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/artifacts/(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,79})", "g_api_run_artifact"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/events", "g_api_run_events"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/events\.jsonl", "g_api_run_events_jsonl"),
     (r"/api/dev", "g_api_dev"),
@@ -793,6 +796,31 @@ class Handler(BaseHTTPRequestHandler):
         if r is None:
             return self._json(404, {"error": "no such run"})
         self._json(200, r)
+
+    def g_api_run_artifacts(self, qs, id):
+        r = goalruns.get_run(id)
+        if r is None:
+            return self._json(404, {"error": "no such run"})
+        self._json(200, {"artifacts": artifacts.listing(r)})
+
+    def g_api_run_artifact(self, qs, id, name):
+        r = goalruns.get_run(id)
+        a = artifacts.get(r, name) if r else None
+        if a is None:
+            return self._json(404, {"error": "no such file"})
+        hdr = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
+        if qs.get("download", [""])[0] == "1":
+            hdr["Content-Disposition"] = f'attachment; filename="{a["name"]}"'
+        self._send(200, a["text"].encode(), a["mime"] + "; charset=utf-8", hdr)
+
+    def g_api_run_artifacts_zip(self, qs, id):
+        r = goalruns.get_run(id)
+        if r is None:
+            return self._json(404, {"error": "no such run"})
+        self._send(200, artifacts.export_zip(r), "application/zip", {
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{id}-files.zip"',
+        })
 
     def g_api_run_events(self, qs, id):
         code, body = goalruns.run_events(id, qs.get("after", [None])[0])

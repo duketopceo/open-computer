@@ -1705,3 +1705,32 @@ test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges onc
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0], "no key or code in browser storage");
   await ctx.close();
 });
+
+// Run files: listed under the run, previewed as text, downloadable one by one or as a zip.
+for (const scheme of ["light", "dark"]) {
+  test(`@files a run lists its files with preview and download (${scheme})`, async () => {
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+        "**/api/runs/g_e2e01/artifacts": (r) => r.fulfill(json(200, { artifacts: [
+          { name: "report.md", step: "s1", size: 2048, mime: "text/markdown" },
+          { name: "step-s1.md", step: "s1", size: 2, mime: "text/markdown" },
+          { name: "big.csv", step: "s1", refused: "too large (1200 KB; the limit is 1000 KB)" },
+        ] })),
+        "**/api/runs/g_e2e01/artifacts/report.md": (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Report\nall good" }),
+      },
+      path: "/#g_e2e01",
+    });
+    await page.getByTestId("artifacts").waitFor();
+    assert.equal(await page.getByRole("link", { name: "Download report.md" }).getAttribute("href"), "/api/runs/g_e2e01/artifacts/report.md?download=1");
+    assert.equal(await page.getByRole("link", { name: "Download all (.zip)" }).getAttribute("href"), "/api/runs/g_e2e01/artifacts.zip");
+    await page.getByText("not saved: too large").waitFor();
+    await page.getByText("report.md").first().click();
+    await page.getByLabel("Preview of report.md").getByText("all good").waitFor();
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/files-${scheme}.png` : "/tmp/files.png" });
+    await ctx.close();
+  });
+}

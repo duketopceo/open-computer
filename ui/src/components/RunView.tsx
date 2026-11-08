@@ -3,6 +3,7 @@ import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { hasStream } from "@/lib/runEvents";
+import { Artifacts } from "./Artifacts";
 import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
@@ -65,6 +66,8 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
           <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
         ))}
       </ol>
+
+      {!compact && <Artifacts runId={run.run} refresh={states.DONE} />}
 
       {run.error && (
         <div className="mt-4 rounded-2xl border border-urgent bg-urgent-soft p-4 text-sm text-urgent">
