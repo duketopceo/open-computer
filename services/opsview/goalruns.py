@@ -536,9 +536,13 @@ def submit(
     effort: str | None = None,
     model: str | None = None,
     budget: float | None = None,
+    live_view: bool = False,
     hold: Callable[[list], bool] | None = None,
 ) -> str:
     """Create a run dir, submit, and drive it on a daemon thread.
+
+    `live_view` gives the run its event stream even with dev trace off, so the run page can show the work as it
+    happens (the stream is redacted and stays on this machine; raw model detail stays behind dev mode in the UI).
 
     With `hold`, a plan it accepts is saved and left `planned` for the owner to approve, edit or cancel
     (`decide_plan`): nothing dispatches and no driver starts until then.
@@ -548,7 +552,7 @@ def submit(
     rid = "goal_" + uuid.uuid4().hex[:8]
     run_dir = runs_dir() / rid
     run_dir.mkdir(parents=True, exist_ok=True)
-    if devtrace.requested():  # decided once, here: the run either traces from its first event or never does
+    if live_view or devtrace.requested():  # decided once, here: the run either traces from its first event or never does
         devtrace.enable(run_dir)
     ledger = create_ledger(run_dir, rid, budget, by or "owner") if budget is not None else None
     orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger, egress=live_egress())

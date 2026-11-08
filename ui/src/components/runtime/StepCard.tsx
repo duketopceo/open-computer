@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { cost, dur } from "@/lib/format";
 import { plainError, waitingLabel, words } from "@/lib/friendly";
@@ -20,6 +20,8 @@ export interface StepCardProps {
   now: number | null;
   /** slide in (a row that arrived after the first load) */
   slide: boolean;
+  /** dev mode: show raw model detail (plan JSON, reasoning) inside the step */
+  raw?: boolean;
 }
 
 export const ErrorBlock = ({ e }: { e: ErrorData }) => (
@@ -35,9 +37,18 @@ export const ErrorBlock = ({ e }: { e: ErrorData }) => (
   </div>
 );
 
-function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, slide }: StepCardProps) {
+function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, slide, raw = false }: StepCardProps) {
   const display = stepDisplay(step);
   const live = display === "running" || display === "waiting";
+  // A step that was live and is now done settles once (CSS; off with effects off).
+  const prevDisplay = useRef(display);
+  const [settle, setSettle] = useState(false);
+  useEffect(() => {
+    if (prevDisplay.current !== display) {
+      if (display === "done" && (prevDisplay.current === "running" || prevDisplay.current === "waiting")) setSettle(true);
+      prevDisplay.current = display;
+    }
+  }, [display]);
   const end = step.endedTs ?? (live ? now ?? undefined : undefined);
   const elapsed = display === "skipped" || step.startedTs == null ? "" : dur(step.startedTs, end);
   const waiting = step.waiting_on;
@@ -47,7 +58,7 @@ function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, 
   const fb = route?.fallbacks?.[0];
   const panel = `step-${step.id}-detail`;
   return (
-    <div className={cn("relative overflow-hidden rounded-xl border bg-surface-1", display === "failed" ? "border-urgent" : "border-line", slide && "animate-strip-in")}>
+    <div className={cn("relative overflow-hidden rounded-xl border bg-surface-1", display === "failed" ? "border-urgent" : "border-line", slide && "animate-strip-in", display === "running" && "fx-step-running", settle && "fx-step-settle")}>
       <button
         type="button"
         aria-expanded={open}
@@ -115,7 +126,7 @@ function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, 
           ))}
           {waiting?.detail && <p className="text-xs text-muted">{waiting.detail}</p>}
           {calls.map((c) => (
-            <CallRow key={c.id} call={c} />
+            <CallRow key={c.id} call={c} raw={raw} />
           ))}
           {execs.map((x) => (
             <ExecRow key={x.id} exec={x} />
@@ -139,6 +150,7 @@ export const StepCard = memo(
     a.open === b.open &&
     a.now === b.now &&
     a.slide === b.slide &&
+    a.raw === b.raw &&
     a.onToggle === b.onToggle &&
     same(a.calls, b.calls) &&
     same(a.execs, b.execs) &&
