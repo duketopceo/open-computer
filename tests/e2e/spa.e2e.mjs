@@ -295,8 +295,8 @@ test("@nav every SPA nav entry deep-links with one current item; unported entrie
   const { ctx, page } = await openAt("/devices");
   const nav = page.getByRole("navigation", { name: "Console" });
   const entries = await nav.getByRole("link").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
-  assert.deepEqual(entries.map(([t]) => t), ["Chat", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace"]);
-  for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit"]) {
+  assert.deepEqual(entries.map(([t]) => t), ["Chat", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace", "Settings"]);
+  for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit", "/settings"]) {
     const { ctx: c2, page: p2 } = await openAt(href);
     if (href !== "/") {
       assert.equal(await p2.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').count(), 1, href);
@@ -1775,5 +1775,93 @@ test("@rail phone width starts as a rail, opens as an overlay, closes on choosin
   await rail(page).getByRole("button", { name: "New chat" }).click();
   assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "choosing puts the overlay away");
   await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-mobile.png") });
+  await ctx.close();
+});
+
+test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges once, Disconnect resets", async () => {
+  let connected = false;
+  const posts = [];
+  const { ctx, page } = await open({
+    path: "/settings",
+    routes: {
+      "**/api/openrouter**": async (r) => {
+        const u = new URL(r.request().url());
+        if (r.request().method() === "GET") return r.fulfill(json(200, { connected, source: connected ? "omaseal" : null }));
+        posts.push([u.pathname, r.request().postData()]);
+        if (u.pathname.endsWith("/connect")) return r.fulfill(json(200, { url: base + "/__or_signin?x=1" }));
+        connected = u.pathname.endsWith("/complete");
+        return r.fulfill(json(200, { connected, source: connected ? "omaseal" : null }));
+      },
+      "**/__or_signin*": (r) => r.fulfill({ status: 200, contentType: "text/html", body: "<title>OpenRouter sign-in (mock)</title>" }),
+    },
+  });
+  await page.getByText("Not connected.").waitFor();
+  await page.getByRole("button", { name: "Connect OpenRouter" }).click();
+  await page.waitForURL("**/__or_signin*");
+  assert.deepEqual(JSON.parse(posts[0][1]), { origin: base });
+  // OpenRouter sends the user back with ?code=...; the console exchanges it once and cleans the URL.
+  await page.goto(base + "/settings?code=abc123&oc_state=st1", { waitUntil: "networkidle" });
+  await page.getByText("Connected. Your key is stored in the host keyring").waitFor();
+  const done = posts.filter(([p]) => p.endsWith("/complete"));
+  assert.equal(done.length, 1);
+  assert.deepEqual(JSON.parse(done[0][1]), { code: "abc123", state: "st1" });
+  assert.equal(new URL(page.url()).search, "");
+  await page.getByRole("button", { name: "Disconnect" }).click();
+  await page.getByText("Not connected.").waitFor();
+  assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0], "no key or code in browser storage");
+  await ctx.close();
+});
+
+// Plan review: a held plan is shown before anything runs; edits and the decision go to the plan endpoint.
+const PLANNED = {
+  run: "g_e2e01", goal: "compare two things", origin: "console", device_id: null, declared: 2, worker_failures: [], subtasks: [],
+  plan: { state: "planned", estimate: 0.08, budget: 0.1, model: "deepseek/deepseek-v4-pro", steps: [
+    { id: "a", title: "gather facts", prompt: "collect the facts", deps: [], tier: "mid", est_cost: 0.04 },
+    { id: "b", title: "write summary", prompt: "summarise them", deps: ["a"], tier: "cheap", est_cost: 0.04 },
+  ] },
+};
+
+for (const scheme of ["light", "dark"]) {
+  test(`@plan a held plan shows before spend, edits post to the plan endpoint (${scheme})`, async () => {
+    const posts = [];
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "compare two things", origin: "console", device_id: null, subtasks: 2, states: {}, ts: 1, plan_state: "planned" }] })),
+        "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, PLANNED)),
+        "**/api/runs/g_e2e01/plan": (r) => { posts.push(r.request().postData()); return r.fulfill(json(200, { state: "approved" })); },
+      },
+      path: "/#g_e2e01",
+    });
+    await page.getByTestId("plan-card").waitFor();
+    await page.getByText("Plan · nothing has run yet").waitFor();
+    await page.getByText(/estimate \$0\.08/).waitFor();
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/plan-review-${scheme}.png` : "/tmp/plan-review.png" });
+    await page.getByLabel("Step 2 title").fill("write the final summary");
+    await page.getByRole("button", { name: "Remove step" }).first().click();
+    await page.getByRole("button", { name: "Approve with edits" }).click();
+    await page.getByText("Decision saved").waitFor();
+    assert.equal(posts.length, 1);
+    const sent = JSON.parse(posts[0]);
+    assert.equal(sent.action, "approve");
+    assert.deepEqual(sent.edits, [{ id: "a", remove: true }, { id: "b", title: "write the final summary", prompt: "summarise them", tier: "cheap" }]);
+    await ctx.close();
+  });
+}
+
+test("@plan cancel posts a cancel with no edits", async () => {
+  const posts = [];
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, PLANNED)),
+      "**/api/runs/g_e2e01/plan": (r) => { posts.push(JSON.parse(r.request().postData())); return r.fulfill(json(200, { state: "cancelled" })); },
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByRole("button", { name: "Cancel run" }).click();
+  await page.getByText("Decision saved").waitFor();
+  assert.deepEqual(posts, [{ action: "cancel", edits: [] }]);
   await ctx.close();
 });

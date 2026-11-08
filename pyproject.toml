@@ -7,6 +7,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
   "fido2>=2.0",
+  "openrouter==1.3.138",
 ]
 
 [project.optional-dependencies]
