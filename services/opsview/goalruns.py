@@ -96,6 +96,29 @@ def _held_steps(run_dir: Path, rows: list[dict]) -> list[dict]:
     ]
 
 
+def plan_state(rows: list[dict]) -> str | None:
+    """None for a run that never held its plan; else planned | approved | cancelled (the latest audit row wins)."""
+    state = None
+    for r in rows:
+        ev = r.get("event")
+        if ev == "plan_pending":
+            state = "planned"
+        elif ev == "plan_approved":
+            state = "approved"
+        elif ev == "plan_cancelled":
+            state = "cancelled"
+    return state
+
+
+def _declared(rows: list[dict]) -> int:
+    """Steps the run will run: the submit count, or the count the owner approved after editing."""
+    n = 0
+    for r in rows:
+        if r.get("event") == "run_submit" or (r.get("event") == "plan_approved" and "subtasks" in r):
+            n = r.get("subtasks", n)
+    return n
+
+
 RUN_ID_RE = re.compile(r"goal_[0-9a-f]{8}")
 ARCHIVED_MARK = "archived"
 
@@ -152,7 +175,7 @@ def clear_finished(keep: frozenset[str] | set[str] = frozenset()) -> int:
     """Delete every finished run that nothing is driving, except ids in `keep`. Returns how many were removed."""
     n = 0
     for r in list_runs(include_archived=True, limit=None):
-        if r["run"] not in keep and _finished(r["states"]) and delete_run_quiet(r["run"]):
+        if r["run"] not in keep and r["plan_state"] != "planned" and _finished(r["states"]) and delete_run_quiet(r["run"]):
             n += 1
     return n
 
@@ -188,7 +211,10 @@ def list_runs(*, include_archived: bool = False, limit: int | None = 30) -> list
             if r.get("event") == "dispatch":
                 st = _task_state(d, r["task"])
                 states[st] = states.get(st, 0) + 1
-        undispatched = (submit or {}).get("subtasks", 0) - sum(states.values())
+        pstate = plan_state(rows)
+        undispatched = _declared(rows) - sum(states.values())
+        if pstate in ("planned", "cancelled"):
+            undispatched = 0  # nothing runs until the owner approves the plan
         held = len(_held_steps(d, rows))
         states["AWAITING-APPROVAL"] += min(held, max(0, undispatched))
         states["QUEUED"] += max(0, undispatched - held)
@@ -199,11 +225,12 @@ def list_runs(*, include_archived: bool = False, limit: int | None = 30) -> list
                 "goal": anchor.get("goal", ""),
                 "origin": anchor.get("origin", "cloud"),
                 "device_id": anchor.get("device_id"),
-                "subtasks": (submit or {}).get("subtasks", 0),
+                "subtasks": _declared(rows),
+                "plan_state": pstate,
                 "states": states,
                 "ts": anchor.get("ts", d.stat().st_mtime),
                 "archived": archived,
-                "finished": _finished(states) and not _driving(d.name),
+                "finished": pstate != "planned" and _finished(states) and not _driving(d.name),
             }
         )
         if limit is not None and len(out) >= limit:
@@ -314,11 +341,14 @@ def get_run(run_id: str) -> dict | None:
         "origin": (submit or failed or {}).get("origin", "cloud"),
         "device_id": (submit or failed or {}).get("device_id"),
         "subtasks": subs,
-        "declared": (submit or {}).get("subtasks", 0),
+        "declared": _declared(rows),
         "worker_failures": fails,
         "started": (submit or {}).get("ts"),
         "ended": rows[-1].get("ts") if rows else None,
     }
+    pstate = plan_state(rows)
+    if pstate is not None:
+        out["plan"] = _plan_view(d, rows, pstate)
     if PLAN in thoughts:
         out["plan_thinking"] = join_thoughts(thoughts[PLAN])
     chosen = effort_row(rows)
@@ -329,6 +359,116 @@ def get_run(run_id: str) -> dict | None:
         out["error_kind"] = failed.get("kind", "")
         out["hint"] = failed.get("hint", "")
     return out
+
+
+def _read_plan(d: Path) -> list[dict]:
+    try:
+        return json.loads((d / "plan.json").read_text())
+    except (OSError, ValueError):
+        return []
+
+
+def _plan_view(d: Path, rows: list[dict], state: str) -> dict:
+    """The held plan as the review card shows it: steps (editable fields), estimate and the run's cap."""
+    steps = _read_plan(d)
+    chosen = effort_row(rows)
+    return {
+        "state": state,
+        "estimate": round(sum(float(x.get("est_cost") or 0.0) for x in steps), 6),
+        "budget": (chosen or {}).get("budget"),
+        "model": (chosen or {}).get("model"),
+        "steps": [
+            {k: x.get(k) for k in ("id", "title", "prompt", "deps", "tier", "est_cost", "needs_egress", "egress_hosts")}
+            for x in steps
+        ],
+    }
+
+
+_EDITABLE_TIERS = ("cheap", "mid", "frontier")
+
+
+class PlanError(ValueError):
+    """A plan edit that cannot be applied; nothing was changed."""
+
+
+def apply_edits(steps: list[dict], edits: object) -> list[dict]:
+    """The plan after owner edits: `[{id, title?, prompt?, tier?, remove?}]`. Refuses unknown steps, empty
+    text, an unknown tier, removing every step, and any result that is not a DAG."""
+    from services.orchestrator.decompose import DecomposeError, _topo
+
+    if edits in (None, []):
+        return steps
+    if not isinstance(edits, list) or not all(isinstance(e, dict) for e in edits):
+        raise PlanError("edits must be a list of objects")
+    by_id = {x["id"]: dict(x) for x in steps}
+    removed: set[str] = set()
+    for e in edits:
+        sid = e.get("id")
+        if sid not in by_id:
+            raise PlanError(f"unknown step {sid!r}")
+        if e.get("remove"):
+            removed.add(sid)
+            continue
+        for k, cap in (("title", 200), ("prompt", 4000)):
+            if k in e:
+                v = e[k]
+                if not isinstance(v, str) or not v.strip() or len(v) > cap:
+                    raise PlanError(f"step {sid}: {k} must be 1-{cap} characters")
+                by_id[sid][k] = v.strip()
+        if "tier" in e:
+            if e["tier"] not in _EDITABLE_TIERS:
+                raise PlanError(f"step {sid}: tier must be one of {', '.join(_EDITABLE_TIERS)}")
+            by_id[sid]["tier"] = e["tier"]
+        if "deps" in e:
+            deps = e["deps"]
+            if not isinstance(deps, list) or not all(isinstance(x, str) for x in deps):
+                raise PlanError(f"step {sid}: deps must be a list of step ids")
+            by_id[sid]["deps"] = deps
+    out = [x for x in (by_id[s["id"]] for s in steps) if x["id"] not in removed]
+    if not out:
+        raise PlanError("a plan needs at least one step")
+    for x in out:
+        x["deps"] = [d for d in x["deps"] if d not in removed]
+    try:
+        _topo(out)
+    except DecomposeError as e:
+        raise PlanError(str(e)) from e
+    return out
+
+
+def decide_plan(run_id: str, action: str, edits: object, wfn_for: Callable[[str], Callable[[dict], object]]) -> tuple[int, dict]:
+    """Approve (optionally with edits) or cancel a held plan: `(status, body)`. Approving starts the run."""
+    d = _run_path(run_id)
+    if d is None:
+        return 404, {"error": "no such run"}
+    with _lock:  # one decision wins; a second click on the same card is refused, never run twice
+        rows = _audit_rows(d)
+        if plan_state(rows) != "planned":
+            return 409, {"error": "this plan is not waiting for review"}
+        orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d), egress=live_egress())
+        if action == "cancel":
+            orch.audit.append({"event": "plan_cancelled", "run": run_id})
+            return 200, {"state": "cancelled"}
+        if action != "approve":
+            return 400, {"error": "action must be approve or cancel"}
+        try:
+            steps = apply_edits(_read_plan(d), edits)
+        except PlanError as e:
+            return 422, {"error": str(e)}
+        tmp = d / "plan.json.tmp"
+        tmp.write_text(json.dumps(steps))
+        os.replace(tmp, d / "plan.json")
+        if not orch.recover(run_id):
+            return 409, {"error": "the plan could not be loaded"}
+        orch.audit.append({"event": "plan_approved", "run": run_id, "subtasks": len(steps), "edited": bool(edits)})
+        _live[run_id] = orch
+    orch.release(run_id)
+    wf = durable.start_durable(d, run_id) if durable else None
+    if wf:
+        orch.audit.append({"event": "durable_start", "run": run_id, "workflow": wf})
+    else:
+        _start_drive(orch, run_id, wfn_for(model_of(_audit_rows(d)) or ""))
+    return 200, {"state": "approved"}
 
 
 EVENTS_PAGE = 500
@@ -396,8 +536,12 @@ def submit(
     effort: str | None = None,
     model: str | None = None,
     budget: float | None = None,
+    hold: Callable[[list], bool] | None = None,
 ) -> str:
     """Create a run dir, submit, and drive it on a daemon thread.
+
+    With `hold`, a plan it accepts is saved and left `planned` for the owner to approve, edit or cancel
+    (`decide_plan`): nothing dispatches and no driver starts until then.
 
     With `budget`, the run gets a cost ledger whose hard cap pauses it (nothing cancelled) and an
     `effort_set` audit row recording the effort, model and budget it was started with."""
@@ -413,12 +557,14 @@ def submit(
     with _lock:
         _live[rid] = orch
     try:
-        orch.submit(goal, engine, run_id=rid, origin=origin, device_id=device_id)
+        orch.submit(goal, engine, run_id=rid, origin=origin, device_id=device_id, hold=hold)
     except Exception:
         # run_failed audit row is already on disk — the run renders FAILED
         # with the real error; no driver, nothing to resume.
         return rid
     orch.audit.append({"event": "goal_by", "run": rid, "by": by})
+    if plan_state(_audit_rows(run_dir)) == "planned":
+        return rid
 
     wf = durable.start_durable(run_dir, rid) if durable else None
     if wf:
@@ -477,6 +623,8 @@ def resume(wfn, wfn_for_model: Callable[[str], Callable[[dict], object]] | None 
         if not d.is_dir():
             continue
         try:
+            if plan_state(_audit_rows(d)) in ("planned", "cancelled"):
+                continue  # a held plan waits for the owner; a restart must not start it
             orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d), egress=live_egress())
             if not orch.recover(d.name):
                 continue
