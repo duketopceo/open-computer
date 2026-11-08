@@ -22,4 +22,5 @@ export const NAV: NavItem[] = [
   { label: "Router", href: "/router", spa: true },
   { label: "Audit", href: "/audit", spa: true },
   { label: "Workspace", href: "/workspace", spa: false },
+  { label: "Settings", href: "/settings", spa: true },
 ];

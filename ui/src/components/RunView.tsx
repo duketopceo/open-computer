@@ -3,10 +3,12 @@ import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { hasStream } from "@/lib/runEvents";
+import { PlanCard } from "./PlanCard";
 import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
-export function RunView({ run, compact = false }: { run: RunDetail; compact?: boolean }) {
+export function RunView({ run, compact = false, onChanged }: { run: RunDetail; compact?: boolean; onChanged?: () => void }) {
+  const [decided, setDecided] = useState(false);
   const states = count(run);
   const active = run.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED");
   const awaiting = run.subtasks.find((s) => s.state === "AWAITING-APPROVAL");
@@ -26,12 +28,13 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
       dead = true;
     };
   }, [run.run]);
+  const planned = run.plan?.state === "planned";
   return (
     <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
       <header className={compact ? "mb-3" : "mb-6"}>
         {!compact && <h1 className="font-display text-2xl leading-snug text-ink">{run.goal}</h1>}
         <div className={compact ? "flex flex-wrap items-center gap-2 text-xs" : "mt-3 flex flex-wrap items-center gap-2 text-xs"}>
-          <StateWord state={aggregate(states, active)} />
+          <StateWord state={planned ? "AWAITING-APPROVAL" : aggregate(states, active)} />
           <span className="mono text-muted">
             {states.DONE}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
             {run.started != null ? dur(run.started, run.ended ?? Date.now() / 1000) : ""}
@@ -75,11 +78,33 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
         {run.plan_thinking && <Thinking text={run.plan_thinking} className="mt-3" />}
       </header>
 
-      <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
-        {run.subtasks.map((s) => (
-          <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
-        ))}
-      </ol>
+      {planned && !decided && (
+        <PlanCard
+          runId={run.run}
+          plan={run.plan!}
+          onDecided={() => {
+            setDecided(true);
+            onChanged?.();
+          }}
+        />
+      )}
+      {planned && decided && (
+        <p className="mb-4 text-sm text-muted" role="status">
+          Decision saved. Updating the run…
+        </p>
+      )}
+      {run.plan?.state === "cancelled" && (
+        <p className="mb-4 rounded-lg border border-line bg-surface-1 px-3 py-2 text-sm text-ink-muted" role="status">
+          You cancelled this plan. Nothing ran and nothing was spent beyond planning.
+        </p>
+      )}
+      {run.subtasks.length > 0 && (
+        <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
+          {run.subtasks.map((s) => (
+            <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
+          ))}
+        </ol>
+      )}
 
       {run.error && (
         <div className="mt-4 rounded-2xl border border-urgent bg-urgent-soft p-4 text-sm text-urgent">
