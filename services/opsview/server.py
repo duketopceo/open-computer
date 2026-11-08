@@ -261,6 +261,11 @@ def _route(q: str) -> dict:
     }
 
 
+def live_view_on() -> bool:
+    """Console runs record the redacted live stream by default; `OC_LIVE_VIEW=0` turns it off."""
+    return os.environ.get("OC_LIVE_VIEW", "1").strip().lower() not in ("0", "off", "false", "no")
+
+
 PLAN_AUTO_USD = 0.05
 PLAN_AUTO_STEPS = 4
 
@@ -298,6 +303,7 @@ def _submit_goal(goal: str, who: str, plan: effort.Plan, review: bool | None = N
         effort=plan.effort,
         model=plan.model,
         budget=plan.budget,
+        live_view=live_view_on(),
         hold=plan_hold(review),
     )
 

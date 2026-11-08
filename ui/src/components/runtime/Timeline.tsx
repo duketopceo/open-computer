@@ -16,6 +16,7 @@ import {
 } from "@/lib/runEvents";
 import { Chip, Dot, StateWord } from "../primitives";
 import { CallRow } from "./CallRow";
+import { ExecRow } from "./ExecRow";
 import { ErrorBlock, StepCard } from "./StepCard";
 
 /** Rows at or below this render as a plain list (axe and keyboard match the run view). */
@@ -95,7 +96,26 @@ const STATUS_STATE = {
   cancelled: "FAILED",
 } as const;
 
-export function Timeline({ runId, goal }: { runId: string; goal?: string }) {
+/** The sandbox as the owner sees it: the latest command that ran (or is running) and its output tail. */
+function Activity({ tl }: { tl: TimelineState }) {
+  const execs = tl.steps.flatMap((s) => (tl.execsByStep[s.id] ?? []).map((id) => ({ step: s, x: tl.execs[id] })));
+  const last = execs[execs.length - 1];
+  if (!last) return null;
+  const { step, x } = last;
+  const running = x.status === "running";
+  return (
+    <section aria-label="Sandbox activity" className="mb-4 rounded-xl border border-line bg-surface-1" data-testid="activity">
+      <p className="flex items-center gap-2 border-b border-line px-4 py-2 text-xs">
+        {running && <span aria-hidden className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />}
+        <span className="mono uppercase tracking-wider text-muted">{running ? "Sandbox · running" : "Sandbox · last command"}</span>
+        <span className="min-w-0 flex-1 truncate text-ink-muted">{step.title}</span>
+      </p>
+      <ExecRow exec={x} />
+    </section>
+  );
+}
+
+export function Timeline({ runId, goal, embedded = false }: { runId: string; goal?: string; embedded?: boolean }) {
   const { tl, phase, problem, baseline } = useRunEvents(runId);
   const devOn = useDevTrace().active;
   const live = phase === "live" || phase === "loading";
@@ -166,13 +186,14 @@ export function Timeline({ runId, goal }: { runId: string; goal?: string }) {
       onToggle={toggle}
       now={isLive ? now : null}
       slide={slide}
+      raw={devOn}
     />
   );
 
   return (
     <div>
-      <header className="mb-5">
-        <h1 className="font-display text-2xl leading-snug text-ink">{goal || run?.title || "Run timeline"}</h1>
+      <header className={embedded ? "mb-4" : "mb-5"}>
+        {!embedded && <h1 className="font-display text-2xl leading-snug text-ink">{goal || run?.title || "Run timeline"}</h1>}
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           {run && live && <Dot state="RUNNING" />}
           <StateWord state={state} />
@@ -181,14 +202,16 @@ export function Timeline({ runId, goal }: { runId: string; goal?: string }) {
             {run ? dur(run.startTs, end) : ""} · {cost(spent)}
             {cap != null && ` of ${cost(cap)}`}
           </span>
-          <Chip>{devOn ? "Dev trace on" : "Dev trace off"}</Chip>
-          <a
-            href={exportUrl(runId)}
-            download
-            className="inline-flex h-6 items-center rounded-full border border-line px-2.5 font-medium text-ink hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            Export JSONL
-          </a>
+          {!embedded && <Chip>{devOn ? "Dev trace on" : "Dev trace off"}</Chip>}
+          {!embedded && (
+            <a
+              href={exportUrl(runId)}
+              download
+              className="inline-flex h-6 items-center rounded-full border border-line px-2.5 font-medium text-ink hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              Export JSONL
+            </a>
+          )}
         </div>
         {problem && (
           <p className="mt-3 text-xs text-attention" role="status">
@@ -207,7 +230,7 @@ export function Timeline({ runId, goal }: { runId: string; goal?: string }) {
             </summary>
             <div className="mt-2 space-y-2">
               {runLevelCalls.map((c) => (
-                <CallRow key={c.id} call={c} />
+                <CallRow key={c.id} call={c} raw={devOn} />
               ))}
             </div>
           </details>
@@ -217,6 +240,8 @@ export function Timeline({ runId, goal }: { runId: string; goal?: string }) {
       <p className="sr-only" role="status" aria-live="polite">
         {said}
       </p>
+
+      {embedded && <Activity tl={tl} />}
 
       {rows.length === 0 ? (
         <p className="text-sm text-muted">No steps yet. The first one appears here as soon as the plan is made.</p>
