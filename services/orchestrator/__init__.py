@@ -47,6 +47,11 @@ __all__ = [
 ]
 
 
+def plan_estimate(subs: list[dict]) -> float:
+    """The planner's own cost guess summed over steps: an estimate for the review card, never a guarantee."""
+    return round(sum(float(s.get("est_cost") or 0.0) for s in subs), 6)
+
+
 class Orchestrator:
     """goal -> dispatched subtask DAG -> collected results."""
 
@@ -96,8 +101,12 @@ class Orchestrator:
         origin: str = "cloud",
         device_id: str | None = None,
         chat_id: str | None = None,
+        hold=None,
     ) -> str:
         """Decompose + validate + dispatch every ready subtask. Returns run id.
+
+        `hold(subs) -> bool`: when it returns True the plan is saved and shown for review (`plan_pending` audit
+        row) and nothing is dispatched until `release` is called.
 
         `chat_id` groups runs into one conversation for cost attribution (defaults to the run id)."""
         run_id = run_id or uuid.uuid4().hex[:12]
@@ -105,13 +114,13 @@ class Orchestrator:
         if chat_id:
             self._chat[run_id] = str(chat_id)
         with bind(run_id=run_id, chat_id=chat_id, service="orchestrator"):
-            return self._submit(goal, engine, run_id, origin, device_id)
+            return self._submit(goal, engine, run_id, origin, device_id, hold)
 
     def _trace(self, run_id: str):
         """The run's dev-trace writer, or None unless the run was submitted with dev trace on."""
         return devtrace.tracer(run_id=run_id, run_dir=self.root, actor="orchestrator")
 
-    def _submit(self, goal: str, engine, run_id: str, origin: str, device_id: str | None) -> str:
+    def _submit(self, goal: str, engine, run_id: str, origin: str, device_id: str | None, hold=None) -> str:
         trace = self._trace(run_id)
         if trace is not None:
             first_line = (goal.strip().splitlines() or [""])[0]
@@ -175,9 +184,19 @@ class Orchestrator:
         if trace is not None:
             for s in subs:
                 trace.step(s["id"], s["title"], "pending")
+        if hold is not None and hold(subs):
+            self.audit.append({"event": "plan_pending", "run": run_id, "estimate": plan_estimate(subs)})
+            return run_id
         self._request_egress(run_id, goal, subs)
         self.dispatch_ready(run_id)
         return run_id
+
+    def release(self, run_id: str) -> list[str]:
+        """Start a run whose plan was held for review (after `recover`): raise its egress approval, dispatch."""
+        subs = list(self._subtasks[run_id].values())
+        goal = next((r.get("goal", "") for r in self.audit.rows() if r.get("event") == "run_submit"), "")
+        self._request_egress(run_id, goal, subs)
+        return self.dispatch_ready(run_id)
 
     def _request_egress(self, run_id: str, goal: str, subs: list[dict]) -> None:
         """Raise ONE approval for every unapproved host the plan needs. Never fails the run: an unreachable

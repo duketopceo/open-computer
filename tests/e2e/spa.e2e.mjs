@@ -1735,3 +1735,57 @@ for (const scheme of ["light", "dark"]) {
     await ctx.close();
   });
 }
+
+// Plan review: a held plan is shown before anything runs; edits and the decision go to the plan endpoint.
+const PLANNED = {
+  run: "g_e2e01", goal: "compare two things", origin: "console", device_id: null, declared: 2, worker_failures: [], subtasks: [],
+  plan: { state: "planned", estimate: 0.08, budget: 0.1, model: "deepseek/deepseek-v4-pro", steps: [
+    { id: "a", title: "gather facts", prompt: "collect the facts", deps: [], tier: "mid", est_cost: 0.04 },
+    { id: "b", title: "write summary", prompt: "summarise them", deps: ["a"], tier: "cheap", est_cost: 0.04 },
+  ] },
+};
+
+for (const scheme of ["light", "dark"]) {
+  test(`@plan a held plan shows before spend, edits post to the plan endpoint (${scheme})`, async () => {
+    const posts = [];
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "compare two things", origin: "console", device_id: null, subtasks: 2, states: {}, ts: 1, plan_state: "planned" }] })),
+        "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, PLANNED)),
+        "**/api/runs/g_e2e01/plan": (r) => { posts.push(r.request().postData()); return r.fulfill(json(200, { state: "approved" })); },
+      },
+      path: "/#g_e2e01",
+    });
+    await page.getByTestId("plan-card").waitFor();
+    await page.getByText("Plan · nothing has run yet").waitFor();
+    await page.getByText(/estimate \$0\.08/).waitFor();
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/plan-review-${scheme}.png` : "/tmp/plan-review.png" });
+    await page.getByLabel("Step 2 title").fill("write the final summary");
+    await page.getByRole("button", { name: "Remove step" }).first().click();
+    await page.getByRole("button", { name: "Approve with edits" }).click();
+    await page.getByText("Decision saved").waitFor();
+    assert.equal(posts.length, 1);
+    const sent = JSON.parse(posts[0]);
+    assert.equal(sent.action, "approve");
+    assert.deepEqual(sent.edits, [{ id: "a", remove: true }, { id: "b", title: "write the final summary", prompt: "summarise them", tier: "cheap" }]);
+    await ctx.close();
+  });
+}
+
+test("@plan cancel posts a cancel with no edits", async () => {
+  const posts = [];
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, PLANNED)),
+      "**/api/runs/g_e2e01/plan": (r) => { posts.push(JSON.parse(r.request().postData())); return r.fulfill(json(200, { state: "cancelled" })); },
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByRole("button", { name: "Cancel run" }).click();
+  await page.getByText("Decision saved").waitFor();
+  assert.deepEqual(posts, [{ action: "cancel", edits: [] }]);
+  await ctx.close();
+});

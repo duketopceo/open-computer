@@ -94,6 +94,26 @@ export interface RunEffort {
   paused: boolean;
 }
 
+export interface PlanStep {
+  id: string;
+  title: string;
+  prompt: string;
+  deps?: string[];
+  tier?: string | null;
+  est_cost?: number | null;
+  needs_egress?: boolean;
+  egress_hosts?: string[];
+}
+
+// A plan the run holds for the owner: nothing runs while `state` is "planned".
+export interface RunPlan {
+  state: "planned" | "approved" | "cancelled";
+  estimate: number;
+  budget: number | null;
+  model: string | null;
+  steps: PlanStep[];
+}
+
 export interface RunDetail {
   run: string;
   goal: string;
@@ -105,6 +125,7 @@ export interface RunDetail {
   started?: number;
   ended?: number;
   plan_thinking?: string;
+  plan?: RunPlan;
   effort?: RunEffort;
   error?: string;
   error_kind?: string;
@@ -236,6 +257,9 @@ export const clearFinishedRuns = () => postJson<{ cleared: number }>("/api/runs/
 export async function getRun(id: string): Promise<RunDetail> {
   return json<RunDetail>(`/api/runs/${encodeURIComponent(id)}`);
 }
+
+export const decidePlan = (id: string, action: "approve" | "cancel", edits: Record<string, unknown>[] = []) =>
+  postJson<{ state: string }>(`/api/runs/${encodeURIComponent(id)}/plan`, { action, edits });
 
 // JSON POST with a fresh CSRF token (the convention for every mutation).
 export async function postJson<T>(url: string, body: unknown): Promise<T> {
