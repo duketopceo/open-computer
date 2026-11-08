@@ -20,6 +20,8 @@ export interface StepCardProps {
   now: number | null;
   /** slide in (a row that arrived after the first load) */
   slide: boolean;
+  /** dev mode: show raw model detail (plan JSON, reasoning) inside the step */
+  raw?: boolean;
 }
 
 export const ErrorBlock = ({ e }: { e: ErrorData }) => (
@@ -35,7 +37,7 @@ export const ErrorBlock = ({ e }: { e: ErrorData }) => (
   </div>
 );
 
-function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, slide }: StepCardProps) {
+function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, slide, raw = false }: StepCardProps) {
   const display = stepDisplay(step);
   const live = display === "running" || display === "waiting";
   // A step that was live and is now done settles once (CSS; off with effects off).
@@ -124,7 +126,7 @@ function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, 
           ))}
           {waiting?.detail && <p className="text-xs text-muted">{waiting.detail}</p>}
           {calls.map((c) => (
-            <CallRow key={c.id} call={c} />
+            <CallRow key={c.id} call={c} raw={raw} />
           ))}
           {execs.map((x) => (
             <ExecRow key={x.id} exec={x} />
@@ -148,6 +150,7 @@ export const StepCard = memo(
     a.open === b.open &&
     a.now === b.now &&
     a.slide === b.slide &&
+    a.raw === b.raw &&
     a.onToggle === b.onToggle &&
     same(a.calls, b.calls) &&
     same(a.execs, b.execs) &&
