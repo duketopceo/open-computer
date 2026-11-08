@@ -3,6 +3,7 @@ import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { hasStream } from "@/lib/runEvents";
+import { Artifacts } from "./Artifacts";
 import { PlanCard } from "./PlanCard";
 import { Timeline } from "./runtime/Timeline";
 import { Chip, Dot, StateWord } from "./primitives";
@@ -112,6 +113,8 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
           ))}
         </ol>
       ))}
+
+      {!compact && <Artifacts runId={run.run} refresh={states.DONE} />}
 
       {run.error && (
         <div className="mt-4 rounded-2xl border border-urgent bg-urgent-soft p-4 text-sm text-urgent">
