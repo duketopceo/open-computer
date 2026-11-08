@@ -51,6 +51,8 @@ export function Composer({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | undefined>();
+  const sentTimer = useRef<number | undefined>();
+  const [sent, setSent] = useState(false); // brief edge glow after a send
   // Set on unmount: late getUserMedia results and pending onstop handlers
   // must release the mic and never upload audio for a view that's gone.
   const cancelledRef = useRef(false);
@@ -64,6 +66,7 @@ export function Composer({
     return () => {
       cancelledRef.current = true;
       window.clearTimeout(timerRef.current);
+      window.clearTimeout(sentTimer.current);
       const r = recorderRef.current;
       recorderRef.current = null;
       if (r && r.state !== "inactive") r.stop(); // onstop sees cancelled → no upload
@@ -190,6 +193,9 @@ export function Composer({
     if (!opts) return;
     onSend(value.trim(), showEffort ? opts : {});
     setValue("");
+    setSent(true);
+    window.clearTimeout(sentTimer.current);
+    sentTimer.current = window.setTimeout(() => setSent(false), 900);
   };
 
   const mic = (
@@ -214,7 +220,7 @@ export function Composer({
 
   return (
     <div className="w-full max-w-2xl">
-      <div className="rounded-2xl border border-line bg-surface-1 p-3 shadow-composer">
+      <div className={cn("fx-edge rounded-2xl border border-line bg-surface-1 p-3 shadow-composer", sent && "fx-sent")}>
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}

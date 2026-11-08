@@ -8,7 +8,8 @@ const KIND: Record<string, string> = {
   thread: "Chat call",
   chat: "Chat call", plan: "Planning call", work: "Work call", decision: "Routing decision call" };
 
-export function CallRow({ call }: { call: LlmCallData }) {
+/** `raw` (dev mode) adds the plan JSON and the model's reasoning; everyone else sees model, tokens and cost. */
+export function CallRow({ call, raw = false }: { call: LlmCallData; raw?: boolean }) {
   const served = call.model_served || call.model_requested || "unknown model";
   const differs = call.model_requested && call.model_served && call.model_requested !== call.model_served;
   return (
@@ -30,7 +31,7 @@ export function CallRow({ call }: { call: LlmCallData }) {
           {call.error_class ? `: ${call.error_class}` : ""}
           {call.error ? ` — ${call.error}` : ""}
         </p>
-      ) : call.detail ? (
+      ) : !raw ? null : call.detail ? (
         <details className="mt-2">
           <summary className="cursor-pointer select-none text-muted hover:text-ink">Plan</summary>
           <pre tabIndex={0} aria-label="Plan" className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-1 p-3 leading-relaxed text-ink-muted">

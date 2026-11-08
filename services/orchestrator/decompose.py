@@ -166,7 +166,10 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         "files from a step with different egress_hosts; pass data between steps "
         f"through stdout, keeping each step's output under {DEP_OUTPUT_CAP} characters "
         f"(dependents receive only the first {DEP_OUTPUT_CAP}). Prompts must use "
-        "relative paths or $HOME (never absolute paths like /workspace or /data).\n"
+        "relative paths or $HOME (never absolute paths like /workspace or /data). "
+        "When a step should hand the owner a file (a report, CSV, notes), tell it to put the file in its reply "
+        "between a line '<<<ARTIFACT name=report.md' and a line 'ARTIFACT>>>' (plain file name, text only, "
+        "under 1 MB).\n"
         f"Goal: {goal}"
     )
     raw = engine(prompt)

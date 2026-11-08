@@ -258,6 +258,27 @@ export async function getRun(id: string): Promise<RunDetail> {
   return json<RunDetail>(`/api/runs/${encodeURIComponent(id)}`);
 }
 
+// ---- run files (artifacts): derived from the run's results, listed without bodies
+export interface ArtifactItem {
+  name: string;
+  step: string;
+  size?: number;
+  mime?: string;
+  /** over the size limit: listed, never saved */
+  refused?: string;
+}
+export const getArtifacts = async (id: string) =>
+  (await json<{ artifacts?: ArtifactItem[] }>(`/api/runs/${encodeURIComponent(id)}/artifacts`)).artifacts ?? [];
+export const artifactUrl = (id: string, name: string, download = false) =>
+  name === "files.zip"
+    ? `/api/runs/${encodeURIComponent(id)}/artifacts.zip`
+    : `/api/runs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(name)}${download ? "?download=1" : ""}`;
+export async function getArtifactText(id: string, name: string): Promise<string> {
+  const r = await fetch(artifactUrl(id, name), { credentials: "same-origin" });
+  if (!r.ok) throw new ApiError("file unavailable", "client", r.status);
+  return r.text();
+}
+
 export const decidePlan = (id: string, action: "approve" | "cancel", edits: Record<string, unknown>[] = []) =>
   postJson<{ state: string }>(`/api/runs/${encodeURIComponent(id)}/plan`, { action, edits });
 

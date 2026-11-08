@@ -416,7 +416,7 @@ Stream later   → daily-driver U2 SSE; poll remains fallback (cloudflare U4 mus
 - R2/R7 honored (no toggle, teammates, billing, fake attach/artifacts/projects).
 - Coverage matrix cells for shipped units are green.
 - No secrets, personal hostnames, or bot co-author trailers; attribution Luke.
-- No changes outside this open-computer checkout; leave unrelated local repos and branches `chore/agpl-3.0` / `wip/device-move-2026-10-27` alone.
+- No changes to other repositories or to branches `chore/agpl-3.0` / `wip/device-move-2026-10-27`.
 - Production implication of OC-092 noted; deploy config untouched.
 
 ### Per-unit completion gates

@@ -37,8 +37,8 @@ after(async () => { await browser?.close(); server?.kill(); });
 
 const json = (status, body) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 
-async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, path = "/" } = {}) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", colorScheme: scheme });
+async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, path = "/", motion = "reduce" } = {}) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: motion, colorScheme: scheme });
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
   // Empty runs list by default so the composer (not a run) is the landing view.
@@ -46,6 +46,8 @@ async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, p
   // The sidebar reads /api/dev; the fixture server predates it, so answer it here (tests override).
   await page.route("**/api/dev", (r) => r.fulfill(json(200, { trace: false, env: false, active: false })));
   await page.route("**/api/runs/*/events*", (r) => r.fulfill(json(404, { error: "dev trace off for this run" })));
+  // Fake run ids: an unrouted files request reaches the fixture server and can stay pending, starving networkidle.
+  await page.route("**/api/runs/*/artifacts", (r) => r.fulfill(json(200, { artifacts: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   if (setup) await setup(page);
   await page.goto(base + path, { waitUntil: "networkidle" });
@@ -203,6 +205,8 @@ async function openAt(path, { w = 1440, h = 900, routes = {} } = {}) {
   const page = await ctx.newPage();
   await page.route("**/api/dev", (r) => r.fulfill(json(200, { trace: false, env: false, active: false })));
   await page.route("**/api/runs/*/events*", (r) => r.fulfill(json(404, { error: "dev trace off for this run" })));
+  // Fake run ids: an unrouted files request reaches the fixture server and can stay pending, starving networkidle.
+  await page.route("**/api/runs/*/artifacts", (r) => r.fulfill(json(200, { artifacts: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   await page.goto(base + path, { waitUntil: "networkidle" });
   return { ctx, page };
@@ -1362,7 +1366,7 @@ test("@flow run page: only steps with detected PII say private; an empty list an
 // ---------------------------------------------------------------------------
 // Run timeline (dev mode): events come from routed fixtures, never a live run.
 // ---------------------------------------------------------------------------
-import { GID, manySteps, threeSteps } from "./timeline-fixture.mjs";
+import { GID, manySteps, stream, threeSteps } from "./timeline-fixture.mjs";
 
 const TL = `/#${GID}/timeline`;
 const PROBE = 2 ** 31 - 1;
@@ -1811,6 +1815,136 @@ test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges onc
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0], "no key or code in browser storage");
   await ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Effects: "Reduce effects" switch, motion gates, light and dark shots.
+// ---------------------------------------------------------------------------
+const SHOTS = path.join(os.homedir(), "oc-shots");
+
+const liveStream = () => {
+  const s = stream();
+  s.add("run", { status: "running", title: "Summarise the sales sheet", cap_usd: 0.5 });
+  s.add("step", { id: "step_t1", title: "Fetch the sheet", status: "done" });
+  s.add("step", { id: "step_t2", title: "Parse the rows", status: "running" });
+  s.add("step", { id: "step_t3", title: "Write the report", status: "pending" });
+  s.add("cost", { spent_usd: 0.004, cap_usd: 0.5 });
+  return s;
+};
+const cssAnimations = (page) =>
+  page.evaluate(() => document.getAnimations().filter((a) => a instanceof CSSAnimation && a.playState === "running").map((a) => a.animationName));
+
+test("@effects the Reduce effects switch sets data-effects on <html> and survives a reload", async () => {
+  const { ctx, page } = await open({ path: "/settings", motion: "no-preference" });
+  const html = page.locator("html");
+  const box = page.getByRole("checkbox", { name: /Reduce effects/ });
+  assert.equal(await html.getAttribute("data-effects"), null, "effects are on by default when the OS does not ask for less motion");
+  assert.equal(await box.isChecked(), false);
+  await box.check();
+  assert.equal(await html.getAttribute("data-effects"), "off");
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await html.getAttribute("data-effects"), "off", "remembered after reload");
+  assert.equal(await page.getByRole("checkbox", { name: /Reduce effects/ }).isChecked(), true);
+  assert.equal(await page.evaluate(() => localStorage.getItem("oc-effects")), "off");
+  await page.getByRole("checkbox", { name: /Reduce effects/ }).uncheck();
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await html.getAttribute("data-effects"), null);
+  await ctx.close();
+});
+
+test("@effects with no stored choice the OS reduced-motion preference turns effects off", async () => {
+  const { ctx, page } = await open({ path: "/settings", motion: "reduce" });
+  assert.equal(await page.locator("html").getAttribute("data-effects"), "off");
+  assert.equal(await page.getByRole("checkbox", { name: /Reduce effects/ }).isChecked(), true);
+  await ctx.close();
+});
+
+test("@effects reduced motion and the switch each leave no running animations; effects on animate", async () => {
+  const s = liveStream();
+  const routes = timelineRoutes(() => s.events, { finished: () => false });
+  const run = async (motion, stored) => {
+    const { ctx, page } = await open({ routes, path: TL, motion, setup: stored ? (p) => p.addInitScript((v) => localStorage.setItem("oc-effects", v), stored) : undefined });
+    await steps(page).nth(1).waitFor();
+    const names = await cssAnimations(page);
+    await ctx.close();
+    return names;
+  };
+  assert.deepEqual(await run("reduce"), [], "prefers-reduced-motion: no running animations");
+  assert.deepEqual(await run("no-preference", "off"), [], "switch off: no running animations");
+  const on = await run("no-preference");
+  for (const n of ["fx-sheen", "fx-pulse", "fx-edge-run"]) assert.ok(on.includes(n), `effects on: ${n} runs (${on})`);
+});
+
+for (const scheme of ["light", "dark"]) {
+  test(`@effects ${scheme}: weave and running timeline have 0 axe violations; screenshot saved`, async () => {
+    const s = liveStream();
+    const routes = timelineRoutes(() => s.events, { finished: () => false });
+    const { ctx, page } = await open({ routes, path: TL, scheme, motion: "no-preference" });
+    await steps(page).nth(1).waitFor();
+    assert.deepEqual(await axeViolations(page), [], `timeline ${scheme}`);
+    fs.mkdirSync(SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(SHOTS, `effects-${scheme}.png`) });
+    await ctx.close();
+  });
+}
+
+// Live view for everyone: a run with a stream opens on the live view; dev mode off hides raw model detail.
+for (const scheme of ["light", "dark"]) {
+  test(`@live the run page opens on the live view with sandbox activity, no dev mode needed (${scheme})`, async () => {
+    const s = threeSteps();
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: GID, goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        [`**/api/runs/${GID}`]: (r) => r.fulfill(json(200, { ...RUN, run: GID })),
+        ...timelineRoutes(() => s.events, undefined, false),
+      },
+      path: `/#${GID}`,
+    });
+    await steps(page).first().waitFor();
+    assert.equal(await steps(page).count(), 3);
+    await page.getByTestId("activity").waitFor();
+    assert.ok(await page.getByTestId("activity").getByText("python3 parse.py").isVisible(), "latest command is shown");
+    assert.equal(await page.getByRole("tab", { name: "Live" }).getAttribute("aria-selected"), "true");
+    // raw reasoning stays behind dev mode
+    await steps(page).first().getByRole("button").click();
+    assert.equal(await page.getByText("Download the CSV then count rows.").count(), 0);
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/live-view-${scheme}.png` : "/tmp/live-view.png" });
+    await page.getByRole("tab", { name: "Steps" }).click();
+    await page.locator("ol > li").getByText("say hi").waitFor();
+    assert.equal(await steps(page).count(), 0);
+    await ctx.close();
+  });
+}
+
+// Run files: listed under the run, previewed as text, downloadable one by one or as a zip.
+for (const scheme of ["light", "dark"]) {
+  test(`@files a run lists its files with preview and download (${scheme})`, async () => {
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+        "**/api/runs/g_e2e01/artifacts": (r) => r.fulfill(json(200, { artifacts: [
+          { name: "report.md", step: "s1", size: 2048, mime: "text/markdown" },
+          { name: "step-s1.md", step: "s1", size: 2, mime: "text/markdown" },
+          { name: "big.csv", step: "s1", refused: "too large (1200 KB; the limit is 1000 KB)" },
+        ] })),
+        "**/api/runs/g_e2e01/artifacts/report.md": (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Report\nall good" }),
+      },
+      path: "/#g_e2e01",
+    });
+    await page.getByTestId("artifacts").waitFor();
+    assert.equal(await page.getByRole("link", { name: "Download report.md" }).getAttribute("href"), "/api/runs/g_e2e01/artifacts/report.md?download=1");
+    assert.equal(await page.getByRole("link", { name: "Download all (.zip)" }).getAttribute("href"), "/api/runs/g_e2e01/artifacts.zip");
+    await page.getByText("not saved: too large").waitFor();
+    await page.getByText("report.md").first().click();
+    await page.getByLabel("Preview of report.md").getByText("all good").waitFor();
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/files-${scheme}.png` : "/tmp/files.png" });
+    await ctx.close();
+  });
+}
 
 // Plan review: a held plan is shown before anything runs; edits and the decision go to the plan endpoint.
 const PLANNED = {
