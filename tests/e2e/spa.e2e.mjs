@@ -1719,3 +1719,61 @@ test("@flow run page: a step skipped because a dependency failed says so and sho
   assert.equal(await page.locator("li", { hasText: "step a" }).getByText("FAILED", { exact: true }).count(), 1);
   await ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Sidebar icon rail: collapse, Ctrl/Cmd+B, remembered state, tooltips, phone width.
+// ---------------------------------------------------------------------------
+const RAIL_SHOTS = path.join(os.homedir(), "oc-shots");
+const rail = (page) => page.locator("aside#app-sidebar");
+
+test("@rail Ctrl+B collapses to an icon rail with named, tooltipped icons; the choice survives a reload", async () => {
+  const { ctx, page } = await open();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "false", "expanded by default on desktop");
+  await page.keyboard.press("Control+b");
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true");
+  assert.ok((await rail(page).boundingBox()).width <= 60, "rail is narrow");
+  assert.equal(await page.evaluate(() => localStorage.getItem("oc.sidebarCollapsed")), "1");
+  for (const name of ["New chat", "Agent jobs", "Expand sidebar"]) {
+    const b = rail(page).getByRole("button", { name });
+    assert.equal(await b.getAttribute("title") ?? name, name === "Expand sidebar" ? "Expand sidebar (Ctrl+B)" : name);
+  }
+  await rail(page).getByRole("button", { name: "Agent jobs" }).hover();
+  assert.ok(await rail(page).getByText("Agent jobs", { exact: true }).isVisible(), "tooltip shows on hover");
+  assert.equal(await page.getByText("Recents").count(), 0, "chat list is not rendered in the rail");
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "remembered after reload");
+  assert.deepEqual(await axeViolations(page), [], "rail axe");
+  fs.mkdirSync(RAIL_SHOTS, { recursive: true });
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-collapsed-light.png") });
+  await rail(page).getByRole("button", { name: "Expand sidebar" }).click();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "false");
+  assert.equal(await page.evaluate(() => localStorage.getItem("oc.sidebarCollapsed")), "0");
+  await page.keyboard.press("Meta+b");
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "Cmd+B works too");
+  await ctx.close();
+});
+
+test("@rail dark rail screenshot has 0 axe violations", async () => {
+  const { ctx, page } = await open({ scheme: "dark" });
+  await page.keyboard.press("Control+b");
+  assert.deepEqual(await axeViolations(page), []);
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-collapsed-dark.png") });
+  await ctx.close();
+});
+
+test("@rail phone width starts as a rail, opens as an overlay, closes on choosing, never scrolls sideways", async () => {
+  const { ctx, page } = await open({ w: 390, h: 800 });
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "phones start collapsed");
+  assert.ok(await noHScroll(page));
+  assert.ok(await page.getByRole("textbox", { name: "Message" }).isVisible());
+  assert.ok((await page.getByRole("textbox", { name: "Message" }).boundingBox()).width > 250, "the composer keeps room");
+  await rail(page).getByRole("button", { name: "Expand sidebar" }).click();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "false");
+  assert.ok(await noHScroll(page));
+  assert.deepEqual(await axeViolations(page), [], "open overlay axe");
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-mobile-open.png") });
+  await rail(page).getByRole("button", { name: "New chat" }).click();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "choosing puts the overlay away");
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-mobile.png") });
+  await ctx.close();
+});
