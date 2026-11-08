@@ -3,7 +3,6 @@
 No model, sandbox or network: planner and worker are plain functions."""
 
 import json
-import threading
 
 import pytest
 
