@@ -37,8 +37,8 @@ after(async () => { await browser?.close(); server?.kill(); });
 
 const json = (status, body) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 
-async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, path = "/" } = {}) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", colorScheme: scheme });
+async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, path = "/", motion = "reduce" } = {}) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: motion, colorScheme: scheme });
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
   // Empty runs list by default so the composer (not a run) is the landing view.
@@ -1318,7 +1318,7 @@ test("@flow run page: only steps with detected PII say private; an empty list an
 // ---------------------------------------------------------------------------
 // Run timeline (dev mode): events come from routed fixtures, never a live run.
 // ---------------------------------------------------------------------------
-import { GID, manySteps, threeSteps } from "./timeline-fixture.mjs";
+import { GID, manySteps, stream, threeSteps } from "./timeline-fixture.mjs";
 
 const TL = `/#${GID}/timeline`;
 const PROBE = 2 ** 31 - 1;
@@ -1709,6 +1709,77 @@ test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges onc
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0], "no key or code in browser storage");
   await ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Effects: "Reduce effects" switch, motion gates, light and dark shots.
+// ---------------------------------------------------------------------------
+const SHOTS = path.join(os.homedir(), "oc-shots");
+
+const liveStream = () => {
+  const s = stream();
+  s.add("run", { status: "running", title: "Summarise the sales sheet", cap_usd: 0.5 });
+  s.add("step", { id: "step_t1", title: "Fetch the sheet", status: "done" });
+  s.add("step", { id: "step_t2", title: "Parse the rows", status: "running" });
+  s.add("step", { id: "step_t3", title: "Write the report", status: "pending" });
+  s.add("cost", { spent_usd: 0.004, cap_usd: 0.5 });
+  return s;
+};
+const cssAnimations = (page) =>
+  page.evaluate(() => document.getAnimations().filter((a) => a instanceof CSSAnimation && a.playState === "running").map((a) => a.animationName));
+
+test("@effects the Reduce effects switch sets data-effects on <html> and survives a reload", async () => {
+  const { ctx, page } = await open({ path: "/settings", motion: "no-preference" });
+  const html = page.locator("html");
+  const box = page.getByRole("checkbox", { name: /Reduce effects/ });
+  assert.equal(await html.getAttribute("data-effects"), null, "effects are on by default when the OS does not ask for less motion");
+  assert.equal(await box.isChecked(), false);
+  await box.check();
+  assert.equal(await html.getAttribute("data-effects"), "off");
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await html.getAttribute("data-effects"), "off", "remembered after reload");
+  assert.equal(await page.getByRole("checkbox", { name: /Reduce effects/ }).isChecked(), true);
+  assert.equal(await page.evaluate(() => localStorage.getItem("oc-effects")), "off");
+  await page.getByRole("checkbox", { name: /Reduce effects/ }).uncheck();
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await html.getAttribute("data-effects"), null);
+  await ctx.close();
+});
+
+test("@effects with no stored choice the OS reduced-motion preference turns effects off", async () => {
+  const { ctx, page } = await open({ path: "/settings", motion: "reduce" });
+  assert.equal(await page.locator("html").getAttribute("data-effects"), "off");
+  assert.equal(await page.getByRole("checkbox", { name: /Reduce effects/ }).isChecked(), true);
+  await ctx.close();
+});
+
+test("@effects reduced motion and the switch each leave no running animations; effects on animate", async () => {
+  const s = liveStream();
+  const routes = timelineRoutes(() => s.events, { finished: () => false });
+  const run = async (motion, stored) => {
+    const { ctx, page } = await open({ routes, path: TL, motion, setup: stored ? (p) => p.addInitScript((v) => localStorage.setItem("oc-effects", v), stored) : undefined });
+    await steps(page).nth(1).waitFor();
+    const names = await cssAnimations(page);
+    await ctx.close();
+    return names;
+  };
+  assert.deepEqual(await run("reduce"), [], "prefers-reduced-motion: no running animations");
+  assert.deepEqual(await run("no-preference", "off"), [], "switch off: no running animations");
+  const on = await run("no-preference");
+  for (const n of ["fx-sheen", "fx-pulse", "fx-edge-run"]) assert.ok(on.includes(n), `effects on: ${n} runs (${on})`);
+});
+
+for (const scheme of ["light", "dark"]) {
+  test(`@effects ${scheme}: weave and running timeline have 0 axe violations; screenshot saved`, async () => {
+    const s = liveStream();
+    const routes = timelineRoutes(() => s.events, { finished: () => false });
+    const { ctx, page } = await open({ routes, path: TL, scheme, motion: "no-preference" });
+    await steps(page).nth(1).waitFor();
+    assert.deepEqual(await axeViolations(page), [], `timeline ${scheme}`);
+    fs.mkdirSync(SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(SHOTS, `effects-${scheme}.png`) });
+    await ctx.close();
+  });
+}
 
 // Live view for everyone: a run with a stream opens on the live view; dev mode off hides raw model detail.
 for (const scheme of ["light", "dark"]) {
