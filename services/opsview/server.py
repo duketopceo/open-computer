@@ -261,6 +261,11 @@ def _route(q: str) -> dict:
     }
 
 
+def live_view_on() -> bool:
+    """Console runs record the redacted live stream by default; `OC_LIVE_VIEW=0` turns it off."""
+    return os.environ.get("OC_LIVE_VIEW", "1").strip().lower() not in ("0", "off", "false", "no")
+
+
 def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
     """Spending path behind POST /goals confirm. Tests patch this. The plan's model drives the planner and
     every cloud step; its budget is a hard per-run cap."""
@@ -272,6 +277,7 @@ def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
         effort=plan.effort,
         model=plan.model,
         budget=plan.budget,
+        live_view=live_view_on(),
     )
 
 

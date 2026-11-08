@@ -3,6 +3,7 @@ import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { hasStream } from "@/lib/runEvents";
+import { Timeline } from "./runtime/Timeline";
 import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
@@ -17,6 +18,9 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
   }, [active]);
   // The Timeline link appears only when this run has an event stream (dev trace was on at submit).
   const [stream, setStream] = useState(false);
+  // With a stream the run page opens on the live view; "Steps" is the plain list of what each step returned.
+  const [view, setView] = useState<"live" | "steps">("live");
+  const showLive = stream && !compact && view === "live";
   useEffect(() => {
     let dead = false;
     setStream(false);
@@ -60,11 +64,30 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
         {run.plan_thinking && <Thinking text={run.plan_thinking} className="mt-3" />}
       </header>
 
-      <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
-        {run.subtasks.map((s) => (
-          <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
-        ))}
-      </ol>
+      {stream && !compact && (
+        <div role="tablist" aria-label="Run view" className="mb-3 inline-flex rounded-lg border border-line bg-surface-1 p-0.5 text-xs">
+          {(["live", "steps"] as const).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={view === v}
+              onClick={() => setView(v)}
+              className={`rounded-md px-3 py-1 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${view === v ? "bg-surface-3 text-ink" : "text-muted hover:text-ink"}`}
+            >
+              {v === "live" ? "Live" : "Steps"}
+            </button>
+          ))}
+        </div>
+      )}
+      {showLive ? (
+        <Timeline key={run.run} runId={run.run} goal={run.goal} embedded />
+      ) : (
+        <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
+          {run.subtasks.map((s) => (
+            <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
+          ))}
+        </ol>
+      )}
 
       {run.error && (
         <div className="mt-4 rounded-2xl border border-urgent bg-urgent-soft p-4 text-sm text-urgent">

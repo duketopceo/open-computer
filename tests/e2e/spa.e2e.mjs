@@ -1705,3 +1705,33 @@ test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges onc
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0], "no key or code in browser storage");
   await ctx.close();
 });
+
+// Live view for everyone: a run with a stream opens on the live view; dev mode off hides raw model detail.
+for (const scheme of ["light", "dark"]) {
+  test(`@live the run page opens on the live view with sandbox activity, no dev mode needed (${scheme})`, async () => {
+    const s = threeSteps();
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: GID, goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        [`**/api/runs/${GID}`]: (r) => r.fulfill(json(200, { ...RUN, run: GID })),
+        ...timelineRoutes(() => s.events, undefined, false),
+      },
+      path: `/#${GID}`,
+    });
+    await steps(page).first().waitFor();
+    assert.equal(await steps(page).count(), 3);
+    await page.getByTestId("activity").waitFor();
+    assert.ok(await page.getByTestId("activity").getByText("python3 parse.py").isVisible(), "latest command is shown");
+    assert.equal(await page.getByRole("tab", { name: "Live" }).getAttribute("aria-selected"), "true");
+    // raw reasoning stays behind dev mode
+    await steps(page).first().getByRole("button").click();
+    assert.equal(await page.getByText("Download the CSV then count rows.").count(), 0);
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/live-view-${scheme}.png` : "/tmp/live-view.png" });
+    await page.getByRole("tab", { name: "Steps" }).click();
+    await page.locator("ol > li").getByText("say hi").waitFor();
+    assert.equal(await steps(page).count(), 0);
+    await ctx.close();
+  });
+}
