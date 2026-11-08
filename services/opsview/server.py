@@ -36,7 +36,7 @@ from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError, default_approvals_path
 from services.agents.approvals import ApprovalError
 from services.opsview.agentgrants import GrantError, grant_run_hosts
-from services.opsview import agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns, threads
+from services.opsview import artifacts, agentjobs, automations, capabilities, consoleapi, devices, effort, goalruns, or_connect, threads
 from services.opsview import runs as runstore
 from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
@@ -261,9 +261,40 @@ def _route(q: str) -> dict:
     }
 
 
-def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
+def live_view_on() -> bool:
+    """Console runs record the redacted live stream by default; `OC_LIVE_VIEW=0` turns it off."""
+    return os.environ.get("OC_LIVE_VIEW", "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+PLAN_AUTO_USD = 0.05
+PLAN_AUTO_STEPS = 4
+
+
+def plan_hold(review: bool | None = None):
+    """Which plans wait for the owner before any step runs (None: never hold).
+
+    `review` True holds every plan, False none. Otherwise `OC_PLAN_REVIEW` decides: `always`, `off`, or a
+    dollar amount; the default holds a plan whose estimate is over $0.05 or that has more than 4 steps, so a
+    small one-shot goal does not get slower. The planner's estimate is a guess; the run's cap is the hard number."""
+    if review is False:
+        return None
+    if review is True:
+        return lambda subs: True
+    raw = os.environ.get("OC_PLAN_REVIEW", "").strip().lower()
+    if raw == "off":
+        return None
+    if raw == "always":
+        return lambda subs: True
+    try:
+        limit = float(raw) if raw else PLAN_AUTO_USD
+    except ValueError:
+        limit = PLAN_AUTO_USD
+    return lambda subs: len(subs) > PLAN_AUTO_STEPS or sum(float(s.get("est_cost") or 0) for s in subs) > limit
+
+
+def _submit_goal(goal: str, who: str, plan: effort.Plan, review: bool | None = None) -> str:
     """Spending path behind POST /goals confirm. Tests patch this. The plan's model drives the planner and
-    every cloud step; its budget is a hard per-run cap."""
+    every cloud step; its budget is a hard per-run cap. A held plan waits for approval (`plan_hold`)."""
     return goalruns.submit(
         goal,
         goal_engines.decompose_engine(plan.model, effort=plan.effort),
@@ -272,6 +303,8 @@ def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
         effort=plan.effort,
         model=plan.model,
         budget=plan.budget,
+        live_view=live_view_on(),
+        hold=plan_hold(review),
     )
 
 
@@ -324,6 +357,9 @@ GET_ROUTES = [
     (r"/api/threads", "g_api_threads"),
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})", "g_api_thread"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})", "g_api_run"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/artifacts", "g_api_run_artifacts"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/artifacts\.zip", "g_api_run_artifacts_zip"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/artifacts/(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,79})", "g_api_run_artifact"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/events", "g_api_run_events"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/events\.jsonl", "g_api_run_events_jsonl"),
     (r"/api/dev", "g_api_dev"),
@@ -349,6 +385,8 @@ GET_ROUTES = [
     (r"/approvals", "g_spa_route"),
     (r"/router", "g_spa_route"),
     (r"/audit", "g_spa_route"),
+    (r"/settings", "g_spa_route"),
+    (r"/api/openrouter", "g_api_openrouter"),
     (r"/api/devices", "g_api_devices"),
     (r"/api/sandboxes", "g_api_sandboxes"),
     (r"/api/router", "g_api_router"),
@@ -371,9 +409,13 @@ POST_ROUTES = [
     (r"/api/runs/clear", "p_api_runs_clear"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/delete", "p_api_run_delete"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/archive", "p_api_run_archive"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/plan", "p_api_run_plan"),
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
     (r"/api/router/test", "p_api_router_test"),
+    (r"/api/openrouter/connect", "p_api_or_connect"),
+    (r"/api/openrouter/complete", "p_api_or_complete"),
+    (r"/api/openrouter/disconnect", "p_api_or_disconnect"),
     (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_api_approve"),
     (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_api_sendback"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
@@ -653,6 +695,24 @@ class Handler(BaseHTTPRequestHandler):
     def g_api_session(self, qs):
         self._json(200, {"csrf": self._csrf(), "identity": self._identity() or "", "cap": daily_cap()})
 
+    def g_api_openrouter(self, qs):
+        self._json(200, or_connect.status())
+
+    def _or_call(self, fn, *args):
+        try:
+            self._json(200, fn(*args))
+        except or_connect.ConnectError as e:
+            self._json(400, {"error": str(e)})
+
+    def p_api_or_connect(self, who, body):
+        self._or_call(or_connect.start, str(body.get("origin", "")), self.headers.get("Host", ""))
+
+    def p_api_or_complete(self, who, body):
+        self._or_call(or_connect.complete, body.get("code"), body.get("state"))
+
+    def p_api_or_disconnect(self, who, body):
+        self._or_call(or_connect.disconnect)
+
     def g_api_effort(self, qs):
         self._json(200, effort.catalog(daily_cap()))
 
@@ -740,6 +800,13 @@ class Handler(BaseHTTPRequestHandler):
         log.info("run deleted", run=id, by=who)
         self._json(200, {"ok": True})
 
+    def p_api_run_plan(self, who, body, id):
+        """Approve (with optional edits) or cancel a plan held for review."""
+        code, out = goalruns.decide_plan(id, str(body.get("action", "")), body.get("edits"), goal_engines.work_fn)
+        if code == 200:
+            log.info("plan decided", run=id, action=body.get("action"), by=who)
+        self._json(code, out)
+
     def p_api_run_archive(self, who, body, id):
         on = body.get("archived", True) not in (False, "0", "false", 0)
         if not goalruns.archive_run(id, on):
@@ -770,6 +837,31 @@ class Handler(BaseHTTPRequestHandler):
         if r is None:
             return self._json(404, {"error": "no such run"})
         self._json(200, r)
+
+    def g_api_run_artifacts(self, qs, id):
+        r = goalruns.get_run(id)
+        if r is None:
+            return self._json(404, {"error": "no such run"})
+        self._json(200, {"artifacts": artifacts.listing(r)})
+
+    def g_api_run_artifact(self, qs, id, name):
+        r = goalruns.get_run(id)
+        a = artifacts.get(r, name) if r else None
+        if a is None:
+            return self._json(404, {"error": "no such file"})
+        hdr = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
+        if qs.get("download", [""])[0] == "1":
+            hdr["Content-Disposition"] = f'attachment; filename="{a["name"]}"'
+        self._send(200, a["text"].encode(), a["mime"] + "; charset=utf-8", hdr)
+
+    def g_api_run_artifacts_zip(self, qs, id):
+        r = goalruns.get_run(id)
+        if r is None:
+            return self._json(404, {"error": "no such run"})
+        self._send(200, artifacts.export_zip(r), "application/zip", {
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{id}-files.zip"',
+        })
 
     def g_api_run_events(self, qs, id):
         code, body = goalruns.run_events(id, qs.get("after", [None])[0])
@@ -1038,7 +1130,7 @@ class Handler(BaseHTTPRequestHandler):
                 "goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()), sub="Confirm before it runs"
             )
         try:
-            rid = _submit_goal(goal, who, plan)
+            rid = _submit_goal(goal, who, plan, True) if body.get("review") in ("1", 1, True) else _submit_goal(goal, who, plan)
         except Exception as e:
             if self._wants_json():
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})

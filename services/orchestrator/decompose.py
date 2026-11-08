@@ -36,6 +36,7 @@ _FIELDS = {
     "est_cost": float,
     "needs_sandbox": bool,
     "needs_egress": bool,
+    "needs_web": bool,
     "egress_hosts": list,
 }
 
@@ -98,6 +99,7 @@ def _canon(raw: dict, i: int) -> dict:
         "est_cost": float(raw.get("est_cost", 0.0) or 0.0),
         "needs_sandbox": bool(raw.get("needs_sandbox", False)),
         "needs_egress": bool(raw.get("needs_egress", False)),
+        "needs_web": bool(raw.get("needs_web", False)),
         "egress_hosts": [
             h.strip().lower() for h in (raw.get("egress_hosts") or []) if isinstance(h, str) and h.strip()
         ],
@@ -154,7 +156,9 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         "Decompose this goal into subtasks. Return ONLY a JSON array; each "
         'item: {"id","title","prompt","deps":[ids],"tier":cheap|mid|frontier,'
         '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool,'
-        '"needs_egress":bool,"egress_hosts":[domain,...]}. '
+        '"needs_egress":bool,"needs_web":bool,"egress_hosts":[domain,...]}. '
+        "Set needs_web when the step must look something up on the web or read a page (the "
+        "worker has a search and page-reading tool; no sandbox or egress_hosts needed for that). "
         "Set needs_egress when the step must reach the network (downloads, "
         "APIs); name the exact domains it needs in egress_hosts. Sandbox steps "
         "share one filesystem per run while the VM lives, but a step that adds "
@@ -162,7 +166,10 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         "files from a step with different egress_hosts; pass data between steps "
         f"through stdout, keeping each step's output under {DEP_OUTPUT_CAP} characters "
         f"(dependents receive only the first {DEP_OUTPUT_CAP}). Prompts must use "
-        "relative paths or $HOME (never absolute paths like /workspace or /data).\n"
+        "relative paths or $HOME (never absolute paths like /workspace or /data). "
+        "When a step should hand the owner a file (a report, CSV, notes), tell it to put the file in its reply "
+        "between a line '<<<ARTIFACT name=report.md' and a line 'ARTIFACT>>>' (plain file name, text only, "
+        "under 1 MB).\n"
         f"Goal: {goal}"
     )
     raw = engine(prompt)

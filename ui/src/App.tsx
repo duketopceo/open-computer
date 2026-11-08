@@ -311,7 +311,7 @@ export default function App() {
           <ThreadView thread={thread} onSend={onSend} busy={sending} disabled={link === "auth"} error={error} />
         ) : selected && !isThread(selected) && run ? (
           <div className="mx-auto w-full max-w-3xl px-6 py-10">
-            <RunView run={run} />
+            <RunView run={run} onChanged={() => selected && fetchSelected(selected)} />
           </div>
         ) : selected ? (
           <div className="m-auto flex flex-col items-center gap-3 text-muted" role="status">

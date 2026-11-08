@@ -38,7 +38,7 @@ function Glyph({ state }: { state: StepDisplay }) {
 
 export function StepMark({ state, label }: { state: StepDisplay; label?: string }) {
   return (
-    <span className={cn("inline-flex shrink-0 items-center gap-1.5", TONE[state])}>
+    <span className={cn("inline-flex shrink-0 items-center gap-1.5", TONE[state], state === "running" && "fx-mark-running")}>
       <Glyph state={state} />
       <span className="mono uppercase tracking-wider">{label ?? WORD[state]}</span>
     </span>

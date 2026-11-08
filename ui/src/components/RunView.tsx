@@ -3,10 +3,14 @@ import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { hasStream } from "@/lib/runEvents";
+import { Artifacts } from "./Artifacts";
+import { PlanCard } from "./PlanCard";
+import { Timeline } from "./runtime/Timeline";
 import { Chip, Dot, StateWord } from "./primitives";
 
 /** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
-export function RunView({ run, compact = false }: { run: RunDetail; compact?: boolean }) {
+export function RunView({ run, compact = false, onChanged }: { run: RunDetail; compact?: boolean; onChanged?: () => void }) {
+  const [decided, setDecided] = useState(false);
   const states = count(run);
   const active = run.subtasks.some((s) => s.state === "RUNNING" || s.state === "LEASED");
   const [, setTick] = useState(0);
@@ -17,6 +21,9 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
   }, [active]);
   // The Timeline link appears only when this run has an event stream (dev trace was on at submit).
   const [stream, setStream] = useState(false);
+  // With a stream the run page opens on the live view; "Steps" is the plain list of what each step returned.
+  const [view, setView] = useState<"live" | "steps">("live");
+  const showLive = stream && !compact && view === "live";
   useEffect(() => {
     let dead = false;
     setStream(false);
@@ -25,12 +32,13 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
       dead = true;
     };
   }, [run.run]);
+  const planned = run.plan?.state === "planned";
   return (
     <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
       <header className={compact ? "mb-3" : "mb-6"}>
         {!compact && <h1 className="font-display text-2xl leading-snug text-ink">{run.goal}</h1>}
         <div className={compact ? "flex flex-wrap items-center gap-2 text-xs" : "mt-3 flex flex-wrap items-center gap-2 text-xs"}>
-          <StateWord state={aggregate(states, active)} />
+          <StateWord state={planned ? "AWAITING-APPROVAL" : aggregate(states, active)} />
           <span className="mono text-muted">
             {states.DONE}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
             {run.started != null ? dur(run.started, run.ended ?? Date.now() / 1000) : ""}
@@ -60,11 +68,53 @@ export function RunView({ run, compact = false }: { run: RunDetail; compact?: bo
         {run.plan_thinking && <Thinking text={run.plan_thinking} className="mt-3" />}
       </header>
 
-      <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
-        {run.subtasks.map((s) => (
-          <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
-        ))}
-      </ol>
+      {planned && !decided && (
+        <PlanCard
+          runId={run.run}
+          plan={run.plan!}
+          onDecided={() => {
+            setDecided(true);
+            onChanged?.();
+          }}
+        />
+      )}
+      {planned && decided && (
+        <p className="mb-4 text-sm text-muted" role="status">
+          Decision saved. Updating the run…
+        </p>
+      )}
+      {run.plan?.state === "cancelled" && (
+        <p className="mb-4 rounded-lg border border-line bg-surface-1 px-3 py-2 text-sm text-ink-muted" role="status">
+          You cancelled this plan. Nothing ran and nothing was spent beyond planning.
+        </p>
+      )}
+      {stream && !compact && (
+        <div role="tablist" aria-label="Run view" className="mb-3 inline-flex rounded-lg border border-line bg-surface-1 p-0.5 text-xs">
+          {(["live", "steps"] as const).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={view === v}
+              onClick={() => setView(v)}
+              className={`rounded-md px-3 py-1 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${view === v ? "bg-surface-3 text-ink" : "text-muted hover:text-ink"}`}
+            >
+              {v === "live" ? "Live" : "Steps"}
+            </button>
+          ))}
+        </div>
+      )}
+      {showLive ? (
+        <Timeline key={run.run} runId={run.run} goal={run.goal} embedded />
+      ) : (
+      run.subtasks.length > 0 && (
+        <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
+          {run.subtasks.map((s) => (
+            <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
+          ))}
+        </ol>
+      ))}
+
+      {!compact && <Artifacts runId={run.run} refresh={states.DONE} />}
 
       {run.error && (
         <div className="mt-4 rounded-2xl border border-urgent bg-urgent-soft p-4 text-sm text-urgent">

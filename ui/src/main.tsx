@@ -8,15 +8,18 @@ import Devices from "./pages/Devices";
 import NotFound from "./pages/NotFound";
 import Automations from "./pages/Automations";
 import Overview from "./pages/Overview";
+import Settings from "./pages/Settings";
 import Skills from "./pages/Skills";
 import Router from "./pages/Router";
 import Runs from "./pages/Runs";
 import SandboxDetail from "./pages/SandboxDetail";
 import Sandboxes from "./pages/Sandboxes";
+import { applyEffects, getEffects } from "./lib/effects";
 import { applyTheme, getTheme } from "./lib/theme";
 import "./index.css";
 
 applyTheme(getTheme());
+applyEffects(getEffects());
 
 // Route table. `/` is the run-focused App, unchanged; every other page renders
 // inside PageShell. Ported pages are added here (and flipped to `spa: true` in
@@ -35,6 +38,7 @@ const ROUTES: Row[] = [
   { path: "/skills", page: () => <Skills /> },
   { path: "/automations", page: () => <Automations /> },
   { path: "/goals", page: () => <Runs /> },
+  { path: "/settings", page: () => <Settings /> },
 ];
 
 function Routes() {
