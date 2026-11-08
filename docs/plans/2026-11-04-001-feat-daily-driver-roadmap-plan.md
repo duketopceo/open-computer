@@ -220,10 +220,12 @@ Optional last: OC-092 Cloudflare-hosted frontend per its own plan, once the owne
 
 ### U7. Shell: grouped navigation, Developer area, open on the composer
 
+> **Supersession (everyday shell IA):** Primary nav labels and “honest empty” Artifacts/Plugins stubs are superseded by `docs/plans/2026-11-06-1222-feat-everyday-chat-ui-plan.md` (KTD1, U2). This unit still owns React full-move leftovers (`spa: false` operator pages, `/developer/*` when that lands). Do not add Search/Computer chrome or fake destinations here.
+
 - **Goal:** Remove the clutter before the chat. (R7)
 - **Requirements:** R7, R14
 - **Files:** `ui/src/components/Sidebar.tsx`, `ui/src/components/NavList.tsx`, `ui/src/App.tsx`, `ui/src/pages/` (operator pages re-routed under `/developer/*`), `tests/e2e/spa.e2e.mjs`
-- **Approach:** Primary items New, Computer (live board of in-flight threads), Automations, Artifacts, Plugins; groups Pinned, Projects, Recents; the account menu holds Settings, Developer, theme. Old routes redirect so bookmarks work. Collapse remembers state; mobile uses a drawer. Not-yet-built destinations (Artifacts, Plugins) render a short honest empty state until their units land.
+- **Approach:** Everyday chat-first rail per the everyday-chat plan; operator pages under progressive disclosure / Developer. Old routes redirect so bookmarks work. Collapse remembers state; mobile uses a drawer.
 - **Test scenarios:** every old operator URL redirects; keyboard navigation and focus order; collapsed state persists; mobile 390 layout; light and dark screenshots; axe 0 violations.
 - **Verification:** ui build; e2e.
 
@@ -256,11 +258,13 @@ Optional last: OC-092 Cloudflare-hosted frontend per its own plan, once the owne
 
 ### U11. Home composer and pickers
 
+> **Supersession:** Search/Computer mode toggle and attach chrome are rejected/deferred by `docs/plans/2026-11-06-1222-feat-everyday-chat-ui-plan.md` (KD1, KD3, U3). Keep effort + Advanced; optional catalog chip when pickers are ready. Do not implement a mode toggle for parity.
+
 - **Goal:** One calm box with the choices that matter and nothing else. (R7, R14)
 - **Requirements:** R7, R14
-- **Files:** `ui/src/components/Composer.tsx`, `ui/src/components/EffortPicker.tsx` (retired into the model and reasoning chip), `tests/e2e/spa.e2e.mjs`
-- **Approach:** Search or Computer toggle, model and reasoning chip fed by `GET /api/models` (catalog and spend rule), attach, dictate. Effort presets remain as reasoning levels inside the chip. Keep the one-box experience: nothing but the box is required to send.
-- **Test scenarios:** models above the spend ceiling are not selectable; mode toggle changes the tools offered; keyboard-only send; screenshots both themes at both widths.
+- **Files:** `ui/src/components/Composer.tsx`, `ui/src/components/EffortPicker.tsx`, `tests/e2e/spa.e2e.mjs`
+- **Approach:** Effort levels remain the default spend control; model/budget under Advanced (or a catalog chip fed by `GET /api/models` when OC-087 pickers land); dictate. No Search/Computer toggle; no attachment button until a backend phase exists. Keep the one-box experience: nothing but the box is required to send.
+- **Test scenarios:** models above the spend ceiling are not selectable; keyboard-only send; screenshots both themes at both widths; assert no Search/Computer control.
 - **Verification:** ui build; e2e.
 
 ### U12. Usage and Settings pages

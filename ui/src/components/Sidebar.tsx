@@ -51,13 +51,20 @@ export function Sidebar({
   earlier: Cleanup;
 }) {
   const fresh = view === "chat" && !selected;
+  const [operatorOpen, setOperatorOpen] = useState(() => {
+    try {
+      return localStorage.getItem("oc.operatorOpen") === "1";
+    } catch {
+      return false;
+    }
+  });
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface-1">
       <div className="px-4 py-4">
         <Brand />
       </div>
 
-      <nav className="px-2">
+      <nav className="px-2" aria-label="Everyday">
         <button
           onClick={() => onSelect("")}
           className={cn(
@@ -89,7 +96,7 @@ export function Sidebar({
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
         <Section
-          title="Chats"
+          title="Recents"
           empty="No chats yet."
           items={threads.map(fromThread)}
           active={view === "chat" ? selected : null}
@@ -113,7 +120,18 @@ export function Sidebar({
       </div>
 
       <div className="border-t border-line px-2 py-2">
-        <details>
+        <details
+          open={operatorOpen}
+          onToggle={(e) => {
+            const next = (e.target as HTMLDetailsElement).open;
+            setOperatorOpen(next);
+            try {
+              localStorage.setItem("oc.operatorOpen", next ? "1" : "0");
+            } catch {
+              /* ignore quota / private mode */
+            }
+          }}
+        >
           <summary className="cursor-pointer select-none px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-muted hover:text-ink">
             Operator
           </summary>
