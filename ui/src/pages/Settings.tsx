@@ -9,6 +9,7 @@ import {
   getOpenRouter,
   startOpenRouterConnect,
 } from "@/lib/api";
+import { getEffects, setEffects } from "@/lib/effects";
 import { useRouter } from "@/lib/router";
 import { useFetch } from "@/lib/useFetch";
 
@@ -22,6 +23,7 @@ export default function Settings() {
   const [failure, setFailure] = useState("");
   const [notice, setNotice] = useState("");
   const done = useRef(false);
+  const [reduce, setReduce] = useState(() => getEffects() === "off");
 
   useEffect(() => {
     const q = new URLSearchParams(search);
@@ -104,6 +106,30 @@ export default function Settings() {
           {failure && <p className="mt-3 text-sm text-urgent">{failure}</p>}
           {notice && <p className="mt-3 text-sm text-accent">{notice}</p>}
         </div>
+      </section>
+      <section aria-labelledby="fx-h" className="mt-4 max-w-xl rounded-xl border border-line bg-surface-1 p-4">
+        <h2 id="fx-h" className="text-sm font-semibold text-ink">
+          Appearance
+        </h2>
+        <label className="mt-2 flex cursor-pointer items-start gap-3 text-sm text-ink">
+          <input
+            type="checkbox"
+            data-testid="reduce-effects"
+            checked={reduce}
+            onChange={(e) => {
+              setReduce(e.target.checked);
+              setEffects(e.target.checked ? "off" : "on");
+            }}
+            className="mt-0.5 h-4 w-4 accent-[var(--sl-accent)]"
+          />
+          <span>
+            Reduce effects
+            <span className="block text-muted">
+              Turns off the background sheen, text reveal, glow and timeline motion. Follows your system's reduced-motion setting until you
+              choose; with that system setting on, motion stays off.
+            </span>
+          </span>
+        </label>
       </section>
     </PageShell>
   );

@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { cost, dur } from "@/lib/format";
 import { plainError, waitingLabel, words } from "@/lib/friendly";
@@ -38,6 +38,15 @@ export const ErrorBlock = ({ e }: { e: ErrorData }) => (
 function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, slide }: StepCardProps) {
   const display = stepDisplay(step);
   const live = display === "running" || display === "waiting";
+  // A step that was live and is now done settles once (CSS; off with effects off).
+  const prevDisplay = useRef(display);
+  const [settle, setSettle] = useState(false);
+  useEffect(() => {
+    if (prevDisplay.current !== display) {
+      if (display === "done" && (prevDisplay.current === "running" || prevDisplay.current === "waiting")) setSettle(true);
+      prevDisplay.current = display;
+    }
+  }, [display]);
   const end = step.endedTs ?? (live ? now ?? undefined : undefined);
   const elapsed = display === "skipped" || step.startedTs == null ? "" : dur(step.startedTs, end);
   const waiting = step.waiting_on;
@@ -47,7 +56,7 @@ function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, 
   const fb = route?.fallbacks?.[0];
   const panel = `step-${step.id}-detail`;
   return (
-    <div className={cn("relative overflow-hidden rounded-xl border bg-surface-1", display === "failed" ? "border-urgent" : "border-line", slide && "animate-strip-in")}>
+    <div className={cn("relative overflow-hidden rounded-xl border bg-surface-1", display === "failed" ? "border-urgent" : "border-line", slide && "animate-strip-in", display === "running" && "fx-step-running", settle && "fx-step-settle")}>
       <button
         type="button"
         aria-expanded={open}

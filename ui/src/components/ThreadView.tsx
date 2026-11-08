@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { GoalOptions, ThreadDetail, ThreadMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Composer } from "./Composer";
+import { Reveal } from "./Reveal";
 import { RunView } from "./RunView";
 
 /** One conversation: messages top to bottom, runs shown inline where the orchestrator started them, one box below. */
@@ -19,6 +20,8 @@ export function ThreadView({
   error: string;
 }) {
   const end = useRef<HTMLDivElement>(null);
+  // Only messages that arrive after this view opened get the text reveal.
+  const loaded = useRef(thread.messages.length);
   const runCount = Object.values(thread.runs).filter(Boolean).length;
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
@@ -30,7 +33,7 @@ export function ThreadView({
         <ol className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-8" aria-label="Conversation">
           {thread.messages.map((m, i) => (
             <li key={i} className="animate-fade-up">
-              <Message m={m} thread={thread} />
+              <Message m={m} thread={thread} fresh={i >= loaded.current} />
             </li>
           ))}
           {thread.working && (
@@ -61,7 +64,7 @@ export function ThreadView({
   );
 }
 
-function Message({ m, thread }: { m: ThreadMessage; thread: ThreadDetail }) {
+function Message({ m, thread, fresh }: { m: ThreadMessage; thread: ThreadDetail; fresh: boolean }) {
   if (m.role === "user") {
     return (
       <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl bg-surface-3 px-4 py-2.5 text-[15px] leading-relaxed text-ink">
@@ -72,7 +75,7 @@ function Message({ m, thread }: { m: ThreadMessage; thread: ThreadDetail }) {
   if (m.role === "run") {
     const run = m.run ? thread.runs[m.run] : null;
     return run ? (
-      <div className="rounded-2xl border border-line bg-surface-1 p-4 shadow-card">
+      <div className="fx-edge rounded-2xl border border-line bg-surface-1 p-4 shadow-card">
         <RunView run={run} compact />
       </div>
     ) : (
@@ -86,7 +89,7 @@ function Message({ m, thread }: { m: ThreadMessage; thread: ThreadDetail }) {
         m.error ? "text-urgent" : "text-ink",
       )}
     >
-      {m.text}
+      <Reveal text={m.text} animate={fresh && !m.error} />
     </p>
   );
 }
