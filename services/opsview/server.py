@@ -261,9 +261,35 @@ def _route(q: str) -> dict:
     }
 
 
-def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
+PLAN_AUTO_USD = 0.05
+PLAN_AUTO_STEPS = 4
+
+
+def plan_hold(review: bool | None = None):
+    """Which plans wait for the owner before any step runs (None: never hold).
+
+    `review` True holds every plan, False none. Otherwise `OC_PLAN_REVIEW` decides: `always`, `off`, or a
+    dollar amount; the default holds a plan whose estimate is over $0.05 or that has more than 4 steps, so a
+    small one-shot goal does not get slower. The planner's estimate is a guess; the run's cap is the hard number."""
+    if review is False:
+        return None
+    if review is True:
+        return lambda subs: True
+    raw = os.environ.get("OC_PLAN_REVIEW", "").strip().lower()
+    if raw == "off":
+        return None
+    if raw == "always":
+        return lambda subs: True
+    try:
+        limit = float(raw) if raw else PLAN_AUTO_USD
+    except ValueError:
+        limit = PLAN_AUTO_USD
+    return lambda subs: len(subs) > PLAN_AUTO_STEPS or sum(float(s.get("est_cost") or 0) for s in subs) > limit
+
+
+def _submit_goal(goal: str, who: str, plan: effort.Plan, review: bool | None = None) -> str:
     """Spending path behind POST /goals confirm. Tests patch this. The plan's model drives the planner and
-    every cloud step; its budget is a hard per-run cap."""
+    every cloud step; its budget is a hard per-run cap. A held plan waits for approval (`plan_hold`)."""
     return goalruns.submit(
         goal,
         goal_engines.decompose_engine(plan.model, effort=plan.effort),
@@ -272,6 +298,7 @@ def _submit_goal(goal: str, who: str, plan: effort.Plan) -> str:
         effort=plan.effort,
         model=plan.model,
         budget=plan.budget,
+        hold=plan_hold(review),
     )
 
 
@@ -373,6 +400,7 @@ POST_ROUTES = [
     (r"/api/runs/clear", "p_api_runs_clear"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/delete", "p_api_run_delete"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/archive", "p_api_run_archive"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/plan", "p_api_run_plan"),
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
     (r"/api/router/test", "p_api_router_test"),
@@ -763,6 +791,13 @@ class Handler(BaseHTTPRequestHandler):
         log.info("run deleted", run=id, by=who)
         self._json(200, {"ok": True})
 
+    def p_api_run_plan(self, who, body, id):
+        """Approve (with optional edits) or cancel a plan held for review."""
+        code, out = goalruns.decide_plan(id, str(body.get("action", "")), body.get("edits"), goal_engines.work_fn)
+        if code == 200:
+            log.info("plan decided", run=id, action=body.get("action"), by=who)
+        self._json(code, out)
+
     def p_api_run_archive(self, who, body, id):
         on = body.get("archived", True) not in (False, "0", "false", 0)
         if not goalruns.archive_run(id, on):
@@ -1061,7 +1096,7 @@ class Handler(BaseHTTPRequestHandler):
                 "goals", views.page_goal_confirm(self._csrf(), goal, daily_cap()), sub="Confirm before it runs"
             )
         try:
-            rid = _submit_goal(goal, who, plan)
+            rid = _submit_goal(goal, who, plan, True) if body.get("review") in ("1", 1, True) else _submit_goal(goal, who, plan)
         except Exception as e:
             if self._wants_json():
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})

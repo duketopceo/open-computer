@@ -90,6 +90,10 @@ def run_status(view: dict) -> str:
     subs = view.get("subtasks") or []
     if view.get("error") and not subs:
         return "failed"
+    if (view.get("plan") or {}).get("state") == "planned":
+        return "waiting for approval"
+    if (view.get("plan") or {}).get("state") == "cancelled":
+        return "failed"
     if (view.get("effort") or {}).get("paused"):
         return "paused (budget)"
     if any(s.get("state") == "AWAITING-APPROVAL" for s in subs):
