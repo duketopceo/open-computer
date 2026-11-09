@@ -3,25 +3,56 @@
 Production runs from the separate worktree managed by `~/bin/oc-deploy`.
 Restarting a service is not a deployment.
 
+## Primary path (public CI auto-deploy)
+
+After CI is green on `main`, the `production approval` job waits on the
+`production` environment (required reviewer: `duketopceo`). Once Luke
+approves that environment, the `deploy (production)` job runs on a
+self-hosted runner labeled `[self-hosted, linux, oc-deploy]` and invokes
+`~/bin/oc-deploy` with the exact merged SHA.
+
+Constraints that keep this safe on a public repository:
+
+- The deploy job has `if: github.event_name == 'push' && github.ref ==
+  'refs/heads/main'`. Pull requests never target the self-hosted label.
+- Job `permissions: {}` — no token beyond the workflow default read.
+- The job checks out no workflow code; it only runs the host script.
+- Stale SHAs are skipped when `main` has already advanced.
+- A failed health check makes `oc-deploy` roll back and fails the job.
+
+Runner setup on the production host: install the GitHub Actions runner into
+`~/actions-runner-oc`, register it to this repository with labels
+`self-hosted`, `linux`, and `oc-deploy`, and run it as a user systemd
+service. Do not register personal hostnames as labels in the public
+workflow.
+
+The older private-control-repo path below remains documented for operators
+who prefer a fully isolated runner. It is not required once the public
+auto-deploy runner is online.
+
 ## Trust boundary
 
-- The public repository runs CI on GitHub-hosted runners. Its `production`
-  environment requires an explicit review by `duketopceo`.
-- An isolated runner registered **only** to the private deployment repository
-  periodically makes a restricted SSH request to the production host. It never
-  runs a public pull-request workflow.
-- The private workflow checks out a reviewed, full-SHA-pinned SSH client.
-  The production host runs its own pinned controller and independently checks
-  CI, approval, and the current `main` SHA.
-- The SSH key must enforce `restrict` and a forced command in `authorized_keys`.
-  Its agent must contain only the deployment key; never forward a general
-  1Password or host SSH agent into the runner. Authorize that dedicated key on
-  the production host only, with no other entries or unrestricted access. Every
-  private workflow step can use its agent. The private repository, runner,
-  host configuration, and administrators remain trusted production components.
-- The single maintainer can approve their own deployment. Approval does not
-  defend against compromise of that maintainer's GitHub account or the
-  production user.
+- The public repository runs CI tests on GitHub-hosted runners. Its
+  `production` environment requires an explicit review by `duketopceo`.
+- Production deploy either (a) runs on the host's self-hosted runner after
+  that approval, as above, or (b) is requested from a private control
+  repository over restricted SSH (see Setup).
+- When using the private path: an isolated runner registered **only** to
+  the private deployment repository periodically makes a restricted SSH
+  request to the production host. It never runs a public pull-request
+  workflow. The private workflow checks out a reviewed, full-SHA-pinned
+  SSH client. The production host runs its own pinned controller and
+  independently checks CI, approval, and the current `main` SHA.
+- The SSH key must enforce `restrict` and a forced command in
+  `authorized_keys`. Its agent must contain only the deployment key;
+  never forward a general 1Password or host SSH agent into the runner.
+  Authorize that dedicated key on the production host only, with no other
+  entries or unrestricted access. Every private workflow step can use its
+  agent. The private repository, runner, host configuration, and
+  administrators remain trusted production components.
+- The single maintainer can approve their own deployment. Approval does
+  not defend against compromise of that maintainer's GitHub account or
+  the production user.
 
 ## Setup
 
