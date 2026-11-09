@@ -6,10 +6,13 @@ only ever pick one of three actions (search, fetch, answer); nothing in a page c
 
 Providers are injected so tests never touch the network:
   * search: BrowserOS neo MCP when `OC_BROWSER_MCP_URL` is set (the owner's browser, default
-    http://127.0.0.1:9010/mcp with `OC_WEB_PROVIDER=browseros`), else a hosted JSON search API from
-    `OC_SEARCH_API_URL` (+ optional `OC_SEARCH_API_KEY`). Neither configured: the step fails with a plain hint.
+    http://127.0.0.1:9010/mcp with `OC_WEB_PROVIDER=browseros`); or Scrapling MCP when
+    `OC_WEB_PROVIDER=scrapling` (default URL `OC_SCRAPLING_MCP_URL` or http://127.0.0.1:8000/mcp);
+    else a hosted JSON search API from `OC_SEARCH_API_URL` (+ optional `OC_SEARCH_API_KEY`).
+    Neither configured: the step fails with a plain hint.
   * fetch: only hosts the egress policy already approves (the same list sandbox steps use), never private or
-    loopback addresses, redirects re-checked, size capped.
+    loopback addresses, redirects re-checked, size capped. Scrapling uses plain `make_request` unless
+    `OC_SCRAPLING_STEALTH=1` (then `browser_fetch_once`; off by default).
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ MAX_FETCHES = 3
 FETCH_CAP = 20_000  # characters of page text kept
 RESULTS_CAP = 6
 DEFAULT_BROWSER_MCP = "http://127.0.0.1:9010/mcp"
+DEFAULT_SCRAPLING_MCP = "http://127.0.0.1:8000/mcp"
 
 
 class WebUnavailable(RuntimeError):
@@ -276,20 +280,67 @@ class BrowserSearch:
         return Page(url, text[:FETCH_CAP], truncated=len(text) > FETCH_CAP)
 
 
+
+
+class ScraplingWeb:
+    """Search and fetch through a Scrapling MCP sidecar (BSD-3-Clause). Host-side; egress still checked here.
+
+    Stealth / browser tools stay off unless OC_SCRAPLING_STEALTH=1. Default tool is `make_request` (HTTP
+    with browser impersonation, no Cloudflare bypass automation).
+    """
+
+    SEARCH_URL = "https://html.duckduckgo.com/html/?q="
+
+    def __init__(self, client: McpClient, *, stealth: bool = False):
+        self.client, self.stealth = client, stealth
+
+    def search(self, query: str) -> list[Hit]:
+        url = self.SEARCH_URL + urllib.parse.quote_plus(query)
+        text = self._get(url)
+        hits: list[Hit] = []
+        for m in re.finditer(r"(https?://[^\s)\]>\"']+)", text):
+            u = m.group(1).rstrip(".,;")
+            host = urllib.parse.urlsplit(u).hostname or ""
+            if "duckduckgo.com" in host or any(h.url == u for h in hits):
+                continue
+            ctx = text[max(0, m.start() - 160): m.start()].strip().splitlines()
+            hits.append(Hit((ctx[-1] if ctx else u)[:200], u))
+            if len(hits) >= RESULTS_CAP:
+                break
+        return hits
+
+    def fetch(self, url: str) -> Page:
+        text = self._get(url)
+        return Page(url, text[:FETCH_CAP], truncated=len(text) > FETCH_CAP)
+
+    def _get(self, url: str) -> str:
+        if self.stealth:
+            return self.client.call("browser_fetch_once", {"url": url})
+        # Prefer markdown/text extraction when the server returns structured content as text blocks.
+        return self.client.call("make_request", {"url": url, "method": "GET"})
+
 def configured_search(env=None):
     """(search provider, optional page reader) from settings, or raises WebUnavailable naming what to set."""
     env = os.environ if env is None else env
     mode = (env.get("OC_WEB_PROVIDER") or "").strip().lower()
+    if mode == "scrapling":
+        url = (env.get("OC_SCRAPLING_MCP_URL") or "").strip() or DEFAULT_SCRAPLING_MCP
+        stealth = (env.get("OC_SCRAPLING_STEALTH") or "").strip().lower() in ("1", "true", "yes", "on")
+        s = ScraplingWeb(McpClient(url), stealth=stealth)
+        return s, s
     mcp = (env.get("OC_BROWSER_MCP_URL") or "").strip() or (DEFAULT_BROWSER_MCP if mode == "browseros" else "")
-    if mode != "hosted" and mcp:
+    if mode not in ("hosted", "scrapling") and mcp:
         b = BrowserSearch(McpClient(mcp))
         return b, b
     api = (env.get("OC_SEARCH_API_URL") or "").strip()
-    if api and mode != "browseros":
+    if api and mode not in ("browseros", "scrapling"):
         return HostedSearch(api, env.get("OC_SEARCH_API_KEY", "")), None
     raise WebUnavailable(
         "web search is not configured",
-        hint="set OC_BROWSER_MCP_URL (BrowserOS neo, e.g. http://127.0.0.1:9010/mcp) or OC_SEARCH_API_URL (+ OC_SEARCH_API_KEY)",
+        hint=(
+            "set OC_WEB_PROVIDER=scrapling (and run a Scrapling MCP on OC_SCRAPLING_MCP_URL), "
+            "or OC_BROWSER_MCP_URL (BrowserOS neo), or OC_SEARCH_API_URL (+ OC_SEARCH_API_KEY)"
+        ),
     )
 
 
