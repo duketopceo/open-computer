@@ -32,6 +32,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from oc.obs import bind, devtrace, get_logger
+from services.openrouter import lanes as or_lanes
 from services.gate.gate import Gate
 from services.gate.queue import ApprovalQueue, QueueError, default_approvals_path
 from services.agents.approvals import ApprovalError
@@ -157,7 +158,7 @@ def router_base() -> str:
 
 
 def paid_router() -> bool:
-    return bool(os.environ.get("OPENROUTER_API_KEY"))
+    return bool(or_lanes.any_key())
 
 
 # ------------------------------------------------------------- read helpers

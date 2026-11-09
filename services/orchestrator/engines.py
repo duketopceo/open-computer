@@ -35,6 +35,7 @@ from services.router.model_catalog import DEFAULT_WORKER_MODEL
 
 from services.openrouter import OpenRouterError, collect_usage, effort_scope, total_usage
 from services.openrouter import chat as or_chat
+from services.openrouter import lanes
 
 from .runner import WorkResult
 
@@ -313,7 +314,7 @@ def sandbox_work(
     if not plane.sandboxes_available():
         backend = os.environ.get("OC_EXECPLANE_BACKEND", "cube")
         raise SandboxWorkerUnavailable(f"{backend} sandbox control plane unreachable")
-    key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
+    key = api_key if api_key is not None else lanes.any_key()  # re-picked per lane when sent
     cache = Path(task["script_cache"]) if task.get("script_cache") else None
     reply = None
     if cache is not None:
@@ -423,7 +424,7 @@ def decompose_engine(
 ) -> Callable[[str], str]:
     """Planner: one OpenRouter call, returns raw text for decompose(). `effort` (low/medium/high) decides whether
     reasoning is requested; None infers it from the model's preset level."""
-    key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
+    key = api_key if api_key is not None else lanes.any_key()  # re-picked per lane when sent
 
     def engine(prompt: str) -> str:
         with effort_scope(effort):
@@ -470,7 +471,7 @@ def work_fn(
     effort: str | None = None,
 ) -> Callable[[dict], str]:
     """The dispatched-task executor. Placement is honored, not decorative. `effort` as for decompose_engine."""
-    key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
+    key = api_key if api_key is not None else lanes.any_key()  # re-picked per lane when sent
 
     def run(task: dict):
         target = task.get("placement", "")

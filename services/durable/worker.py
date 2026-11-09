@@ -14,6 +14,7 @@ import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from services.openrouter import lanes
 from services.telemetry import install_excepthook, report_failure
 
 from .activities import run_status, submit_goal, work_sweep
@@ -36,6 +37,7 @@ async def serve() -> None:
 
 if __name__ == "__main__":
     install_excepthook()
+    lanes.set_process_default("background")  # automations: OPENROUTER_API_KEY_BACKGROUND if set, last in line
     try:
         asyncio.run(serve())
     except Exception as e:
