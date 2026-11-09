@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 _PATTERNS: dict[str, re.Pattern] = {
     "ssn": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-    "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b"),
+    "email": re.compile(r"\b[\w.+-]+@(?:[\w-]+\.)+[A-Za-z]{2,}\b"),  # a real TLD, so "three@0.160.0" is not an address
     "credential": re.compile(
         r"\b(?:sk|pk|api[_-]?key|token|bearer)[-_][\w-]{12,}\b|sk-or-v1-[\w-]+",
         re.IGNORECASE,

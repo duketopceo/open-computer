@@ -322,11 +322,17 @@ def _turn_deps(plan: effort.Plan, who: str) -> threads.Deps:
     )
 
 
-def _start_turn(tid: str, who: str) -> bool:
+def _start_turn(tid: str, who: str, waiting_on: str | None = None) -> bool:
     t = threads.get(tid)
     p = (t or {}).get("effort") or {}
     plan = effort.Plan(p.get("effort", effort.default_id()), p.get("model", ""), float(p.get("budget", 0.1)))
-    return threads.start_turn(tid, _turn_deps(plan, who))
+    return threads.start_turn(tid, _turn_deps(plan, who), waiting_on=waiting_on)
+
+
+def resume_after_plan(run_id: str, who: str) -> bool:
+    """An approved plan carries its chat on: wait for the run, then reply. False when no chat owns the run."""
+    tid = threads.thread_for_run(run_id)
+    return tid is not None and _start_turn(tid, who, waiting_on=run_id)
 
 
 def _resume_goals() -> None:
@@ -833,6 +839,7 @@ class Handler(BaseHTTPRequestHandler):
         code, out = goalruns.decide_plan(id, str(body.get("action", "")), body.get("edits"), goal_engines.work_fn)
         if code == 200:
             log.info("plan decided", run=id, action=body.get("action"), by=who)
+            resume_after_plan(id, who)  # cancelled too: the chat says so instead of waiting on "carry on"
         self._json(code, out)
 
     def p_api_run_archive(self, who, body, id):

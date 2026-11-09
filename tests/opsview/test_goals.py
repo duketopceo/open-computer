@@ -316,14 +316,12 @@ def test_twice_invalid_plan_renders_failed_with_the_validator_message(console, m
 
 def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
     import time
-    from services.orchestrator.engines import LocalModelUnavailable
+    from services.orchestrator.engines import WorkerUnavailable
 
     monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
 
     def wfn(task):
-        raise LocalModelUnavailable(
-            "local model endpoints unreachable: :8080 refused", hint="start llama-local.service"
-        )
+        raise WorkerUnavailable("OPENROUTER_API_KEY is not set", hint="set the key and restart")
 
     rid = goalruns.submit(
         "One task",
@@ -340,11 +338,11 @@ def test_worker_fail_carries_kind_and_hint(console, monkeypatch, tmp_path):
         time.sleep(0.05)
     sub = got["subtasks"][0]
     assert sub["state"] == "FAILED"
-    assert sub["error_kind"] == "LocalModelUnavailable"
-    assert ":8080 refused" in sub["error"] and sub["hint"] == "start llama-local.service"
+    assert sub["error_kind"] == "WorkerUnavailable"
+    assert "OPENROUTER_API_KEY" in sub["error"] and sub["hint"] == "set the key and restart"
     status, _, body = console.get(f"/api/runs/{rid}")
     sub = json.loads(body)["subtasks"][0]
-    assert sub["error_kind"] == "LocalModelUnavailable" and sub["hint"] == "start llama-local.service"
+    assert sub["error_kind"] == "WorkerUnavailable" and sub["hint"] == "set the key and restart"
 
 
 def _write_run(base, rid, rows, thinking=None):

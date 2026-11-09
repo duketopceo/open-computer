@@ -4,14 +4,15 @@ decompose_engine: the planner LLM call (returns text; decompose()
 validates it). work_fn: executes one dispatched task — and honors the
 dispatch's placement for real:
 
-  local-*          -> llama.cpp :8080 (OpenAI-compat), Ollama :11434 fallback
-  cloud-OpenRouter -> OpenRouter chat completion
+  cloud-OpenRouter -> OpenRouter chat completion (with OpenRouter fallbacks)
   cloud-sandbox    -> raises SandboxWorkerUnavailable — sandbox workers
                       are not wired yet (U2 live path); the task fails
                       CLOSED with an honest reason, never a fake result
 
-Keys come from env, never files: OPENROUTER_API_KEY. Models default cheap;
-the user decides when local is proven (U12 eval gate).
+Every model call goes through OpenRouter; there are no local models. A task
+recorded with an old local-* placement runs on OpenRouter too.
+
+Keys come from env, never files: OPENROUTER_API_KEY. Models default cheap.
 """
 
 from __future__ import annotations
@@ -85,10 +86,6 @@ class WorkerUnavailable(RuntimeError):
 
 
 class SandboxWorkerUnavailable(WorkerUnavailable):
-    pass
-
-
-class LocalModelUnavailable(WorkerUnavailable):
     pass
 
 
@@ -439,31 +436,6 @@ def decompose_engine(
     return engine
 
 
-def local_work(task: dict) -> str:
-    """Execute on this machine's local servers — GPU llama.cpp, then Ollama."""
-    prompt = task["prompt"]
-    model = os.environ.get("OC_LOCAL_MODEL", "qwen3-4b")
-    attempts = []
-    try:
-        text, _ = _chat("http://127.0.0.1:8080/v1/chat/completions", model, prompt, timeout=90)
-        return text
-    except (OSError, RuntimeError) as e:
-        attempts.append(f"llama.cpp :8080 — {e}")
-    try:
-        out = _post(
-            "http://127.0.0.1:11434/api/generate",
-            {"model": os.environ.get("OC_OLLAMA_MODEL", "ornith:latest"), "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        return out["response"]
-    except (OSError, RuntimeError) as e:
-        attempts.append(f"ollama :11434 — {e}")
-    raise LocalModelUnavailable(
-        "local model endpoints unreachable: " + "; ".join(attempts),
-        hint="start llama-local.service or ollama.service, or let placement demote to cloud",
-    )
-
-
 def work_fn(
     or_model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
@@ -474,8 +446,6 @@ def work_fn(
 
     def run(task: dict):
         target = task.get("placement", "")
-        if target.startswith("local"):
-            return local_work(task)
         with collect_usage() as used, effort_scope(effort):
             try:
                 if task.get("needs_web") and target != "cloud-sandbox":
@@ -484,7 +454,7 @@ def work_fn(
                     out = web_work(task, lambda p: _chat(OR_CHAT, or_model, p, key=key, timeout=90)[0])
                 elif target == "cloud-sandbox":
                     out = sandbox_work(task, model=or_model, api_key=key)
-                else:  # cloud-OpenRouter and anything unrecognized-but-cloud
+                else:  # cloud-OpenRouter, and any older placement (local-* included)
                     out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
             except Exception as e:
                 e.usage = total_usage(used)  # paid calls made before the failure still count (the runner records it)

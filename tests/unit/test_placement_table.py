@@ -41,13 +41,8 @@ def violations(placer) -> list[str]:
         tag = f"{sub} {kw}"
         if kw["pii_flagged"] and not kw["approved"] and cloud(p):
             out.append(f"I1 {tag} -> {p.target}")
-        if (
-            sub["latency"] == "crit"
-            and not kw["pii_flagged"]
-            and not sub["needs_sandbox"]  # sandbox is a capability target, not a model endpoint
-            and cloud(p)
-        ):
-            out.append(f"I2 {tag} -> {p.target}")
+        if p.target.startswith("local"):
+            out.append(f"I0 {tag} -> {p.target}")  # no local models: every model call goes through OpenRouter
         if (
             kw["headroom"] is not None
             and sub["est_cost"] > kw["headroom"]
@@ -90,8 +85,8 @@ def ungated_pii(sub, **kw):
     return Placement(p.target, p.reason, gate_required=False)
 
 
-def ignores_latency(sub, **kw):
-    return place({**sub, "latency": "normal"}, **kw)
+def goes_local(sub, **kw):
+    return Placement("local-ollama", "broken")
 
 
 @pytest.mark.parametrize(
@@ -101,7 +96,7 @@ def ignores_latency(sub, **kw):
         (ignores_pii, "I1"),
         (ignores_headroom, "I3"),
         (ungated_pii, "I4"),
-        (ignores_latency, "I2"),
+        (goes_local, "I0"),
     ],
 )
 def test_each_invariant_fails_on_a_broken_placer(mutant, invariant):
@@ -134,27 +129,26 @@ def _engine(_goal):
     )
 
 
-def test_dispatch_demotes_to_local_when_the_run_ledger_cannot_cover_the_estimate(tmp_path):
+def test_dispatch_blocks_when_the_run_ledger_cannot_cover_the_estimate(tmp_path):
     led = CostLedger(tmp_path / "c.ndjson", default_cap=0.006)
     orch = Orchestrator(tmp_path / "o", ledger=led)
     orch.run("g", _engine, lambda t: WorkResult(f"did:{t['subtask']}", Usage("m", 1, 1, 0.003)))
     by = {d["subtask"]: d for d in orch.dispatches[next(iter(orch.dispatches))]}
     assert by["a"]["placement"] == "cloud-OpenRouter"  # headroom 0.006 covers 0.004
-    assert by["b"]["placement"] == "local-ollama" and "over-budget" in by["b"]["reason"]
+    assert by["b"]["placement"] == "blocked" and "over-budget" in by["b"]["reason"]
 
 
-def test_local_down_blocks_pii_and_overbudget_instead_of_crash_landing():
-    # Rules 1 and 3 can only demote to local; with every local endpoint dead
-    # the honest answer is `blocked`, not a placement on a corpse.
-    p = place({"tier": "mid"}, pii_flagged=True, approved=False, local_up=False)
-    assert p.target == "blocked" and "local endpoints down" in p.reason
-    p = place({"tier": "mid"}, headroom=0.01, local_up=False)
-    assert p.target == "cloud-OpenRouter"  # est 0.0 fits headroom — unaffected
-    p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=False)
-    assert p.target == "blocked" and "over-budget" in p.reason
-    # With local up the demotion paths are unchanged.
-    p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=True)
-    assert p.target == "local-ollama"
+def test_no_step_ever_lands_on_a_local_model():
+    # Luke's rule: zero local models. Cheap, latency-critical and default steps go to OpenRouter;
+    # unapproved PII and over-budget steps block with the reason instead of demoting to local.
+    for sub in ({"tier": "cheap"}, {"tier": "mid", "latency": "crit"}, {"tier": "local"}, {}):
+        assert place(sub).target == "cloud-OpenRouter", sub
+    p = place({"tier": "mid"}, pii_flagged=True, approved=False)
+    assert p.target == "blocked" and "approve" in p.reason
+    p = place({"tier": "mid"}, headroom=0.01)
+    assert p.target == "cloud-OpenRouter"  # est 0.0 fits headroom
+    p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01)
+    assert p.target == "blocked" and "raise the cap" in p.reason
 
 
 def test_needs_sandbox_is_a_capability_constraint_not_a_quality_pref():
@@ -162,8 +156,6 @@ def test_needs_sandbox_is_a_capability_constraint_not_a_quality_pref():
     # to local or cloud-fallback are chat endpoints that cannot run code.
     p = place({"needs_sandbox": True, "latency": "crit"})
     assert p.target == "cloud-sandbox"
-    p = place({"needs_sandbox": True, "latency": "crit"}, local_up=False)
-    assert p.target == "cloud-sandbox"  # never cloud-OpenRouter for executable work
     # The spend cap still binds: over-budget blocks, never demotes to chat.
     p = place({"needs_sandbox": True, "est_cost": 0.5}, headroom=0.01)
     assert p.target == "blocked" and "raise the cap" in p.reason
@@ -174,10 +166,7 @@ def test_blocked_placement_tombstones_the_subtask(tmp_path):
     # reach a worker, and never leave dependents hanging.
     led = CostLedger(tmp_path / "c.ndjson", default_cap=0.001)
 
-    def no_local(sub, **kw):
-        return place(sub, local_up=False, **kw)
-
-    orch = Orchestrator(tmp_path / "o", place_fn=no_local, ledger=led)
+    orch = Orchestrator(tmp_path / "o", ledger=led)
     orch.run(
         "g",
         _engine,  # subtask a: est 0.004 > headroom 0.001 -> blocked

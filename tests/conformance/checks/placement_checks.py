@@ -1,7 +1,7 @@
 """Placement checks — the rule table's contract (U5).
 
-PII never cloud-unapproved; over-budget, latency-crit and cheap tier
-demote to local; frontier goes cloud through the gate. Targets are
+PII never cloud-unapproved and over-budget steps block (there are no local
+models); latency-crit work goes to OpenRouter; frontier goes cloud through the gate. Targets are
 compared literally — the same words the UI renders.
 """
 
@@ -21,26 +21,26 @@ def _expect(p, target, gate=None) -> None:
 def pii_never_cloud(place, tmp_path) -> None:
     p = place({"tier": "frontier", "latency": "normal"}, pii_flagged=True)
     if p.target.startswith("cloud"):
-        raise CheckFailed(f"PII subtask placed {p.target} — must stay local")
-    _expect(p, "local-ollama")
+        raise CheckFailed(f"PII subtask placed {p.target} — must not reach cloud unapproved")
+    _expect(p, "blocked")
 
 
-@check("PLACE", "over-budget subtask demotes to local")
-def over_budget_goes_local(place, tmp_path) -> None:
+@check("PLACE", "over-budget subtask blocks")
+def over_budget_blocks(place, tmp_path) -> None:
     from services.router import Budget
 
     b = Budget(tmp_path / "ledger.jsonl", daily_cap=0.10, task_cap=0.10)
     b.record(0.09, "stub", "spend")
     p = place({"tier": "mid", "est_cost": 0.05}, budget=b)
-    _expect(p, "local-ollama")
+    _expect(p, "blocked")
     if "over-budget" not in p.reason:
         raise CheckFailed(f"unexpected reason {p.reason!r}")
 
 
-@check("PLACE", "latency-critical subtask stays local")
-def latency_crit_goes_local(place, tmp_path) -> None:
+@check("PLACE", "latency-critical subtask goes to OpenRouter, never a local model")
+def latency_crit_goes_openrouter(place, tmp_path) -> None:
     p = place({"tier": "mid", "latency": "crit"})
-    _expect(p, "local-llamacpp")
+    _expect(p, "cloud-OpenRouter")
 
 
 @check("PLACE", "frontier-required subtask goes cloud and is gated")

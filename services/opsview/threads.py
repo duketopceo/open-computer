@@ -230,7 +230,7 @@ def wait_for_run(rid: str, *, timeout: float = WAIT_TIMEOUT_S, poll: float = 1.0
         if status in ("done", "failed"):
             return "done"
         if status == "waiting for approval":
-            return "approval"
+            return "plan" if ((view or {}).get("plan") or {}).get("state") == "planned" else "approval"
         if status.startswith("paused"):
             return "paused"
         time.sleep(poll)
@@ -238,7 +238,9 @@ def wait_for_run(rid: str, *, timeout: float = WAIT_TIMEOUT_S, poll: float = 1.0
 
 
 _STOP_NOTES = {
-    "approval": "The run is waiting for your approval. Approve it in the run card and tell me to carry on.",
+    # Approving the plan in the card resumes this chat (resume_after_plan), so no "tell me to carry on".
+    "plan": "The plan is ready in the run card. Approve it there and I'll carry on.",
+    "approval": "A step needs your approval. Open Approvals from the run card, then tell me to carry on.",
     "paused": "The run hit its budget and paused. Nothing was cancelled. Tell me to carry on if you want to spend more.",
     "timeout": "The run is taking a long time. It keeps going in the background; ask me for an update.",
 }
@@ -247,10 +249,17 @@ _STOP_NOTES = {
 MAX_RESTORES = 2  # restored spans per user message; bounds a model that keeps asking
 
 
-def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES) -> None:
-    """Drive one user message to a reply. Never raises: a failure becomes an assistant message."""
+def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES, waiting_on: str | None = None) -> None:
+    """Drive one user message to a reply. Never raises: a failure becomes an assistant message.
+
+    `waiting_on` resumes a turn that stopped on a held plan: wait for that run first, then answer as usual."""
     trace = d.trace or _run_trace
     try:
+        if waiting_on is not None:
+            stop = d.wait_run(waiting_on)
+            if stop != "done":
+                append(tid, "assistant", _STOP_NOTES[stop])
+                return
         hits: list[oc_memory.Hit] = []
         first = _read(tid)
         user = _last_user(first) if first else None
@@ -258,7 +267,7 @@ def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES) -> None:
             # One recall per user message, before the first pass; every pass of this turn sees the same notes.
             hits = d.memory.recall(user["text"], oc_memory.Scope(tid), user_ts=user.get("ts"))
         block = oc_memory.render_block(hits)
-        last_run: str | None = None
+        last_run: str | None = waiting_on
         restored: list[dict] = []  # this turn's restored spans, shown after the thread on every later call
         n = 0
         while n <= max_passes:
@@ -307,7 +316,17 @@ def _remember_outcome(mem: oc_memory.Memory, t: dict, tid: str, rid: str, reply:
         trace(rid, "memory_write", {"atom": atom, "title": title[: oc_memory.TITLE_MAX]})
 
 
-def start_turn(tid: str, d: Deps) -> bool:
+def thread_for_run(rid: str) -> str | None:
+    """The chat that started run `rid`, if any."""
+    base = threads_dir()
+    for p in base.glob("th_*.json") if base.exists() else ():
+        t = _read(p.stem)
+        if t is not None and rid in run_ids(t):
+            return t["id"]
+    return None
+
+
+def start_turn(tid: str, d: Deps, waiting_on: str | None = None) -> bool:
     """Run a turn on a daemon thread. False if one is already running for this thread."""
     with _lock:
         if tid in _working:
@@ -316,7 +335,7 @@ def start_turn(tid: str, d: Deps) -> bool:
 
     def go():
         try:
-            run_turn(tid, d)
+            run_turn(tid, d, waiting_on=waiting_on)
         finally:
             _working.discard(tid)
 

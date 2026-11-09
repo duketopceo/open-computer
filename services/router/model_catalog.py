@@ -5,8 +5,8 @@ inputs only; recorded cost still comes from the provider response (services/cost
 
 Spend rule (ROADMAP.md): the price ceiling is Grok 4.7 class, about $1.60 input / $4.80 output per Mtok. An entry
 above it loads only with an explicit `above_ceiling: true` set by hand, and a flagged entry can never be the default
-orchestrator or worker, a preset, a tier member, or a fallback. Local models are a separate list gated by `OC_LOCAL_MODELS`
-and sit outside these price checks.
+orchestrator or worker, a preset, a tier member, or a fallback. There are no local models:
+every call goes through OpenRouter.
 
 Fallbacks: every entry may name an ordered `fallbacks` chain. `call_params` turns it into OpenRouter's native
 `models` array on each chat call, so a provider outage, rate limit or refusal moves the call to the next model
@@ -20,7 +20,6 @@ inside its tier, and the default worker's chain shares no model with any tier.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,7 +32,6 @@ MAX_FALLBACKS = 2  # OpenRouter's `models` array: the primary plus at most two m
 LEVEL_TIERS = {"low": "cheap", "medium": "mid", "high": "frontier"}  # effort level -> the tier it owns
 TIER_SIZE = 3  # each level: its preset plus exactly two fallbacks
 REASONING_LEVELS = {"medium": "medium", "high": "high"}  # effort level -> OpenRouter `reasoning.effort`; Low asks none
-LOCAL_MODELS = ("typesafe/jev-1.13", "local/ollama")  # shown only when OC_LOCAL_MODELS is on
 PATH = Path(__file__).with_name("model_catalog.json")
 
 
@@ -270,12 +268,8 @@ def call_params(model_id: str, effort: str | None = None) -> dict:
     return out
 
 
-def local_models_enabled() -> bool:
-    return os.environ.get("OC_LOCAL_MODELS", "").strip().lower() in ("1", "true", "yes", "on")
-
-
 def payload() -> dict:
-    """The body of GET /api/models: what the pickers show. Local models appear only when the flag is on."""
+    """The body of GET /api/models: what the pickers show. `local` stays empty: there are no local models."""
     out = {
         "ceiling": {"input": CEILING_INPUT, "output": CEILING_OUTPUT},
         "default_orchestrator": CATALOG.default_orchestrator,
@@ -286,6 +280,4 @@ def payload() -> dict:
         "workers": [e.public() for e in CATALOG.workers()],
         "local": [],
     }
-    if local_models_enabled():
-        out["local"] = [{"id": m, "badge": "local"} for m in LOCAL_MODELS]
     return out
