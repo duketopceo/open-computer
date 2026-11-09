@@ -1211,7 +1211,7 @@ for (const w of [1440, 390]) {
 }
 
 // ---- Silver Lining tokens (U19): one token file, dark and light, system by default.
-const CANVAS = { dark: "rgb(9, 9, 9)", light: "rgb(245, 245, 245)" };
+const CANVAS = { dark: "rgb(10, 11, 16)", light: "rgb(246, 246, 249)" }; // Iris, services/opsview/static/oc-palette.css
 const canvasOf = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
 test("@theme system is the default and follows an emulated scheme change without reload", async () => {

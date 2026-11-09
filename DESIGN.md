@@ -103,7 +103,7 @@ Flight Strip still governs the CLI, the approval TUI and the Developer area in S
 - **Tokens:** superseded 2026-10-31 by plan KTD11 (`docs/plans/2026-10-31-003-feat-chat-agent-product-plan.md`): the console shares
   Tallyline's Silver Lining neutral tokens from `services/opsview/static/silver-lining.css`, dark and light, system default with a
   toggle. The earlier charcoal and teal starting point is retired. Values (dark / light): canvas `#090909` / `#f5f5f5`, surfaces
-  `#0f0f0f` to `#252525` dark, accent Azure `#339fee` / `#005fba`. `silver-lining.css` is a plain copy of Tallyline's generated
+  `#0f0f0f` to `#252525` dark, accent Azure `#339fee` / `#005fba` (the web console now overrides neutrals and accent with Iris; see "Colour scheme (2026-11-09)"). `silver-lining.css` is a plain copy of Tallyline's generated
   file from its main branch (`packages/silver-lining/scripts/sync-open-computer.ts`); never hand-edit it. Open Computer's own
   scale tokens (type, space, radius, density, motion) and the `--color-*-soft` aliases live in `oc-scale.css`. The SPA imports
   both through the `@tokens` Vite alias and `ui/tailwind.config.ts` maps its colour names to the `--sl-*` variables.
@@ -138,3 +138,29 @@ still governs the CLI, the approval TUI and Settings > Developer.
   the shader and View Transitions; the settled state shows at once and nothing is ever hidden waiting for an animation.
 - **Budgets:** the main SPA chunk stays under 130 kB gzip; the shader chunk under 8 kB gzip. CI fails the build past either.
 - **Still rejected:** glassmorphism, 3D scenes, particle fields, glow used as decoration, robot or brain imagery.
+
+## Colour scheme (2026-11-09)
+
+Luke asked for a real colour scheme: the console was near-monochrome with a blue Send button that did not belong to anything.
+This section amends the palette line in "Look" above for the web console. Status colours, overlays and the high-contrast
+themes stay Silver Lining's.
+
+- **Iris:** one accent, iris violet, plus cool slate neutrals. It is distinct from every status colour (red, amber, green,
+  grey), so "live or needs you" never reads as "done" or "failed".
+- **Tokens** live in `services/opsview/static/oc-palette.css`, loaded after `silver-lining.css`. Never edit the Silver Lining copy.
+
+| Token | Dark | Light |
+| --- | --- | --- |
+| `--sl-canvas` | `#0a0b10` | `#f6f6f9` |
+| `--sl-surface-1` / `-2` / `-3` / `-4` | `#0f1017` / `#15161f` / `#1c1e28` / `#232532` | `#ffffff` / `#eeeef3` / `#e7e7ef` / `#dfe0e9` |
+| `--sl-lining` | `#424459` | `#aeb0c0` |
+| `--sl-ink` / `-muted` / `-subtle` | `#e6e6ec` / `#c9cad6` / `#a3a4b3` | `#17171f` / `#33343f` / `#52536a` |
+| `--sl-accent` (hover, pressed) | `#8f8cf7` (`#a9a6ff`, `#7672e8`) | `#4f46d8` (`#443cc4`, `#3a33ad`) |
+| `--sl-on-accent` | `#0a0b10` | `#ffffff` |
+
+- **Use:** the accent marks a live run, something that needs you, focus, and the one primary action (Send, Connect).
+  Nothing else gets it.
+- **Thinking glow:** while a chat's run works, an accent arc sweeps the composer edge over a soft halo. It is the one
+  ambient "working" signal. Reduced motion and Reduce effects keep the ring and halo, static.
+- **Checked:** `ui/src/lib/palette.test.ts` holds accent and inks at 4.5:1 or more on canvas, surface-1 and surface-3, and
+  on-accent at 4.5:1 or more on the accent, in both themes. Axe runs in e2e.
