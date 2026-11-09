@@ -22,7 +22,8 @@ status: awaiting owner OK
 - Every POST checks `Origin` against the request `Host` and an `X-CSRF-Token` from `GET /api/session`. A proxy that changes `Host` without fixing `Origin` gets 403.
 - The passkey relying-party id comes from the `Host` header (`rp_for`); `OC_RP_PARENT=example.com` makes all subdomains share one rp id.
 - The SPA only calls same-origin paths: `/api/*`, `POST /goals`, `/_frag/*`. `ui/src/lib/api.ts` already maps a network error to an `offline` link state and a 401 to `auth`.
-- SSE is `GET /goals/<id>/events` with `Last-Event-ID` resume (`docs/design/event-stream.md`).
+- SSE is `GET /goals/<id>/events` with `Last-Event-ID` resume (`docs/design/event-stream.md`). When daily-driver thread streaming lands, dynamic prefixes must also include `GET /api/threads/<id>/events` (see `docs/plans/2026-11-06-1222-feat-everyday-chat-ui-plan.md` U7).
+- Everyday chat keeps relative same-origin `/api/*` calls, CSRF on writes, and honest offline (composer disabled, writes never queued) — do not redesign the SPA for a second API origin.
 - Server-rendered routes still live in opsview: `/login`, `/enroll`, `/webauthn/*`, `/workspace*`, `/runs/new`, `/runs/<id>`, `/goals/new`.
 
 ## Recommendation: one Worker, same origin, proxy everything dynamic

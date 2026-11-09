@@ -28,7 +28,105 @@
   }
 }
 
-/* Reduced motion: show the settled state at once instead of fading in. */
+/* ---- Effects -------------------------------------------------------------------------------
+   Everything decorative lives below. Animations are declared only inside the "effects on" gate
+   (no prefers-reduced-motion AND no html[data-effects="off"]), so the default state of every
+   element is static and fully visible. Colours are the existing --sl-* tokens only. */
+
+/* Carbon-fibre weave: two crossing diagonal hairlines plus a faint checker, on the canvas only
+   (cards and the sidebar stay opaque, so text never sits on the pattern). Dark is the default. */
+:root {
+  --fx-weave: rgba(255, 255, 255, 0.035);
+  --fx-weave-2: rgba(0, 0, 0, 0.35);
+  --fx-sheen: rgba(255, 255, 255, 0.05);
+}
+:root[data-theme="light"] {
+  --fx-weave: rgba(0, 0, 0, 0.04);
+  --fx-weave-2: rgba(255, 255, 255, 0.7);
+  --fx-sheen: rgba(255, 255, 255, 0.9);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --fx-weave: rgba(0, 0, 0, 0.04);
+    --fx-weave-2: rgba(255, 255, 255, 0.7);
+    --fx-sheen: rgba(255, 255, 255, 0.9);
+  }
+}
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+body::before {
+  background:
+    repeating-linear-gradient(45deg, var(--fx-weave) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(-45deg, var(--fx-weave) 0 1px, transparent 1px 5px),
+    conic-gradient(from 90deg at 50% 50%, var(--fx-weave-2) 0 25%, transparent 0 50%, var(--fx-weave-2) 0 75%, transparent 0) 0 0 / 10px 10px;
+}
+/* The sheen: one wide soft band that drifts across the weave very slowly. */
+body::after {
+  inset: -10% -60%;
+  background: linear-gradient(100deg, transparent 42%, var(--fx-sheen) 50%, transparent 58%);
+  opacity: 0;
+}
+
+@keyframes fx-sheen {
+  0% { transform: translateX(-30%); opacity: 0; }
+  15%, 85% { opacity: 1; }
+  100% { transform: translateX(30%); opacity: 0; }
+}
+@keyframes fx-word {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fx-edge {
+  0% { border-color: var(--sl-accent); box-shadow: 0 0 0 1px var(--sl-accent), 0 0 22px 0 var(--sl-accent-soft); }
+  100% { border-color: var(--sl-lining); box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+}
+@keyframes fx-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes fx-edge-run {
+  0%, 100% { box-shadow: inset 2px 0 0 0 var(--sl-accent-soft); }
+  50% { box-shadow: inset 2px 0 0 0 var(--sl-accent); }
+}
+@keyframes fx-settle {
+  0% { transform: scale(1.012); background-color: var(--sl-accent-soft); }
+  100% { transform: none; }
+}
+
+/* Focus inside the composer or a run card tints the edge with the accent (static, always on). */
+.fx-edge:focus-within {
+  border-color: var(--sl-accent);
+  box-shadow: 0 0 0 1px var(--sl-accent), 0 0 18px -4px var(--sl-accent-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-effects="off"]) body::after {
+    animation: fx-sheen 70s ease-in-out infinite;
+  }
+  html:not([data-effects="off"]) .fx-word {
+    animation: fx-word 0.4s ease-out both;
+  }
+  html:not([data-effects="off"]) .fx-sent {
+    animation: fx-edge 0.9s ease-out;
+  }
+  html:not([data-effects="off"]) .fx-mark-running svg {
+    animation: fx-pulse 1.6s ease-in-out infinite;
+  }
+  html:not([data-effects="off"]) .fx-step-running {
+    animation: fx-edge-run 2.4s ease-in-out infinite;
+  }
+  html:not([data-effects="off"]) .fx-step-settle {
+    animation: fx-settle 0.6s ease-out;
+  }
+}
+
+/* Reduced motion or "Reduce effects": show the settled state at once instead of fading in. */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
   .animate-strip-in {
@@ -39,4 +137,12 @@
     animation: none;
     transform: none;
   }
+}
+html[data-effects="off"] .animate-fade-up,
+html[data-effects="off"] .animate-strip-in {
+  animation: none;
+}
+html[data-effects="off"] .animate-run-line {
+  animation: none;
+  transform: none;
 }

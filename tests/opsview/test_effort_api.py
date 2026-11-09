@@ -166,6 +166,17 @@ def test_resume_without_an_effort_uses_the_plain_worker_and_no_ledger(monkeypatc
     assert wfn({}) == "default" and orch.ledger is None
 
 
+def test_voice_endpoint_reports_availability_without_uploading_audio(console, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    status, headers, body = console.get("/api/voice")
+    d = json.loads(body)
+    assert status == 200 and headers["Content-Type"].startswith("application/json")
+    assert d == {"available": False, "reason": "voice not configured"}
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    status, _, body = console.get("/api/voice")
+    assert status == 200 and json.loads(body) == {"available": True}
+
+
 def test_models_endpoint_serves_the_catalog_with_prices_and_the_above_ceiling_mark(console, monkeypatch):
     from services.router import model_catalog
 

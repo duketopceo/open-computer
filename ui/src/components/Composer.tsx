@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, getEffort, transcribe, type GoalOptions } from "@/lib/api";
+import { ApiError, errorMessage, getEffort, transcribe, voiceStatus, type GoalOptions } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useFetch } from "@/lib/useFetch";
 import { EffortPicker, toOptions, type EffortChoice } from "./EffortPicker";
 import { Button } from "./primitives";
 
-type RecState = "idle" | "starting" | "recording" | "transcribing";
+type RecState = "idle" | "probing" | "starting" | "recording" | "transcribing";
 
 // Whisper's 25 MB upload cap is ~20+ min of opus; stop well before it.
 const MAX_RECORDING_MS = 120_000;
@@ -51,6 +51,8 @@ export function Composer({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | undefined>();
+  const sentTimer = useRef<number | undefined>();
+  const [sent, setSent] = useState(false); // brief edge glow after a send
   // Set on unmount: late getUserMedia results and pending onstop handlers
   // must release the mic and never upload audio for a view that's gone.
   const cancelledRef = useRef(false);
@@ -64,6 +66,7 @@ export function Composer({
     return () => {
       cancelledRef.current = true;
       window.clearTimeout(timerRef.current);
+      window.clearTimeout(sentTimer.current);
       const r = recorderRef.current;
       recorderRef.current = null;
       if (r && r.state !== "inactive") r.stop(); // onstop sees cancelled → no upload
@@ -90,8 +93,30 @@ export function Composer({
     }
     if (rec !== "idle") return;
     setErr("");
+    setRec("probing");
+    // Probe the server before asking for the mic so a missing Groq key never
+    // prompts for permission only to fail after a recording.
+    try {
+      const status = await voiceStatus();
+      if (cancelledRef.current) return;
+      if (!status.available) {
+        setErr(status.reason === "voice not configured" ? "Dictation isn’t available on this server." : status.reason || "Dictation isn’t available.");
+        setRec("idle");
+        return;
+      }
+    } catch (e) {
+      if (cancelledRef.current) return;
+      if (e instanceof ApiError && e.status === 503) {
+        setErr("Dictation isn’t available on this server.");
+      } else {
+        setErr(errorMessage(e, "Couldn’t check dictation."));
+      }
+      setRec("idle");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setErr("Voice input isn't supported in this browser.");
+      setRec("idle");
       return;
     }
     setRec("starting");
@@ -168,13 +193,16 @@ export function Composer({
     if (!opts) return;
     onSend(value.trim(), showEffort ? opts : {});
     setValue("");
+    setSent(true);
+    window.clearTimeout(sentTimer.current);
+    sentTimer.current = window.setTimeout(() => setSent(false), 900);
   };
 
   const mic = (
     <button
       type="button"
       onClick={toggleVoice}
-      disabled={disabled || busy || rec === "starting" || rec === "transcribing"}
+      disabled={disabled || busy || rec === "probing" || rec === "starting" || rec === "transcribing"}
       aria-label={rec === "recording" ? "Stop recording" : "Dictate"}
       title="Dictate (Groq LPU)"
       className={cn(
@@ -182,7 +210,7 @@ export function Composer({
         rec === "recording" ? "bg-urgent text-on-accent" : "text-muted hover:bg-surface-3",
       )}
     >
-      {rec === "transcribing" || rec === "starting" ? (
+      {rec === "transcribing" || rec === "probing" || rec === "starting" ? (
         <span className="h-3 w-3 animate-pulse rounded-full border border-line-strong" />
       ) : (
         <MicIcon />
@@ -192,7 +220,7 @@ export function Composer({
 
   return (
     <div className="w-full max-w-2xl">
-      <div className="rounded-2xl border border-line bg-surface-1 p-3 shadow-composer">
+      <div className={cn("fx-edge rounded-2xl border border-line bg-surface-1 p-3 shadow-composer", sent && "fx-sent")}>
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -233,11 +261,13 @@ export function Composer({
       </div>
       {rec !== "idle" && (
         <p className="mt-2 text-center text-xs text-muted" role="status">
-          {rec === "starting"
-            ? "Waiting for the microphone…"
-            : rec === "recording"
-              ? "Listening — click the mic to finish (2 min max)."
-              : "Transcribing…"}
+          {rec === "probing"
+            ? "Checking dictation…"
+            : rec === "starting"
+              ? "Waiting for the microphone…"
+              : rec === "recording"
+                ? "Listening — click the mic to finish (2 min max)."
+                : "Transcribing…"}
         </p>
       )}
       {err && (

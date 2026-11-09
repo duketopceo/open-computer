@@ -94,6 +94,26 @@ export interface RunEffort {
   paused: boolean;
 }
 
+export interface PlanStep {
+  id: string;
+  title: string;
+  prompt: string;
+  deps?: string[];
+  tier?: string | null;
+  est_cost?: number | null;
+  needs_egress?: boolean;
+  egress_hosts?: string[];
+}
+
+// A plan the run holds for the owner: nothing runs while `state` is "planned".
+export interface RunPlan {
+  state: "planned" | "approved" | "cancelled";
+  estimate: number;
+  budget: number | null;
+  model: string | null;
+  steps: PlanStep[];
+}
+
 export interface RunDetail {
   run: string;
   goal: string;
@@ -105,6 +125,7 @@ export interface RunDetail {
   started?: number;
   ended?: number;
   plan_thinking?: string;
+  plan?: RunPlan;
   effort?: RunEffort;
   error?: string;
   error_kind?: string;
@@ -237,6 +258,30 @@ export async function getRun(id: string): Promise<RunDetail> {
   return json<RunDetail>(`/api/runs/${encodeURIComponent(id)}`);
 }
 
+// ---- run files (artifacts): derived from the run's results, listed without bodies
+export interface ArtifactItem {
+  name: string;
+  step: string;
+  size?: number;
+  mime?: string;
+  /** over the size limit: listed, never saved */
+  refused?: string;
+}
+export const getArtifacts = async (id: string) =>
+  (await json<{ artifacts?: ArtifactItem[] }>(`/api/runs/${encodeURIComponent(id)}/artifacts`)).artifacts ?? [];
+export const artifactUrl = (id: string, name: string, download = false) =>
+  name === "files.zip"
+    ? `/api/runs/${encodeURIComponent(id)}/artifacts.zip`
+    : `/api/runs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(name)}${download ? "?download=1" : ""}`;
+export async function getArtifactText(id: string, name: string): Promise<string> {
+  const r = await fetch(artifactUrl(id, name), { credentials: "same-origin" });
+  if (!r.ok) throw new ApiError("file unavailable", "client", r.status);
+  return r.text();
+}
+
+export const decidePlan = (id: string, action: "approve" | "cancel", edits: Record<string, unknown>[] = []) =>
+  postJson<{ state: string }>(`/api/runs/${encodeURIComponent(id)}/plan`, { action, edits });
+
 // JSON POST with a fresh CSRF token (the convention for every mutation).
 export async function postJson<T>(url: string, body: unknown): Promise<T> {
   const token = await csrf();
@@ -291,6 +336,15 @@ export interface GoalReply {
 
 export async function submitGoal(goal: string, confirm: boolean, opts: GoalOptions = {}): Promise<GoalReply> {
   return postJson("/goals", { goal, ...opts, confirm: confirm ? "1" : undefined });
+}
+
+export interface VoiceStatus {
+  available: boolean;
+  reason?: string;
+}
+
+export async function voiceStatus(): Promise<VoiceStatus> {
+  return json<VoiceStatus>("/api/voice");
 }
 
 export async function transcribe(audio: Blob): Promise<string> {

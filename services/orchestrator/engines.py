@@ -478,7 +478,11 @@ def work_fn(
             return local_work(task)
         with collect_usage() as used, effort_scope(effort):
             try:
-                if target == "cloud-sandbox":
+                if task.get("needs_web") and target != "cloud-sandbox":
+                    from services.orchestrator.tools.web import web_work
+
+                    out = web_work(task, lambda p: _chat(OR_CHAT, or_model, p, key=key, timeout=90)[0])
+                elif target == "cloud-sandbox":
                     out = sandbox_work(task, model=or_model, api_key=key)
                 else:  # cloud-OpenRouter and anything unrecognized-but-cloud
                     out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)

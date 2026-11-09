@@ -9,7 +9,7 @@ export interface NavItem {
 }
 
 export const NAV: NavItem[] = [
-  { label: "Computer", href: "/", spa: true },
+  { label: "Chat", href: "/", spa: true },
   { label: "Work", href: "/work", spa: false },
   { label: "Overview", href: "/overview", spa: false },
   { label: "Goals", href: "/goals", spa: false },

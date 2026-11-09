@@ -37,8 +37,8 @@ after(async () => { await browser?.close(); server?.kill(); });
 
 const json = (status, body) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 
-async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, path = "/" } = {}) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", colorScheme: scheme });
+async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, path = "/", motion = "reduce" } = {}) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: motion, colorScheme: scheme });
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
   // Empty runs list by default so the composer (not a run) is the landing view.
@@ -46,6 +46,8 @@ async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, p
   // The sidebar reads /api/dev; the fixture server predates it, so answer it here (tests override).
   await page.route("**/api/dev", (r) => r.fulfill(json(200, { trace: false, env: false, active: false })));
   await page.route("**/api/runs/*/events*", (r) => r.fulfill(json(404, { error: "dev trace off for this run" })));
+  // Fake run ids: an unrouted files request reaches the fixture server and can stay pending, starving networkidle.
+  await page.route("**/api/runs/*/artifacts", (r) => r.fulfill(json(200, { artifacts: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   if (setup) await setup(page);
   await page.goto(base + path, { waitUntil: "networkidle" });
@@ -119,6 +121,8 @@ test("@flow chat: double Send opens one chat, a failed send keeps the text, retr
 test("@errors unreachable API shows the connection banner", async () => {
   const { ctx, page } = await open({ routes: { "**/api/threads*": (r) => r.abort("connectionrefused") } });
   await page.getByRole("status").filter({ hasText: "Connection lost" }).waitFor();
+  await page.getByRole("textbox", { name: "Message" }).fill("anything");
+  assert.ok(await page.getByRole("button", { name: "Send", exact: true }).isDisabled(), "offline disables send; never queues");
   await ctx.close();
 });
 
@@ -127,6 +131,52 @@ test("@errors expired session shows sign-in and disables the composer", async ()
   await page.getByRole("status").filter({ hasText: "Your session expired" }).waitFor();
   await page.getByRole("textbox", { name: "Message" }).fill("anything");
   assert.ok(await page.getByRole("button", { name: "Send", exact: true }).isDisabled());
+  await ctx.close();
+});
+
+test("@chat Operator stays collapsed by default and has no fake Attachments/Projects/Teammates chrome", async () => {
+  const { ctx, page } = await open();
+  assert.equal(await page.getByRole("navigation", { name: "Operator" }).count(), 0);
+  await page.getByText("Operator", { exact: true }).click();
+  await page.getByRole("navigation", { name: "Operator" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: /Attachments|Projects|Teammates|Customize|Search/ }).count(), 0);
+  assert.equal(await page.getByRole("radio", { name: /Search|Computer/ }).count(), 0);
+  await ctx.close();
+});
+
+test("@chat dictation unavailable before recording when voice is not configured", async () => {
+  const { ctx, page } = await open({
+    routes: { "**/api/voice": (r) => r.fulfill(json(200, { available: false, reason: "voice not configured" })) },
+  });
+  await page.getByRole("button", { name: "Dictate" }).click();
+  await page.getByRole("alert").filter({ hasText: /Dictation isn’t available|Dictation isn't available/ }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Dictate" }).getAttribute("aria-label"), "Dictate");
+  await ctx.close();
+});
+
+test("@chat awaiting-approval run shows Open Approvals from the inline run card", async () => {
+  const run = {
+    ...RUN,
+    subtasks: [
+      {
+        ...RUN.subtasks[0],
+        state: "AWAITING-APPROVAL",
+        approval: "ap_e2e01",
+        finished_ts: null,
+      },
+    ],
+  };
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/threads": (r) => r.fulfill(json(200, { threads: [{ id: "th_e2e00001", title: "say hi", ts: 1, archived: false, working: true, finished: false }] })),
+      "**/api/threads/th_e2e00001": (r) =>
+        r.fulfill(json(200, THREAD({ working: true, runs: { g_e2e01: run }, messages: THREAD().messages.slice(0, 3) }))),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, run)),
+    },
+    path: "/#th_e2e00001",
+  });
+  await page.getByRole("status").filter({ hasText: "Needs approval" }).waitFor();
+  assert.ok(await page.getByRole("link", { name: "Open Approvals" }).isVisible());
   await ctx.close();
 });
 
@@ -155,6 +205,8 @@ async function openAt(path, { w = 1440, h = 900, routes = {} } = {}) {
   const page = await ctx.newPage();
   await page.route("**/api/dev", (r) => r.fulfill(json(200, { trace: false, env: false, active: false })));
   await page.route("**/api/runs/*/events*", (r) => r.fulfill(json(404, { error: "dev trace off for this run" })));
+  // Fake run ids: an unrouted files request reaches the fixture server and can stay pending, starving networkidle.
+  await page.route("**/api/runs/*/artifacts", (r) => r.fulfill(json(200, { artifacts: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   await page.goto(base + path, { waitUntil: "networkidle" });
   return { ctx, page };
@@ -247,7 +299,7 @@ test("@nav every SPA nav entry deep-links with one current item; unported entrie
   const { ctx, page } = await openAt("/devices");
   const nav = page.getByRole("navigation", { name: "Console" });
   const entries = await nav.getByRole("link").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
-  assert.deepEqual(entries.map(([t]) => t), ["Computer", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace", "Settings"]);
+  assert.deepEqual(entries.map(([t]) => t), ["Chat", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace", "Settings"]);
   for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit", "/settings"]) {
     const { ctx: c2, page: p2 } = await openAt(href);
     if (href !== "/") {
@@ -1314,7 +1366,7 @@ test("@flow run page: only steps with detected PII say private; an empty list an
 // ---------------------------------------------------------------------------
 // Run timeline (dev mode): events come from routed fixtures, never a live run.
 // ---------------------------------------------------------------------------
-import { GID, manySteps, threeSteps } from "./timeline-fixture.mjs";
+import { GID, manySteps, stream, threeSteps } from "./timeline-fixture.mjs";
 
 const TL = `/#${GID}/timeline`;
 const PROBE = 2 ** 31 - 1;
@@ -1672,6 +1724,64 @@ test("@flow run page: a step skipped because a dependency failed says so and sho
   await ctx.close();
 });
 
+// ---------------------------------------------------------------------------
+// Sidebar icon rail: collapse, Ctrl/Cmd+B, remembered state, tooltips, phone width.
+// ---------------------------------------------------------------------------
+const RAIL_SHOTS = path.join(os.homedir(), "oc-shots");
+const rail = (page) => page.locator("aside#app-sidebar");
+
+test("@rail Ctrl+B collapses to an icon rail with named, tooltipped icons; the choice survives a reload", async () => {
+  const { ctx, page } = await open();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "false", "expanded by default on desktop");
+  await page.keyboard.press("Control+b");
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true");
+  assert.ok((await rail(page).boundingBox()).width <= 60, "rail is narrow");
+  assert.equal(await page.evaluate(() => localStorage.getItem("oc.sidebarCollapsed")), "1");
+  for (const name of ["New chat", "Agent jobs", "Expand sidebar"]) {
+    const b = rail(page).getByRole("button", { name });
+    assert.equal(await b.getAttribute("title") ?? name, name === "Expand sidebar" ? "Expand sidebar (Ctrl+B)" : name);
+  }
+  await rail(page).getByRole("button", { name: "Agent jobs" }).hover();
+  assert.ok(await rail(page).getByText("Agent jobs", { exact: true }).isVisible(), "tooltip shows on hover");
+  assert.equal(await page.getByText("Recents").count(), 0, "chat list is not rendered in the rail");
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "remembered after reload");
+  assert.deepEqual(await axeViolations(page), [], "rail axe");
+  fs.mkdirSync(RAIL_SHOTS, { recursive: true });
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-collapsed-light.png") });
+  await rail(page).getByRole("button", { name: "Expand sidebar" }).click();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "false");
+  assert.equal(await page.evaluate(() => localStorage.getItem("oc.sidebarCollapsed")), "0");
+  await page.keyboard.press("Meta+b");
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "Cmd+B works too");
+  await ctx.close();
+});
+
+test("@rail dark rail screenshot has 0 axe violations", async () => {
+  const { ctx, page } = await open({ scheme: "dark" });
+  await page.keyboard.press("Control+b");
+  assert.deepEqual(await axeViolations(page), []);
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-collapsed-dark.png") });
+  await ctx.close();
+});
+
+test("@rail phone width starts as a rail, opens as an overlay, closes on choosing, never scrolls sideways", async () => {
+  const { ctx, page } = await open({ w: 390, h: 800 });
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "phones start collapsed");
+  assert.ok(await noHScroll(page));
+  assert.ok(await page.getByRole("textbox", { name: "Message" }).isVisible());
+  assert.ok((await page.getByRole("textbox", { name: "Message" }).boundingBox()).width > 250, "the composer keeps room");
+  await rail(page).getByRole("button", { name: "Expand sidebar" }).click();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "false");
+  assert.ok(await noHScroll(page));
+  assert.deepEqual(await axeViolations(page), [], "open overlay axe");
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-mobile-open.png") });
+  await rail(page).getByRole("button", { name: "New chat" }).click();
+  assert.equal(await rail(page).getAttribute("data-collapsed"), "true", "choosing puts the overlay away");
+  await page.screenshot({ path: path.join(RAIL_SHOTS, "rail-mobile.png") });
+  await ctx.close();
+});
+
 test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges once, Disconnect resets", async () => {
   let connected = false;
   const posts = [];
@@ -1703,5 +1813,189 @@ test("@flow settings: Connect OpenRouter starts PKCE, the callback exchanges onc
   await page.getByRole("button", { name: "Disconnect" }).click();
   await page.getByText("Not connected.").waitFor();
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0], "no key or code in browser storage");
+  await ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Effects: "Reduce effects" switch, motion gates, light and dark shots.
+// ---------------------------------------------------------------------------
+const SHOTS = path.join(os.homedir(), "oc-shots");
+
+const liveStream = () => {
+  const s = stream();
+  s.add("run", { status: "running", title: "Summarise the sales sheet", cap_usd: 0.5 });
+  s.add("step", { id: "step_t1", title: "Fetch the sheet", status: "done" });
+  s.add("step", { id: "step_t2", title: "Parse the rows", status: "running" });
+  s.add("step", { id: "step_t3", title: "Write the report", status: "pending" });
+  s.add("cost", { spent_usd: 0.004, cap_usd: 0.5 });
+  return s;
+};
+const cssAnimations = (page) =>
+  page.evaluate(() => document.getAnimations().filter((a) => a instanceof CSSAnimation && a.playState === "running").map((a) => a.animationName));
+
+test("@effects the Reduce effects switch sets data-effects on <html> and survives a reload", async () => {
+  const { ctx, page } = await open({ path: "/settings", motion: "no-preference" });
+  const html = page.locator("html");
+  const box = page.getByRole("checkbox", { name: /Reduce effects/ });
+  assert.equal(await html.getAttribute("data-effects"), null, "effects are on by default when the OS does not ask for less motion");
+  assert.equal(await box.isChecked(), false);
+  await box.check();
+  assert.equal(await html.getAttribute("data-effects"), "off");
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await html.getAttribute("data-effects"), "off", "remembered after reload");
+  assert.equal(await page.getByRole("checkbox", { name: /Reduce effects/ }).isChecked(), true);
+  assert.equal(await page.evaluate(() => localStorage.getItem("oc-effects")), "off");
+  await page.getByRole("checkbox", { name: /Reduce effects/ }).uncheck();
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await html.getAttribute("data-effects"), null);
+  await ctx.close();
+});
+
+test("@effects with no stored choice the OS reduced-motion preference turns effects off", async () => {
+  const { ctx, page } = await open({ path: "/settings", motion: "reduce" });
+  assert.equal(await page.locator("html").getAttribute("data-effects"), "off");
+  assert.equal(await page.getByRole("checkbox", { name: /Reduce effects/ }).isChecked(), true);
+  await ctx.close();
+});
+
+test("@effects reduced motion and the switch each leave no running animations; effects on animate", async () => {
+  const s = liveStream();
+  const routes = timelineRoutes(() => s.events, { finished: () => false });
+  const run = async (motion, stored) => {
+    const { ctx, page } = await open({ routes, path: TL, motion, setup: stored ? (p) => p.addInitScript((v) => localStorage.setItem("oc-effects", v), stored) : undefined });
+    await steps(page).nth(1).waitFor();
+    const names = await cssAnimations(page);
+    await ctx.close();
+    return names;
+  };
+  assert.deepEqual(await run("reduce"), [], "prefers-reduced-motion: no running animations");
+  assert.deepEqual(await run("no-preference", "off"), [], "switch off: no running animations");
+  const on = await run("no-preference");
+  for (const n of ["fx-sheen", "fx-pulse", "fx-edge-run"]) assert.ok(on.includes(n), `effects on: ${n} runs (${on})`);
+});
+
+for (const scheme of ["light", "dark"]) {
+  test(`@effects ${scheme}: weave and running timeline have 0 axe violations; screenshot saved`, async () => {
+    const s = liveStream();
+    const routes = timelineRoutes(() => s.events, { finished: () => false });
+    const { ctx, page } = await open({ routes, path: TL, scheme, motion: "no-preference" });
+    await steps(page).nth(1).waitFor();
+    assert.deepEqual(await axeViolations(page), [], `timeline ${scheme}`);
+    fs.mkdirSync(SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(SHOTS, `effects-${scheme}.png`) });
+    await ctx.close();
+  });
+}
+
+// Live view for everyone: a run with a stream opens on the live view; dev mode off hides raw model detail.
+for (const scheme of ["light", "dark"]) {
+  test(`@live the run page opens on the live view with sandbox activity, no dev mode needed (${scheme})`, async () => {
+    const s = threeSteps();
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: GID, goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        [`**/api/runs/${GID}`]: (r) => r.fulfill(json(200, { ...RUN, run: GID })),
+        ...timelineRoutes(() => s.events, undefined, false),
+      },
+      path: `/#${GID}`,
+    });
+    await steps(page).first().waitFor();
+    assert.equal(await steps(page).count(), 3);
+    await page.getByTestId("activity").waitFor();
+    assert.ok(await page.getByTestId("activity").getByText("python3 parse.py").isVisible(), "latest command is shown");
+    assert.equal(await page.getByRole("tab", { name: "Live" }).getAttribute("aria-selected"), "true");
+    // raw reasoning stays behind dev mode
+    await steps(page).first().getByRole("button").click();
+    assert.equal(await page.getByText("Download the CSV then count rows.").count(), 0);
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/live-view-${scheme}.png` : "/tmp/live-view.png" });
+    await page.getByRole("tab", { name: "Steps" }).click();
+    await page.locator("ol > li").getByText("say hi").waitFor();
+    assert.equal(await steps(page).count(), 0);
+    await ctx.close();
+  });
+}
+
+// Run files: listed under the run, previewed as text, downloadable one by one or as a zip.
+for (const scheme of ["light", "dark"]) {
+  test(`@files a run lists its files with preview and download (${scheme})`, async () => {
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
+        "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+        "**/api/runs/g_e2e01/artifacts": (r) => r.fulfill(json(200, { artifacts: [
+          { name: "report.md", step: "s1", size: 2048, mime: "text/markdown" },
+          { name: "step-s1.md", step: "s1", size: 2, mime: "text/markdown" },
+          { name: "big.csv", step: "s1", refused: "too large (1200 KB; the limit is 1000 KB)" },
+        ] })),
+        "**/api/runs/g_e2e01/artifacts/report.md": (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Report\nall good" }),
+      },
+      path: "/#g_e2e01",
+    });
+    await page.getByTestId("artifacts").waitFor();
+    assert.equal(await page.getByRole("link", { name: "Download report.md" }).getAttribute("href"), "/api/runs/g_e2e01/artifacts/report.md?download=1");
+    assert.equal(await page.getByRole("link", { name: "Download all (.zip)" }).getAttribute("href"), "/api/runs/g_e2e01/artifacts.zip");
+    await page.getByText("not saved: too large").waitFor();
+    await page.getByText("report.md").first().click();
+    await page.getByLabel("Preview of report.md").getByText("all good").waitFor();
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/files-${scheme}.png` : "/tmp/files.png" });
+    await ctx.close();
+  });
+}
+
+// Plan review: a held plan is shown before anything runs; edits and the decision go to the plan endpoint.
+const PLANNED = {
+  run: "g_e2e01", goal: "compare two things", origin: "console", device_id: null, declared: 2, worker_failures: [], subtasks: [],
+  plan: { state: "planned", estimate: 0.08, budget: 0.1, model: "deepseek/deepseek-v4-pro", steps: [
+    { id: "a", title: "gather facts", prompt: "collect the facts", deps: [], tier: "mid", est_cost: 0.04 },
+    { id: "b", title: "write summary", prompt: "summarise them", deps: ["a"], tier: "cheap", est_cost: 0.04 },
+  ] },
+};
+
+for (const scheme of ["light", "dark"]) {
+  test(`@plan a held plan shows before spend, edits post to the plan endpoint (${scheme})`, async () => {
+    const posts = [];
+    const { ctx, page } = await open({
+      scheme,
+      routes: {
+        "**/api/runs*": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "compare two things", origin: "console", device_id: null, subtasks: 2, states: {}, ts: 1, plan_state: "planned" }] })),
+        "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, PLANNED)),
+        "**/api/runs/g_e2e01/plan": (r) => { posts.push(r.request().postData()); return r.fulfill(json(200, { state: "approved" })); },
+      },
+      path: "/#g_e2e01",
+    });
+    await page.getByTestId("plan-card").waitFor();
+    await page.getByText("Plan · nothing has run yet").waitFor();
+    await page.getByText(/estimate \$0\.08/).waitFor();
+    assert.deepEqual(await axeViolations(page), []);
+    await page.screenshot({ path: process.env.SHOTS ? `${process.env.SHOTS}/plan-review-${scheme}.png` : "/tmp/plan-review.png" });
+    await page.getByLabel("Step 2 title").fill("write the final summary");
+    await page.getByRole("button", { name: "Remove step" }).first().click();
+    await page.getByRole("button", { name: "Approve with edits" }).click();
+    await page.getByText("Decision saved").waitFor();
+    assert.equal(posts.length, 1);
+    const sent = JSON.parse(posts[0]);
+    assert.equal(sent.action, "approve");
+    assert.deepEqual(sent.edits, [{ id: "a", remove: true }, { id: "b", title: "write the final summary", prompt: "summarise them", tier: "cheap" }]);
+    await ctx.close();
+  });
+}
+
+test("@plan cancel posts a cancel with no edits", async () => {
+  const posts = [];
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/runs*": (r) => r.fulfill(json(200, { runs: [] })),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, PLANNED)),
+      "**/api/runs/g_e2e01/plan": (r) => { posts.push(JSON.parse(r.request().postData())); return r.fulfill(json(200, { state: "cancelled" })); },
+    },
+    path: "/#g_e2e01",
+  });
+  await page.getByRole("button", { name: "Cancel run" }).click();
+  await page.getByText("Decision saved").waitFor();
+  assert.deepEqual(posts, [{ action: "cancel", edits: [] }]);
   await ctx.close();
 });
