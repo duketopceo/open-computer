@@ -60,7 +60,9 @@ implements this exception). `skipped` is a dependency failure.
 `duration_ms`, `repeat` (consecutive identical calls so far; **the loop guard pauses at 3**), `cost_usd`. A sandbox
 command (dev trace) is `name: "shell.exec"` and also carries `command` (the program text), `rc`, `stdout_tail[]` and
 `stderr_tail[]` (each <= 50 lines, <= 4 KB). It is written twice under one id: `running` when it starts, then `ok` or
-`error` with the result.
+`error` with the result. A web step's tools (dev trace) follow the same running-then-result pattern: `web.search`
+carries the query as `summary`; `web.fetch` carries the URL as `summary` and its host as `destination`. The console's
+chat side panel lists them under "Web searches".
 
 ### `source`
 `id`, `n`, `url`, `title`; optional `domain`, `snippet`, `fetched`, `fetched_at`, `content_hash`, `cited_by[]`. `n` is the
