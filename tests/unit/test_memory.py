@@ -148,8 +148,9 @@ def test_remember_tags_the_note_and_records_the_atom(ledger):
 
 def test_remember_refuses_a_summary_that_fails_the_pii_check(ledger):
     fake = FakeKurultai()
-    assert mem(fake, ledger).remember("Contact", "email luke@example.com for access", m.Scope("th_1")) is None
+    assert mem(fake, ledger).remember("Mail luke@example.com", "ask for access", m.Scope("th_1")) is None
     assert fake.requests == []
+    assert "luke@example.com" not in ledger.path.read_text()
     assert ledger.rows()[0]["event"] == "memory_withheld" and ledger.rows()[0]["pii"] == ["email"]
 
 

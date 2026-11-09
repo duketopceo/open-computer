@@ -247,7 +247,7 @@ class Memory:
             return None
         pii = scan(f"{title}\n{summary}")
         if pii.flagged:
-            self._row("memory_withheld", scope, direction="write", pii=pii.categories, title=title, **extra)
+            self._row("memory_withheld", scope, direction="write", pii=pii.categories, **extra)  # no title: it may be the PII
             return None
         args = {"title": title, "summary": summary, "tags": scope.tags(), "project": PROJECT}
         try:
