@@ -405,8 +405,8 @@ def _chat(url: str, model: str, prompt: str, key: str = "", timeout: float = 60.
     if url == OR_CHAT:
         if not key:
             raise WorkerUnavailable(
-                "OPENROUTER_API_KEY is not set — cloud calls cannot run",
-                hint="export a key in ~/.config/oc/opsview.env and restart oc-opsview",
+                "No OpenRouter key is set (OPENROUTER_API_KEY or OPENROUTER_API_KEY_SUBAGENTS) — cloud calls cannot run",
+                hint="export OPENROUTER_API_KEY (or a per-lane key) in ~/.config/oc/opsview.env and restart oc-opsview",
             )
         try:
             res = or_chat(model, prompt, key=key, timeout=timeout)

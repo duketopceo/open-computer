@@ -26,6 +26,7 @@ from __future__ import annotations
 import itertools
 import os
 import threading
+import time
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -95,18 +96,22 @@ def any_key(env: dict[str, str] | None = None) -> str:
 
 
 def resolve(key: str, lane: str | None = None, env: dict[str, str] | None = None) -> str:
-    """The key to send: the lane's own key (or the shared one) when `key` came from this environment or is empty;
-    an outside key unchanged."""
+    """The key to send: the lane's own key, else the shared one, when `key` came from this environment or is empty
+    (never another lane's key: "" if neither is set, and the call fails as unauthorised); an outside key unchanged."""
     e = _env(env)
     ours = {(e.get(n, "") or "").strip() for n in (SHARED_ENV, *LANE_ENV.values())} - {""}
     if key and key not in ours:
         return key
-    return key_for(lane or current(), env) or key
+    return key_for(lane or current(), env)
 
 
 def status(env: dict[str, str] | None = None) -> dict[str, str]:
     """lane -> key source, for diagnostics."""
     return {lane: key_source(lane, env) for lane in LANES}
+
+
+class SlotTimeout(TimeoutError):
+    """No slot freed up in time: the call was never sent."""
 
 
 class Scheduler:
@@ -148,14 +153,19 @@ class Scheduler:
         return not any(self._waiting[hi] for hi in LANES[:rank])  # a higher lane waiting goes first
 
     @contextmanager
-    def slot(self, lane: str | None = None) -> Iterator[None]:
+    def slot(self, lane: str | None = None, wait: float | None = None) -> Iterator[None]:
+        """Hold one slot for the block. `wait` bounds the queueing (seconds); SlotTimeout when it runs out."""
         lane = lane or current()
+        deadline = None if wait is None else time.monotonic() + wait
         with self._cond:
             ticket = next(self._tickets)
             self._waiting[lane].append(ticket)
             try:
                 while not self._may_run(lane, ticket):
-                    self._cond.wait()
+                    left = None if deadline is None else deadline - time.monotonic()
+                    if left is not None and left <= 0:
+                        raise SlotTimeout(f"no OpenRouter call slot free for the {lane} lane within {wait:g}s")
+                    self._cond.wait(left)
                 self._inflight[lane] += 1
             finally:
                 self._waiting[lane].remove(ticket)

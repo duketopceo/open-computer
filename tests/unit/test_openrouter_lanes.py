@@ -32,6 +32,8 @@ def test_resolve_swaps_our_keys_per_lane_and_keeps_an_outside_key():
     assert lanes.resolve("k-chat", "background", KEYS) == "k-bg", "an engine built in one lane spends the lane it runs in"
     assert lanes.resolve("", "subagents", KEYS) == "k-shared"
     assert lanes.resolve("k-from-keyring", "chat", KEYS) == "k-from-keyring"
+    only_chat = {"OPENROUTER_API_KEY_CHAT": "k-chat"}
+    assert lanes.resolve("k-chat", "subagents", only_chat) == "", "never another lane's key"
     assert lanes.any_key({"OPENROUTER_API_KEY_BACKGROUND": "k-bg"}) == "k-bg" and lanes.any_key({}) == ""
 
 
@@ -182,7 +184,7 @@ def test_every_call_takes_a_slot_and_records_its_lane(fake, monkeypatch):
 
     seen = []
     real = lanes.SCHEDULER.slot
-    monkeypatch.setattr(lanes.SCHEDULER, "slot", lambda lane=None: seen.append(lane) or real(lane))
+    monkeypatch.setattr(lanes.SCHEDULER, "slot", lambda lane=None, wait=None: seen.append(lane) or real(lane, wait))
     with lanes.scope("chat"):
         _, row = post(f"{fake.url}/chat/completions", {"model": "m", "messages": []}, key=lanes.any_key(), sdk=True)
     assert seen == ["chat"] and row["lane"] == "chat"
@@ -194,3 +196,21 @@ def test_compaction_scoring_runs_in_the_chat_lane(fake):
     assert compact.from_env(KEYS).ask is not None
     compact.openrouter_ask(lanes.key_for("subagents"))("m", [{"role": "user", "content": "x"}])
     assert auth(fake) == "Bearer k-chat"
+
+
+def test_a_queued_call_gives_up_after_its_wait_and_is_recorded(fake, monkeypatch):
+    from services.openrouter import OpenRouterError, post
+
+    s, order = lanes.Scheduler(capacity=1, chat_reserve=0), []
+    hold = Holder(s, "chat", order)
+    assert hold.go.wait(1)
+    with pytest.raises(lanes.SlotTimeout):
+        with s.slot("subagents", wait=0.05):
+            pass
+    assert s.inflight() == {"chat": 1, "subagents": 0, "background": 0} and waiting(s, "subagents") == 0
+    monkeypatch.setattr(lanes, "SCHEDULER", s)
+    with pytest.raises(OpenRouterError) as e:
+        post(f"{fake.url}/chat/completions", {"model": "m", "messages": []}, key=lanes.any_key(), timeout=0.05, sdk=True)
+    assert e.value.error_class == "queue_timeout" and fake.requests == [], "never sent"
+    hold.release.set()
+    hold.thread.join(2)

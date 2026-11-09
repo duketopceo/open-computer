@@ -207,6 +207,8 @@ def _fallback_fields(base: dict, parsed: dict) -> dict:
 
 
 def _error_class(e: BaseException) -> tuple[str, int | None]:
+    if isinstance(e, lanes.SlotTimeout):
+        return "queue_timeout", None
     if isinstance(e, or_errors.OpenRouterError):
         if e.status_code < 400:  # a 2xx the SDK could not parse (e.g. an HTML page): not an HTTP failure
             return "bad_response", None
@@ -343,7 +345,7 @@ def post(
     log.debug("openrouter request", call_id=call_id, kind=kind, model=base["model_requested"], bytes=len(data))
     t0 = time.monotonic()
     try:
-        with lanes.SCHEDULER.slot(lane):  # chat first when calls queue; see lanes.py
+        with lanes.SCHEDULER.slot(lane, wait=timeout):  # chat first when calls queue; bounded wait; see lanes.py
             resp = _sdk_send(body, key, timeout) if sdk else _urllib_send(url, data, key, timeout)
         latency = int((time.monotonic() - t0) * 1000)
     except Exception as e:

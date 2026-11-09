@@ -17,6 +17,8 @@ limits by account, not key.
 What stops crowding is local: at most `OC_OPENROUTER_CONCURRENCY` (default 6) calls are in flight per process, and
 subagent plus background calls may hold at most that minus `OC_OPENROUTER_CHAT_RESERVE` (default 2), so a chat call
 always has a free slot. When calls queue, chat goes first, then subagents, then background; first come first served
-within a lane. Slots are per process; the durable worker is its own process with its own slots.
+within a lane. A queued call waits at most its own request timeout, then fails as `queue_timeout` without being
+sent. A lane with no key of its own and no shared key fails; it never borrows another lane's key. Slots are per
+process; the durable worker is its own process with its own slots.
 
 Code: `services/openrouter/lanes.py`; the key is picked and the slot taken in `services/openrouter/client.post`.
