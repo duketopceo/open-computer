@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { GoalOptions, ThreadDetail, ThreadMessage } from "@/lib/api";
+import type { GoalOptions, MemoryRecall, ThreadDetail, ThreadMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Composer } from "./Composer";
+import { MemoryChip } from "./MemoryChip";
 import { Reveal } from "./Reveal";
 import { RunView } from "./RunView";
 
@@ -23,6 +24,7 @@ export function ThreadView({
   // Only messages that arrive after this view opened get the text reveal.
   const loaded = useRef(thread.messages.length);
   const runCount = Object.values(thread.runs).filter(Boolean).length;
+  const cited = citations(thread);
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [thread.messages.length, thread.working, runCount]);
@@ -31,11 +33,15 @@ export function ThreadView({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex-1 overflow-y-auto" tabIndex={0}>
         <ol className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-8" aria-label="Conversation">
-          {thread.messages.map((m, i) => (
-            <li key={i} className="animate-fade-up">
-              <Message m={m} thread={thread} fresh={i >= loaded.current} />
-            </li>
-          ))}
+          {thread.messages.map((m, i) => {
+            const recall = cited.get(i);
+            return (
+              <li key={i} className="animate-fade-up">
+                <Message m={m} thread={thread} fresh={i >= loaded.current} />
+                {recall && <MemoryChip recall={recall} thread={thread.id} />}
+              </li>
+            );
+          })}
           {thread.working && (
             <li className="flex items-center gap-2 text-sm text-muted" role="status">
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line border-t-accent" />
@@ -63,6 +69,22 @@ export function ThreadView({
       </div>
     </div>
   );
+}
+
+/** Which message carries each turn's "Used N memories" chip: the first reply or run after the user message it
+ *  recalled for (matched on the message's `ts`). A turn still working has no reply yet, so no chip. */
+export function citations(thread: ThreadDetail): Map<number, MemoryRecall> {
+  const out = new Map<number, MemoryRecall>();
+  const byTs = new Map((thread.memory?.recalls ?? []).map((r) => [r.user_ts, r]));
+  let pending: MemoryRecall | undefined;
+  thread.messages.forEach((m, i) => {
+    if (m.role === "user") pending = byTs.get(m.ts);
+    else if (pending) {
+      out.set(i, pending);
+      pending = undefined;
+    }
+  });
+  return out;
 }
 
 function Message({ m, thread, fresh }: { m: ThreadMessage; thread: ThreadDetail; fresh: boolean }) {

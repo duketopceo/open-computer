@@ -26,3 +26,8 @@ What it does, in order:
 
 Forget: Kurultai's MCP has no delete tool, so forgetting from Open Computer is a `memory_forget` row in the ledger that
 hides that atom from every later recall here. Delete it in Kurultai itself to remove it for other agents.
+
+In the console: a reply whose turn recalled notes shows "Used N memories"; open it for titles, ids and Forget. Settings,
+Memory shows whether it is on, the endpoint, whether a key is set (never the key), counts, the last failure, and the
+notes this computer stored, each with Forget. API: `GET /api/memory`, `POST /api/memory/forget {atom, thread?}`, and
+thread detail carries `memory` only while memory is on.

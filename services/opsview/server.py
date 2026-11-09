@@ -372,6 +372,7 @@ GET_ROUTES = [
     (r"/api/overview", "g_api_overview"),
     (r"/api/skills", "g_api_skills"),
     (r"/api/automations", "g_api_automations"),
+    (r"/api/memory", "g_api_memory"),
     (r"/work", "g_work_redirect"),
     (r"/overview", "g_spa_route"),
     (r"/sandboxes", "g_spa_route"),
@@ -409,6 +410,7 @@ POST_ROUTES = [
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})/delete", "p_api_thread_delete"),
     (r"/api/threads/(?P<id>th_[0-9a-f]{8})/archive", "p_api_thread_archive"),
     (r"/api/dev", "p_api_dev"),
+    (r"/api/memory/forget", "p_api_memory_forget"),
     (r"/api/runs/clear", "p_api_runs_clear"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/delete", "p_api_run_delete"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/archive", "p_api_run_archive"),
@@ -793,6 +795,19 @@ class Handler(BaseHTTPRequestHandler):
         if not threads.archive(id, on):
             return self._json(404, {"error": "no such chat"})
         self._json(200, {"ok": True, "archived": on})
+
+    def g_api_memory(self, qs):
+        self._json(200, oc_memory.status())
+
+    def p_api_memory_forget(self, who, body):
+        atom, thread = body.get("atom"), body.get("thread") or ""
+        if not isinstance(atom, str) or not oc_memory.ATOM_ID.match(atom):
+            return self._json(400, {"error": "A memory id is required."})
+        if not isinstance(thread, str) or (thread and not re.fullmatch(r"th_[0-9a-f]{8}", thread)):
+            return self._json(400, {"error": "Not a chat id."})
+        oc_memory.forget(atom, thread, by=who)
+        log.info("memory forgotten", atom=atom, by=who)
+        self._json(200, {"ok": True, "atom": atom})
 
     def p_api_threads_clear(self, who, body):
         if body.get("confirm") not in (True, "1", 1):

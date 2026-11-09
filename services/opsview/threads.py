@@ -153,7 +153,10 @@ def detail(tid: str) -> dict | None:
     t = _read(tid)
     if t is None:
         return None
-    return {**t, "working": is_working(tid), "runs": {rid: goalruns.get_run(rid) for rid in dict.fromkeys(run_ids(t))}}
+    out = {**t, "working": is_working(tid), "runs": {rid: goalruns.get_run(rid) for rid in dict.fromkeys(run_ids(t))}}
+    if oc_memory.MemoryConfig.from_env() is not None:
+        out["memory"] = oc_memory.thread_view(tid)
+    return out
 
 
 def delete(tid: str) -> bool:

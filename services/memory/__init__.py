@@ -282,6 +282,65 @@ def render_block(hits: list[Hit]) -> str:
     return "\n".join(lines)
 
 
+ATOM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_:.-]{0,127}$")
+
+
+def thread_view(tid: str, ledger: Ledger | None = None) -> dict:
+    """What the console shows beside a thread: per user message, the atoms its turn recalled (by the message's `ts`),
+    and the notes the thread stored. Titles and ids only; forgotten atoms are marked, not hidden."""
+    ledger = ledger or Ledger(default_ledger_path())
+    rows = ledger.rows(tid)
+    gone = ledger.forgotten()
+    withheld: dict[object, int] = {}
+    for r in rows:
+        if r.get("event") == "memory_withheld" and r.get("direction") == "recall":
+            withheld[r.get("user_ts")] = withheld.get(r.get("user_ts"), 0) + len(r.get("atoms") or [])
+    recalls = [
+        {"user_ts": r.get("user_ts"), "ts": r.get("ts"), "withheld": withheld.get(r.get("user_ts"), 0),
+         "atoms": [{**a, "forgotten": a.get("id") in gone} for a in r.get("atoms") or [] if isinstance(a, dict)]}
+        for r in rows if r.get("event") == "memory_recall"
+    ]
+    writes = [
+        {"ts": r.get("ts"), "atom": r.get("atom"), "title": r.get("title", ""), "run": r.get("run"),
+         "forgotten": r.get("atom") in gone}
+        for r in rows if r.get("event") == "memory_write"
+    ]
+    return {"recalls": recalls, "writes": writes}
+
+
+def status(env: dict[str, str] | None = None, ledger: Ledger | None = None) -> dict:
+    """Settings: is memory on, where it points (never the token), and what the ledger has seen."""
+    cfg = MemoryConfig.from_env(env)
+    ledger = ledger or Ledger(default_ledger_path())
+    rows = ledger.rows()
+    gone = ledger.forgotten()
+    errors = [r for r in rows if r.get("event") == "memory_error"]
+    writes = [r for r in rows if r.get("event") == "memory_write" and r.get("atom") not in gone]
+    out: dict = {
+        "enabled": cfg is not None,
+        "project": PROJECT,
+        "counts": {
+            "recalls": sum(r.get("event") == "memory_recall" for r in rows),
+            "writes": sum(r.get("event") == "memory_write" for r in rows),
+            "withheld": sum(r.get("event") == "memory_withheld" for r in rows),
+            "forgotten": len(gone),
+            "errors": len(errors),
+        },
+        "last_error": {k: errors[-1].get(k) for k in ("ts", "op")} if errors else None,
+        "recent_writes": [{"atom": r.get("atom"), "title": r.get("title", ""), "thread": r.get("thread"), "ts": r.get("ts")}
+                          for r in writes[-10:]][::-1],
+    }
+    if cfg is not None:
+        out.update(url=cfg.url, limit=cfg.limit, include_quarantine=cfg.include_quarantine, token=bool(cfg.token))
+    return out
+
+
+def forget(atom: str, thread: str = "", by: str = "owner", ledger: Ledger | None = None) -> dict:
+    """Hide an atom from every later Open Computer recall. Works with memory on or off: it only writes the ledger."""
+    ledger = ledger or Ledger(default_ledger_path())
+    return ledger.append({"ts": round(time.time(), 3), "event": "memory_forget", **Scope(thread).row(), "atom": atom, "by": by})
+
+
 def from_env(env: dict[str, str] | None = None) -> Memory | None:
     """The configured memory, or None when OC_MEMORY is not `kurultai`."""
     cfg = MemoryConfig.from_env(env)

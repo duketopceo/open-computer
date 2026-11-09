@@ -234,7 +234,47 @@ export interface ThreadDetail extends Omit<ThreadSummary, "ts" | "finished"> {
   effort: { effort: string; model: string; budget: number };
   messages: ThreadMessage[];
   runs: Record<string, RunDetail | null>;
+  /** Present only when memory is on: what each turn recalled and what the thread stored. */
+  memory?: ThreadMemory;
 }
+
+/** One Kurultai note as the console sees it: id and title, never the text. */
+export interface MemoryAtom {
+  id: string;
+  title: string;
+  source?: string;
+  score?: number;
+  forgotten?: boolean;
+}
+
+/** The notes one user message's turn recalled; `user_ts` is that message's `ts`. */
+export interface MemoryRecall {
+  user_ts: number | null;
+  ts: number;
+  withheld: number;
+  atoms: MemoryAtom[];
+}
+
+export interface ThreadMemory {
+  recalls: MemoryRecall[];
+  writes: { ts: number; atom: string; title: string; run?: string | null; forgotten: boolean }[];
+}
+
+export interface MemoryStatus {
+  enabled: boolean;
+  project: string;
+  url?: string;
+  limit?: number;
+  include_quarantine?: boolean;
+  token?: boolean;
+  counts: { recalls: number; writes: number; withheld: number; forgotten: number; errors: number };
+  last_error: { ts: number; op: string } | null;
+  recent_writes: { atom: string; title: string; thread?: string; ts: number }[];
+}
+
+export const getMemory = () => json<MemoryStatus>("/api/memory");
+export const forgetMemory = (atom: string, thread?: string) =>
+  postJson<{ ok: true; atom: string }>("/api/memory/forget", thread ? { atom, thread } : { atom });
 
 export async function listThreads(withArchived = true): Promise<ThreadSummary[]> {
   return (await json<{ threads?: ThreadSummary[] }>(withArchived ? "/api/threads?archived=1" : "/api/threads")).threads ?? [];
