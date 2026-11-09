@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RunDetail } from "@/lib/api";
 import { RunView, plainProgress, spentNote } from "./RunView";
@@ -35,13 +35,14 @@ const RUN = {
 describe("RunView in the chat (compact)", () => {
   it("shows state, plain progress, time, the model and a Details link, and none of the plumbing", () => {
     render(<RunView run={RUN} compact />);
+    fireEvent.click(screen.getByRole("button", { name: /Now: step b/ })); // step b is live: open the folded steps
     expect(screen.getByText(/1 of 2 steps done · 12s/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Details" })).toHaveAttribute("href", "#g_t1");
     expect(screen.getByText("deepseek-v4-pro")).toBeInTheDocument();
     const text = document.body.textContent ?? "";
     for (const noise of ["LEASED", "origin", "routed by", "effort quick", "$0.0003", "cloud-openrouter", "no reasoning returned"])
       expect(text, noise).not.toContain(noise);
-    expect(within(screen.getByText("step b").closest("li")!).getByText("STARTING")).toBeInTheDocument();
+    expect(within(screen.getByText("step b", { selector: "li p" }).closest("li")!).getByText("STARTING")).toBeInTheDocument();
   });
 });
 

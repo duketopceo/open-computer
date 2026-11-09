@@ -186,6 +186,7 @@ const LIVE_RUN = {
   ...RUN,
   declared: 2,
   started: Date.now() / 1000 - 5,
+  ended: Date.now() / 1000 - 1, // the API stamps the latest audit row's time on live runs too
   subtasks: [
     { ...RUN.subtasks[0], subtask: "s1", title: "Read the page" },
     { ...RUN.subtasks[0], subtask: "s2", title: "Summarise it", state: "RUNNING", result: "", started_ts: Date.now() / 1000 - 3, finished_ts: null },

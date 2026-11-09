@@ -14,9 +14,13 @@ export interface NowDoing {
 
 const live = (state: string) => state === "RUNNING" || state === "LEASED";
 
-/** null when nothing is in progress: the run finished, failed, was cancelled, or waits on a plan decision shown elsewhere. */
+const TERMINAL = new Set(["DONE", "FAILED"]);
+
+/** null when nothing is in progress: the run finished, failed, was cancelled, or waits on a plan decision shown elsewhere.
+ *  Not `run.ended`: the API sets it to the latest audit row's time, so a live run has one too. A run is over when every
+ *  declared step is terminal. */
 export function nowDoing(run: RunDetail): NowDoing | null {
-  if (run.ended != null || run.error) return null;
+  if (run.error) return null;
   if (run.plan?.state === "planned" || run.plan?.state === "cancelled") return null;
   if (run.effort?.paused) return null;
   const steps = run.subtasks.filter((s) => !s.skipped);
@@ -33,8 +37,8 @@ export function nowDoing(run: RunDetail): NowDoing | null {
     const w = backingOff.waiting_on;
     return { text: `${title(backingOff)}: ${waitingText(w.kind, w.attempt, w.max).replace(/^Waiting/, "waiting")}`, since: w.since };
   }
-  if (steps.length === 0) return { text: "Planning the steps", since: run.started };
-  if (steps.every((s) => s.state === "DONE" || s.state === "FAILED")) return { text: "Wrapping up" };
+  if (run.subtasks.length === 0) return run.declared > 0 ? null : { text: "Planning the steps", since: run.started };
+  if (run.subtasks.length >= run.declared && run.subtasks.every((s) => s.skipped || TERMINAL.has(s.state))) return null;
   const next = steps.find((s) => s.state === "QUEUED");
   return next ? { text: `Up next: ${title(next)}` } : null;
 }
