@@ -4,6 +4,7 @@ import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
 import { nowDoing } from "@/lib/nowDoing";
 import { hasStream } from "@/lib/runEvents";
+import { splitSources } from "@/lib/sidePanel";
 import { Artifacts } from "./Artifacts";
 import { NowDoing } from "./NowDoing";
 import { PlanCard } from "./PlanCard";
@@ -230,7 +231,7 @@ function SubTaskRow({ s, steps, plain = false }: { s: SubTask; steps: SubTask[];
           </p>
         )}
         <StepTruth s={s} plain={plain} />
-        {s.state === "DONE" && s.result && <StepResult text={s.result} />}
+        {s.state === "DONE" && s.result && <StepResult text={s.result} plain={plain} />}
         {s.state === "AWAITING-APPROVAL" && (
           <p className="mt-1 text-xs text-accent">
             {s.reason}.{" "}
@@ -300,7 +301,23 @@ function isHeavy(text: string): boolean {
   return lines.length > 8 || MARKUP_RE.test(text) || JSONISH_RE.test(text);
 }
 
-function StepResult({ text }: { text: string }) {
+/** `plain` (the chat card): a web step's Sources list moves to the chat's side panel, leaving a count here. */
+function StepResult({ text: full, plain = false }: { text: string; plain?: boolean }) {
+  const { body, urls } = plain ? splitSources(full) : { body: full, urls: [] };
+  const text = body;
+  const cited = urls.length > 0 && (
+    <p className="mt-1 text-xs text-muted">
+      Cited {urls.length} {urls.length === 1 ? "source" : "sources"}, listed under Sources and tools.
+    </p>
+  );
+  if (cited) {
+    return (
+      <>
+        <StepResult text={text} />
+        {cited}
+      </>
+    );
+  }
   if (!isHeavy(text)) {
     return (
       <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink">{text}</p>

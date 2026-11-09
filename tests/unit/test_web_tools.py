@@ -354,3 +354,59 @@ def test_sonar_search_uses_injected_call_and_feeds_sources():
     chat = scripted(j(action="search", query="cats"), j(action="answer", text="Cats are mammals."))
     out = web.web_loop("what are cats", chat, s, lambda u: web.Page(u, "x"))
     assert "Sources:\n[1] https://example.com/cats" in out
+
+
+# ---- dev trace: searches and fetches feed the console's side panel -------------------------------------------
+
+
+def test_a_traced_web_step_records_each_search_and_fetch_as_a_tool_call(tmp_path, monkeypatch):
+    from oc.events import errors
+    from oc.obs import devtrace
+
+    rid = "goal_0123abcd"
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path / "goals"))
+    run_dir = tmp_path / "goals" / rid
+    run_dir.mkdir(parents=True)
+    devtrace.enable(run_dir)
+    chat = scripted(j(action="search", query="cats"), j(action="fetch", url="https://example.com/cats"), j(action="answer", text="ok"))
+
+    out = web.web_work({"run": rid, "subtask": "t1", "prompt": "cats"}, chat, search=FakeSearch(), fetch=lambda u: Page(u, "cats are small"), allowed=lambda: [])
+    assert out.startswith("ok")
+    evs = [json.loads(ln) for ln in (run_dir / devtrace.STREAM).read_text().splitlines() if '"tool_call"' in ln]
+    assert all(errors(e) == [] for e in evs)
+    calls = [(e["data"]["name"], e["data"]["status"], e["data"]["summary"], e["data"].get("destination")) for e in evs]
+    assert calls == [
+        ("web.search", "running", "cats", None),
+        ("web.search", "ok", "cats", None),
+        ("web.fetch", "running", "https://example.com/cats", "example.com"),
+        ("web.fetch", "ok", "https://example.com/cats", "example.com"),
+    ]
+    assert {e["data"]["step"] for e in evs} == {"step_t1"}
+    assert evs[0]["data"]["id"] == evs[1]["data"]["id"] != evs[2]["data"]["id"]
+
+
+def test_a_failed_traced_fetch_is_an_error_call_and_the_model_still_hears_why(tmp_path, monkeypatch):
+    from oc.obs import devtrace
+
+    rid = "goal_0123abce"
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path / "goals"))
+    run_dir = tmp_path / "goals" / rid
+    run_dir.mkdir(parents=True)
+    devtrace.enable(run_dir)
+    chat = scripted(j(action="fetch", url="https://nope.test/x"), j(action="answer", text="could not read it"))
+
+    def refuse(u):
+        raise WebUnavailable("host not approved")
+
+    out = web.web_work({"run": rid, "subtask": "t1", "prompt": "x"}, chat, search=FakeSearch(), fetch=refuse, allowed=lambda: [])
+    assert out == "could not read it" and "host not approved" in chat.seen[1]
+    statuses = [json.loads(ln)["data"]["status"] for ln in (run_dir / devtrace.STREAM).read_text().splitlines() if '"tool_call"' in ln]
+    assert statuses == ["running", "error"]
+
+
+def test_an_untraced_web_step_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path / "goals"))
+    (tmp_path / "goals" / "goal_0123abcf").mkdir(parents=True)
+    chat = scripted(j(action="search", query="cats"), j(action="answer", text="ok"))
+    web.web_work({"run": "goal_0123abcf", "subtask": "t1", "prompt": "x"}, chat, search=FakeSearch(), fetch=lambda u: Page(u, ""), allowed=lambda: [])
+    assert list((tmp_path / "goals" / "goal_0123abcf").iterdir()) == []

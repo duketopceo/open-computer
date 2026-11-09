@@ -69,3 +69,22 @@ describe("plain wording", () => {
     expect(spentNote([{ cost: 0.006 }, { cost: 0.005 }])).toBe(" · $0.011");
   });
 });
+
+describe("a web step's sources in the chat card", () => {
+  const sourced = {
+    ...RUN,
+    subtasks: [{ ...RUN.subtasks[0], result: "Cats are small.\n\nSources:\n[1] https://example.com/cats\n[2] https://docs.test/a" }],
+  } as unknown as RunDetail;
+
+  it("moves the list to the side panel and leaves a count", () => {
+    render(<RunView run={sourced} compact />);
+    expect(screen.getByText("Cats are small.")).toBeInTheDocument();
+    expect(screen.getByText("Cited 2 sources, listed under Sources and tools.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("https://example.com/cats");
+  });
+
+  it("keeps the list on the run page", () => {
+    render(<RunView run={sourced} />);
+    expect(document.body.textContent).toContain("[1] https://example.com/cats");
+  });
+});
