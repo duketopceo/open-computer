@@ -114,7 +114,9 @@ test("@flow chat: double Send opens one chat, a failed send keeps the text, retr
   await send.click();
   await page.getByText("Done: it said hi.").waitFor();
   assert.ok(await page.getByText("Sending a greeting.").isVisible());
-  assert.ok(await page.getByRole("list", { name: "Conversation" }).getByText("<$0.0001").first().isVisible(), "the run renders inline");
+  const conv = page.getByRole("list", { name: "Conversation" });
+  assert.ok(await conv.getByRole("link", { name: "Details" }).first().isVisible(), "the run renders inline");
+  assert.equal(await conv.getByText("<$0.0001").count(), 0, "a sub-cent cost stays off the chat card");
   await ctx.close();
 });
 
@@ -179,6 +181,110 @@ test("@chat awaiting-approval run shows Open Approvals from the inline run card"
   assert.ok(await page.getByRole("link", { name: "Open Approvals" }).isVisible());
   await ctx.close();
 });
+
+const LIVE_RUN = {
+  ...RUN,
+  declared: 2,
+  started: Date.now() / 1000 - 5,
+  ended: Date.now() / 1000 - 1, // the API stamps the latest audit row's time on live runs too
+  subtasks: [
+    { ...RUN.subtasks[0], subtask: "s1", title: "Read the page" },
+    { ...RUN.subtasks[0], subtask: "s2", title: "Summarise it", state: "RUNNING", result: "", started_ts: Date.now() / 1000 - 3, finished_ts: null },
+  ],
+};
+const liveChat = () => ({
+  "**/api/threads": (r) => r.fulfill(json(200, { threads: [{ id: "th_e2e00001", title: "say hi", ts: 1, archived: false, working: true, finished: false }] })),
+  "**/api/threads/th_e2e00001": (r) =>
+    r.fulfill(json(200, THREAD({ working: true, runs: { g_e2e01: LIVE_RUN }, messages: THREAD().messages.slice(0, 3) }))),
+  "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, LIVE_RUN)),
+});
+
+test("@flow chat: a live run folds to one Now line; Follow opens the steps and Hide folds them", async () => {
+  const { ctx, page } = await open({ routes: liveChat(), path: "/#th_e2e00001" });
+  const now = page.getByRole("button", { name: /Now: Summarise it/ });
+  await now.waitFor();
+  assert.equal(await now.getAttribute("aria-expanded"), "false");
+  assert.equal(await page.getByText("Read the page").count(), 0, "the step list waits behind Follow");
+  await now.click();
+  await page.getByText("Read the page").waitFor();
+  assert.equal(await now.getAttribute("aria-expanded"), "true");
+  await page.getByRole("button", { name: /Hide/ }).click();
+  assert.equal(await page.getByText("Read the page").count(), 0);
+  await ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  test(`@a11y chat Now line, folded and open: axe 0 violations, ${scheme}`, async () => {
+    const { ctx, page } = await open({ scheme, routes: liveChat(), path: "/#th_e2e00001" });
+    const now = page.getByRole("button", { name: /Now: Summarise it/ });
+    await now.waitFor();
+    await page.evaluate(AXE);
+    for (const state of ["folded", "open"]) {
+      if (state === "open") await now.click();
+      const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+      assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${scheme} ${state}`);
+    }
+    await ctx.close();
+  });
+}
+
+const SOURCED_RUN = {
+  ...RUN,
+  subtasks: [{ ...RUN.subtasks[0], title: "Look it up", result: "Cats are small.\n\nSources:\n[1] https://example.com/cats\n[2] https://docs.test/a" }],
+};
+const sourcedChat = (events) => ({
+  "**/api/threads": (r) => r.fulfill(json(200, { threads: [{ id: "th_e2e00001", title: "say hi", ts: 1, archived: false, working: false, finished: true }] })),
+  "**/api/threads/th_e2e00001": (r) => r.fulfill(json(200, THREAD({ runs: { g_e2e01: SOURCED_RUN } }))),
+  "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, SOURCED_RUN)),
+  ...(events ? { "**/api/runs/g_e2e01/events*": (r) => r.fulfill(json(200, { events, last_seq: events.length, finished: true })) } : {}),
+});
+
+test("@flow chat side panel: cited sources, web searches and tool calls; Hide folds it and the choice sticks", async () => {
+  const ev = (seq, data) => ({ id: `g_e2e01:${seq}`, v: 1, goal: "g_e2e01", seq, ts: seq, type: "tool_call", data });
+  const events = [
+    ev(1, { id: "tool_1", name: "web.search", status: "ok", summary: "small cats", duration_ms: 800 }),
+    ev(2, { id: "tool_2", name: "web.fetch", status: "ok", summary: "https://example.com/cats", destination: "example.com" }),
+    ev(3, { id: "tool_3", name: "shell.exec", status: "error", command: "python3 count.py", rc: 1 }),
+  ];
+  const { ctx, page } = await open({ routes: sourcedChat(events), path: "/#th_e2e00001" });
+  const panel = page.getByRole("complementary", { name: "Sources and tools" });
+  await panel.waitFor();
+  assert.equal(await panel.getByRole("link").count(), 2);
+  assert.equal(await panel.getByRole("link", { name: /docs\.test/ }).getAttribute("href"), "https://docs.test/a");
+  await panel.getByText("Searched “small cats”").waitFor();
+  assert.ok(await panel.getByText("Read example.com").isVisible());
+  assert.ok(await panel.getByText("python3 count.py").isVisible());
+  await panel.getByRole("button", { name: "Hide" }).click();
+  assert.equal(await panel.count(), 0);
+  await page.reload({ waitUntil: "networkidle" });
+  const reopen = page.getByRole("button", { name: /Sources and tools/ });
+  await reopen.waitFor();
+  assert.equal(await page.getByRole("complementary", { name: "Sources and tools" }).count(), 0, "the fold survives a reload");
+  await reopen.click();
+  await panel.waitFor();
+  await ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  for (const w of [1440, 390]) {
+    test(`@a11y chat side panel open and folded: axe 0 violations at ${w}px, ${scheme}`, async () => {
+      const { ctx, page } = await open({ w, scheme, routes: sourcedChat(), path: "/#th_e2e00001" });
+      const panel = page.getByRole("complementary", { name: "Sources and tools" });
+      const reopen = page.getByRole("button", { name: /Sources and tools/ });
+      await panel.or(reopen).first().waitFor();
+      if (!(await panel.count())) await reopen.click();
+      await panel.waitFor();
+      await page.evaluate(AXE);
+      for (const state of ["open", "folded"]) {
+        if (state === "folded") await panel.getByRole("button", { name: "Hide" }).click();
+        const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+        assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${w} ${scheme} ${state}`);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "no horizontal scroll");
+      }
+      await ctx.close();
+    });
+  }
+}
 
 test("@flow memory: a reply shows the notes its turn used, Forget posts once and marks the note", async () => {
   const posts = [];
@@ -1001,7 +1107,7 @@ function goalApi() {
 const goalBox = (page) => page.getByRole("textbox", { name: "Message" });
 const runBtn = (page) => page.getByRole("button", { name: "Send", exact: true });
 
-test("@flow effort: server default is selected, Advanced is closed, and the caption names the model and budget", async () => {
+test("@flow effort: server default is selected, Advanced is closed, and the one-line caption names the budget", async () => {
   const api = goalApi();
   const { ctx, page } = await open({ routes: api.routes });
   await page.getByRole("radio", { name: "Low" }).waitFor({ state: "attached" });
@@ -1010,7 +1116,9 @@ test("@flow effort: server default is selected, Advanced is closed, and the capt
   assert.equal(await page.getByRole("button", { name: "Advanced" }).getAttribute("aria-expanded"), "false");
   assert.equal(await page.getByLabel("Model").count(), 0);
   await page.getByText("up to $0.10 per run").waitFor();
-  assert.ok(await page.getByText("google/gemini-2.5-flash").first().isVisible());
+  assert.equal(await page.getByText("vendor/low-b, vendor/low-c").count(), 0, "the model chain stays inside Advanced");
+  await page.getByRole("button", { name: "Advanced" }).click();
+  assert.ok(await page.getByText(/Uses google\/gemini-2.5-flash/).isVisible());
   assert.ok(await page.getByText("vendor/low-b, vendor/low-c").isVisible());
   await ctx.close();
 });
@@ -1211,7 +1319,7 @@ for (const w of [1440, 390]) {
 }
 
 // ---- Silver Lining tokens (U19): one token file, dark and light, system by default.
-const CANVAS = { dark: "rgb(9, 9, 9)", light: "rgb(245, 245, 245)" };
+const CANVAS = { dark: "rgb(10, 11, 16)", light: "rgb(246, 246, 249)" }; // Iris, services/opsview/static/oc-palette.css
 const canvasOf = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
 test("@theme system is the default and follows an emulated scheme change without reload", async () => {

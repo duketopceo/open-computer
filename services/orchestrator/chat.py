@@ -10,7 +10,6 @@ model call; nothing here touches the disk or the network except `openrouter_engi
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from typing import Callable
@@ -133,16 +132,17 @@ def build_messages(thread: dict, runs: dict[str, dict | None], *, final: bool = 
 
 def openrouter_engine(model: str, api_key: str | None = None) -> Callable[[list[dict]], str]:
     """The real model call: one OpenRouter chat completion over the whole thread."""
-    from services.openrouter import OpenRouterError
+    from services.openrouter import OpenRouterError, lanes
     from services.openrouter import chat as or_chat
 
-    key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
+    key = api_key if api_key is not None else lanes.key_for("chat")
 
     def engine(messages: list[dict]) -> str:
         if not key:
             raise RuntimeError("OPENROUTER_API_KEY is not set, so the model cannot be reached")
         try:
-            return or_chat(model, messages=messages, key=key, timeout=90, kind="thread").text
+            with lanes.scope("chat"):  # the owner is waiting: chat's key, and first in line
+                return or_chat(model, messages=messages, key=key, timeout=90, kind="thread").text
         except OpenRouterError as e:
             raise RuntimeError(str(e)) from e
 

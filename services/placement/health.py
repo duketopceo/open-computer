@@ -1,57 +1,24 @@
-"""Local endpoint liveness — a sensor, not a policy (U5).
+"""Live inputs to placement (U5, S5).
 
-place() stays pure; place_live() wraps it with a cheap TCP probe of the
-local model servers, cached for a few seconds so a dispatch wave doesn't
-hammer dead ports. Fail-closed: a probe error means "down".
+place() stays pure; place_live() injects the human-approved egress set, read at dispatch time.
+There is no local-model probe: every model call goes through OpenRouter.
 """
 
 from __future__ import annotations
-
-import socket
-import time
 
 from oc.obs import get_logger
 
 log = get_logger("placement")
 
-_ENDPOINTS = (("127.0.0.1", 8080), ("127.0.0.1", 11434))  # llama.cpp, Ollama
-_TTL = 30.0
-_cache: tuple[float, bool] = (0.0, True)
-
-
-def local_endpoints_up(now: float | None = None) -> bool:
-    """True if any local model port accepts a connection."""
-    now = time.monotonic() if now is None else now
-    ts, up = _cache
-    if now - ts < _TTL:
-        return up
-    was = up
-    up = _probe()
-    if ts and up != was:
-        log.warning("local endpoints went down" if not up else "local endpoints back up")
-    log.debug("local endpoint probe", up=up)
-    globals()["_cache"] = (now, up)
-    return up
-
-
-def _probe(timeout: float = 1.0) -> bool:
-    for host, port in _ENDPOINTS:
-        try:
-            with socket.create_connection((host, port), timeout=timeout):
-                return True
-        except OSError:
-            continue
-    return False
-
 
 def place_live(subtask: dict, **kw):
-    """place() with a live local-endpoint probe and the human-approved
-    egress set injected (S5)."""
+    """place() with the human-approved egress set injected (S5)."""
     from .rules import place
 
-    kw.setdefault("local_up", local_endpoints_up())
     kw.setdefault("egress_approved", approved_egress())
-    return place(subtask, **kw)
+    p = place(subtask, **kw)
+    log.debug("placed", target=p.target, reason=p.reason)
+    return p
 
 
 def approved_egress(policy_path=None) -> tuple[str, ...]:

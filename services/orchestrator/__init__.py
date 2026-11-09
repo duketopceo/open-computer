@@ -20,6 +20,7 @@ from oc.obs import bind, devtrace, error_fields, get_logger
 from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
 from services.placement import place
+from services.cost.ledger import PAUSED
 from services.gate.audit import AuditLog
 from services.openrouter import collect_reasoning, collect_usage, total_usage
 from services.router import adapter as router_adapter
@@ -413,6 +414,8 @@ class Orchestrator:
                 if all(st == "done" for st in states):
                     if held & set(requested_hosts(sub)):
                         continue  # waiting for the run's egress approval — not failed, retried next sweep
+                    if self.ledger is not None and self.ledger.state(run_id).state == PAUSED:
+                        continue  # paused at its cap: hold the step (never fail it); resuming dispatches it
                     with_deps = self._with_dep_results(sub, tids)
                     if with_deps is None:
                         continue  # a dep's output isn't collectable yet — hold
@@ -442,7 +445,10 @@ class Orchestrator:
         return out
 
     def work(self, work_fn, agent: str = "worker", ttl: float = 60) -> list[str]:
-        """One worker sweep, then dispatch the newly-unblocked wave."""
+        """Dispatch what is ready (a step held while the run was paused at its cap goes out once it resumes),
+        one worker sweep, then dispatch the newly-unblocked wave."""
+        for run_id in self.dispatches:
+            self.dispatch_ready(run_id)
         done = run_once(self.fs, self.audit, agent, work_fn, ttl=ttl, ledger=self.ledger, thinking=self.thinking)
         for run_id in self.dispatches:
             self.dispatch_ready(run_id)

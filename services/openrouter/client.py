@@ -15,7 +15,7 @@ lack optional-in-practice fields. The SDK has no `/alpha/decisions` endpoint, so
 `sdk=True`) stays on urllib.
 
 Env: OC_OPENROUTER_BASE_URL (default https://openrouter.ai/api/v1), plus the attribution variables in
-`services.openrouter.attribution`.
+`services.openrouter.attribution`. Keys and priority per lane (chat, subagents, background): `services.openrouter.lanes`.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from typing import Iterator
 from oc.obs import capture_content, context, devtrace, error_fields, get_logger, redact_str
 from services.cost import Usage
 
-from . import attribution
+from . import attribution, lanes
 from .store import CallStore
 
 log = get_logger("openrouter")
@@ -207,6 +207,8 @@ def _fallback_fields(base: dict, parsed: dict) -> dict:
 
 
 def _error_class(e: BaseException) -> tuple[str, int | None]:
+    if isinstance(e, lanes.SlotTimeout):
+        return "queue_timeout", None
     if isinstance(e, or_errors.OpenRouterError):
         if e.status_code < 400:  # a 2xx the SDK could not parse (e.g. an HTML page): not an HTTP failure
             return "bad_response", None
@@ -325,11 +327,13 @@ def post(
     """POST JSON to OpenRouter with attribution; returns (response, call_row). Always records a row.
     `sdk=True` sends through the official SDK (chat completions); otherwise urllib (`/alpha/decisions`)."""
     ctx = context.current()
+    lane = lanes.current()
+    key = lanes.resolve(key, lane)  # the lane's own key when it has one (OPENROUTER_API_KEY_<LANE>)
     body = {**(attribution.request_fields(kind, model) if body_fields else {}), **payload}
     data = json.dumps(body).encode()
     call_id = uuid.uuid4().hex[:16]
     base = {
-        "event": "call", "call_id": call_id, "kind": kind, "model_requested": model or payload.get("model"),
+        "event": "call", "call_id": call_id, "kind": kind, "lane": lane, "model_requested": model or payload.get("model"),
         **({"models_requested": list(payload["models"])} if isinstance(payload.get("models"), list) else {}),
         "url_host": urllib.parse.urlsplit(url).netloc,
         "prompt_chars": len(json.dumps(payload.get("messages", payload.get("state", "")), default=str)),
@@ -341,7 +345,8 @@ def post(
     log.debug("openrouter request", call_id=call_id, kind=kind, model=base["model_requested"], bytes=len(data))
     t0 = time.monotonic()
     try:
-        resp = _sdk_send(body, key, timeout) if sdk else _urllib_send(url, data, key, timeout)
+        with lanes.SCHEDULER.slot(lane, wait=timeout):  # chat first when calls queue; bounded wait; see lanes.py
+            resp = _sdk_send(body, key, timeout) if sdk else _urllib_send(url, data, key, timeout)
         latency = int((time.monotonic() - t0) * 1000)
     except Exception as e:
         latency = int((time.monotonic() - t0) * 1000)

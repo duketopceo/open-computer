@@ -19,7 +19,7 @@ def test_no_premium_model_in_any_tier():
 
 
 def test_every_tier_has_a_candidate():
-    assert all(TIER_MODELS[t] for t in ("local", "cheap", "mid", "frontier"))
+    assert all(TIER_MODELS[t] for t in ("cheap", "mid", "frontier"))
 
 
 def test_docs_name_no_premium_orchestrator():

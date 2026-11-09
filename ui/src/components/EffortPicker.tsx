@@ -22,7 +22,8 @@ export function toOptions(c: EffortChoice, cat: EffortCatalog | null): GoalOptio
   return opts;
 }
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
+/** Dollars with cents, and up to four places when the amount needs them ($0.10, $0.001). */
+const usd = (n: number) => `$${n.toFixed(4).replace(/0{1,2}$/, "")}`;
 
 export function EffortPicker({
   catalog,
@@ -51,7 +52,7 @@ export function EffortPicker({
           <legend className="sr-only">Effort</legend>
           <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-line bg-canvas p-0.5">
             {catalog.levels.map((l) => (
-              <label key={l.id} className="relative">
+              <label key={l.id} className="relative" title={l.blurb || undefined}>
                 <input
                   type="radio"
                   name={`${uid}-effort`}
@@ -76,6 +77,11 @@ export function EffortPicker({
             ))}
           </div>
         </fieldset>
+        <span className={cn("mono text-xs", budgetBad ? "text-urgent" : "text-muted")} aria-live="polite">
+          {budgetBad
+            ? `budget must be above $0 and up to ${usd(catalog.max_budget)}`
+            : `up to ${usd(Number(value.budget.trim()) > 0 ? Number(value.budget) : level.budget)} per run`}
+        </span>
         <button
           type="button"
           aria-expanded={open}
@@ -89,18 +95,6 @@ export function EffortPicker({
         </button>
       </div>
 
-      <p className="text-xs text-muted" aria-live="polite">
-        {level.blurb} <span className="mono">{value.model || level.model}</span>
-        {!value.model && level.fallbacks?.length ? (
-          <>
-            {" "}
-            (falls back to <span className="mono">{level.fallbacks.join(", ")}</span>)
-          </>
-        ) : null}{" "}
-        ·{" "}
-        <span className="mono">up to {usd(Number(value.budget.trim()) > 0 && !budgetBad ? Number(value.budget) : level.budget)}</span>{" "}
-        per run
-      </p>
 
       {open && (
         <div id={`${uid}-adv`} className="grid gap-3 rounded-xl border border-line bg-canvas p-3 sm:grid-cols-2">
@@ -122,6 +116,15 @@ export function EffortPicker({
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-xs text-muted">
+              {level.blurb} Uses <span className="mono">{value.model || level.model}</span>
+              {!value.model && level.fallbacks?.length ? (
+                <>
+                  , then <span className="mono">{level.fallbacks.join(", ")}</span>
+                </>
+              ) : null}
+              .
+            </p>
           </div>
           <div>
             <label htmlFor={`${uid}-budget`} className="block text-xs text-muted">

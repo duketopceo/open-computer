@@ -1,10 +1,16 @@
 import { useEffect, useRef } from "react";
-import type { GoalOptions, MemoryRecall, ThreadDetail, ThreadMessage } from "@/lib/api";
+import type {
+  GoalOptions,
+  MemoryRecall,
+  ThreadDetail,
+  ThreadMessage,
+} from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Composer } from "./Composer";
 import { MemoryChip } from "./MemoryChip";
 import { Reveal } from "./Reveal";
 import { RunView } from "./RunView";
+import { SidePanel, SidePanelToggle, useSidePanel } from "./SidePanel";
 
 /** One conversation: messages top to bottom, runs shown inline where the orchestrator started them, one box below. */
 export function ThreadView({
@@ -25,48 +31,63 @@ export function ThreadView({
   const loaded = useRef(thread.messages.length);
   const runCount = Object.values(thread.runs).filter(Boolean).length;
   const cited = citations(thread);
+  const side = useSidePanel(thread);
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [thread.messages.length, thread.working, runCount]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex-1 overflow-y-auto" tabIndex={0}>
-        <ol className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-8" aria-label="Conversation">
-          {thread.messages.map((m, i) => {
-            const recall = cited.get(i);
-            return (
-              <li key={i} className="animate-fade-up">
-                <Message m={m} thread={thread} fresh={i >= loaded.current} />
-                {recall && <MemoryChip recall={recall} thread={thread.id} />}
-              </li>
-            );
-          })}
-          {thread.working && (
-            <li className="flex items-center gap-2 text-sm text-muted" role="status">
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line border-t-accent" />
-              Working…
-            </li>
-          )}
-        </ol>
-        <div ref={end} />
-      </div>
-      <div className="mx-auto w-full max-w-3xl px-6 pb-6">
-        {error && (
-          <p className="mb-2 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
-            {error}
-          </p>
+    <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {side.total > 0 && !side.open && (
+          <div className="mx-auto flex w-full max-w-3xl justify-end px-6 pt-3">
+            <SidePanelToggle side={side} />
+          </div>
         )}
-        <Composer
-          onSend={onSend}
-          busy={busy}
-          working={thread.working}
-          disabled={disabled || thread.working}
-          placeholder={thread.working ? "Working on it…" : "Reply"}
-          rows={2}
-          autoFocus
-        />
+        <div className="flex-1 overflow-y-auto" tabIndex={0}>
+          <ol
+            className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-8"
+            aria-label="Conversation"
+          >
+            {thread.messages.map((m, i) => {
+              const recall = cited.get(i);
+              return (
+                <li key={i} className="animate-fade-up">
+                  <Message m={m} thread={thread} fresh={i >= loaded.current} />
+                  {recall && <MemoryChip recall={recall} thread={thread.id} />}
+                </li>
+              );
+            })}
+            {thread.working && (
+              <li className="flex items-center gap-2 text-sm text-muted">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line border-t-accent" />
+                <span role="status">Working…</span>
+              </li>
+            )}
+          </ol>
+          <div ref={end} />
+        </div>
+        <div className="mx-auto w-full max-w-3xl px-6 pb-6">
+          {error && (
+            <p
+              className="mb-2 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
+          <Composer
+            onSend={onSend}
+            busy={busy}
+            working={thread.working}
+            disabled={disabled || thread.working}
+            placeholder={thread.working ? "Working on it…" : "Reply"}
+            rows={2}
+            autoFocus
+          />
+        </div>
       </div>
+      <SidePanel side={side} />
     </div>
   );
 }
@@ -75,7 +96,9 @@ export function ThreadView({
  *  recalled for (matched on the message's `ts`). A turn still working has no reply yet, so no chip. */
 export function citations(thread: ThreadDetail): Map<number, MemoryRecall> {
   const out = new Map<number, MemoryRecall>();
-  const byTs = new Map((thread.memory?.recalls ?? []).map((r) => [r.user_ts, r]));
+  const byTs = new Map(
+    (thread.memory?.recalls ?? []).map((r) => [r.user_ts, r]),
+  );
   let pending: MemoryRecall | undefined;
   thread.messages.forEach((m, i) => {
     if (m.role === "user") pending = byTs.get(m.ts);
@@ -87,7 +110,15 @@ export function citations(thread: ThreadDetail): Map<number, MemoryRecall> {
   return out;
 }
 
-function Message({ m, thread, fresh }: { m: ThreadMessage; thread: ThreadDetail; fresh: boolean }) {
+function Message({
+  m,
+  thread,
+  fresh,
+}: {
+  m: ThreadMessage;
+  thread: ThreadDetail;
+  fresh: boolean;
+}) {
   if (m.role === "user") {
     return (
       <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl bg-surface-3 px-4 py-2.5 text-[15px] leading-relaxed text-ink">

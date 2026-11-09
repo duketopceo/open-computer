@@ -137,15 +137,6 @@ def test_reaper_closes_idle_run_sandbox(scripted, monkeypatch):
     assert "r1" not in engines._RUN_SANDBOXES
 
 
-def test_local_work_reports_every_attempt(monkeypatch):
-    monkeypatch.setattr(engines, "_chat", lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
-    monkeypatch.setattr(engines, "_post", lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
-    with pytest.raises(engines.LocalModelUnavailable) as ei:
-        engines.local_work({"prompt": "x"})
-    assert "llama.cpp :8080" in str(ei.value) and "ollama :11434" in str(ei.value)
-    assert ei.value.hint  # remediation line travels to the audit row
-
-
 def test_openrouter_call_without_key_fails_clean(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(engines.WorkerUnavailable, match="OPENROUTER_API_KEY"):

@@ -61,6 +61,8 @@ export interface ToolCallData {
   status: "running" | "ok" | "error";
   step?: string;
   summary?: string;
+  /** host or path the call touches (web.fetch: the page's host) */
+  destination?: string;
   command?: string;
   rc?: number | null;
   stdout_tail?: string[];

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from oc.obs import capture_content, get_logger
+from services.openrouter import lanes
 
 from . import decide as _decide
 from .budget import Budget, BudgetHalt  # noqa: F401  (re-exported)
@@ -134,7 +135,7 @@ def default_router(
 ) -> Router:
     """decider chain (decide.decider_chain) -> (implicit table). Config via env or args."""
     base = (base_url or os.environ.get("OPENROUTER_BASE") or _decide.DEFAULT_BASE).rstrip("/")
-    key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
+    key = api_key or lanes.any_key()  # re-picked per lane when sent
     engines: list[Engine] = []
     if key:
         engines.extend(_http_engine(name, model, base, key) for name, model in _decide.decider_chain())

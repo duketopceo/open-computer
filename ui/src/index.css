@@ -1,4 +1,5 @@
 @import "@tokens/silver-lining.css";
+@import "@tokens/oc-palette.css";
 @import "@tokens/oc-scale.css";
 
 @tailwind base;
@@ -37,18 +38,18 @@
 /* Carbon-fibre weave: two crossing diagonal hairlines plus a faint checker, on the canvas only
    (cards and the sidebar stay opaque, so text never sits on the pattern). Dark is the default. */
 :root {
-  --fx-weave: rgba(255, 255, 255, 0.035);
+  --fx-weave: rgba(255, 255, 255, 0.06);
   --fx-weave-2: rgba(0, 0, 0, 0.35);
   --fx-sheen: rgba(255, 255, 255, 0.05);
 }
 :root[data-theme="light"] {
-  --fx-weave: rgba(0, 0, 0, 0.04);
+  --fx-weave: rgba(0, 0, 0, 0.065);
   --fx-weave-2: rgba(255, 255, 255, 0.7);
   --fx-sheen: rgba(255, 255, 255, 0.9);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    --fx-weave: rgba(0, 0, 0, 0.04);
+    --fx-weave: rgba(0, 0, 0, 0.065);
     --fx-weave-2: rgba(255, 255, 255, 0.7);
     --fx-sheen: rgba(255, 255, 255, 0.9);
   }
@@ -110,8 +111,9 @@ body::after {
   box-shadow: 0 0 0 1px var(--sl-accent), 0 0 18px -4px var(--sl-accent-soft);
 }
 
-/* While the chat's run works, a thin accent arc sweeps the composer edge. @property makes the angle animatable;
-   browsers without it show the static ring. Under reduced motion or Reduce effects the ring is static. */
+/* While the chat's run works, an accent arc sweeps the composer edge with a soft halo behind it (Luke likes this one:
+   it is the "thinking" signal). @property makes the angle animatable; browsers without it show the static ring.
+   Under reduced motion or Reduce effects the ring and halo are static. */
 @property --fx-angle {
   syntax: "<angle>";
   inherits: false;
@@ -122,19 +124,27 @@ body::after {
 }
 .fx-working {
   position: relative;
+  border-color: var(--sl-accent-soft);
+  box-shadow: 0 0 0 1px var(--sl-accent-soft), 0 0 28px -6px var(--sl-accent-soft);
 }
 .fx-working::before {
   content: "";
   position: absolute;
-  inset: -1px;
+  inset: -1.5px;
   border-radius: inherit;
-  padding: 1px;
+  padding: 1.5px;
   pointer-events: none;
-  background: conic-gradient(from var(--fx-angle), transparent 0 72%, var(--sl-accent) 88%, transparent 100%);
+  background: conic-gradient(
+    from var(--fx-angle),
+    transparent 0 55%,
+    var(--sl-accent-soft) 70%,
+    var(--sl-accent) 88%,
+    var(--sl-accent-hover) 92%,
+    transparent 100%
+  );
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  opacity: 0.7;
 }
 
 /* Same-document View Transitions (thread and page changes): a short cross-fade on the settle spring's time.
@@ -164,6 +174,9 @@ html[data-effects="off"]::view-transition-new(*) {
     animation: fx-edge 0.9s ease-out;
   }
   html:not([data-effects="off"]) .fx-mark-running svg {
+    animation: fx-pulse 1.6s ease-in-out infinite;
+  }
+  html:not([data-effects="off"]) .fx-now-doing {
     animation: fx-pulse 1.6s ease-in-out infinite;
   }
   html:not([data-effects="off"]) .fx-step-running {

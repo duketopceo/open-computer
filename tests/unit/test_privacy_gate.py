@@ -174,3 +174,10 @@ def test_mask_covers_non_string_leaves_and_pii_keys(tmp_path: Path):
     restored = pg.restore_payload(d.outbound_payload)
     assert "k@example.com" in restored and restored["note"] == "call me at 415-555-2671"
     assert restored["count"] == "4111111111111111" and restored["items"] == ["4111-1111-1111-1111"]
+
+
+def test_a_package_version_pin_is_not_an_email_address():
+    from services.gate.pii import scan
+
+    assert "email" not in scan("an import map for three@0.160.0 and react@18.3.1").categories
+    assert "email" in scan("write to alice@example.com today").categories

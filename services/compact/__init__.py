@@ -207,10 +207,12 @@ def _parse_score(raw: str) -> tuple[float, float]:
 
 def openrouter_ask(key: str) -> Ask:
     from services.openrouter import chat as or_chat
+    from services.openrouter import lanes
 
     def ask(model: str, messages: list[dict]) -> str:
-        return or_chat(model, messages=messages, key=key, timeout=30, kind="compact", effort="low",
-                       temperature=0, max_tokens=40).text
+        with lanes.scope("chat"):  # scoring sits on the owner's turn: chat's key, first in line
+            return or_chat(model, messages=messages, key=key, timeout=30, kind="compact", effort="low",
+                           temperature=0, max_tokens=40).text
 
     return ask
 
@@ -291,6 +293,7 @@ def from_env(env: dict[str, str] | None = None) -> Compactor | None:
     cfg = CompactConfig.from_env(env)
     if cfg is None:
         return None
-    e = os.environ if env is None else env
-    key = e.get("OPENROUTER_API_KEY", "").strip()
+    from services.openrouter import lanes
+
+    key = lanes.key_for("chat", env)
     return Compactor(cfg, openrouter_ask(key) if key else None)

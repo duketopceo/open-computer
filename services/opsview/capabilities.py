@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import socket
 
+from services.openrouter import lanes
+
 
 def _up(host: str, port: int, timeout: float = 0.6) -> bool:
     try:
@@ -22,7 +24,7 @@ def _up(host: str, port: int, timeout: float = 0.6) -> bool:
 
 def collect() -> list[dict]:
     """[{name, kind, status, detail}] — status is a normative word."""
-    or_key = bool(os.environ.get("OPENROUTER_API_KEY"))
+    or_key = bool(lanes.any_key())
     cube = bool(os.environ.get("CUBE_API_URL"))
     temporal = _up("127.0.0.1", 7233)
     llama = _up("127.0.0.1", 8080)
