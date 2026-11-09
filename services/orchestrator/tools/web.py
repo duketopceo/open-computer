@@ -22,6 +22,7 @@ import json
 import os
 import re
 import socket
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -533,6 +534,52 @@ def _finish(text: str, src: Sources) -> str:
     return text + "\n\nSources:\n" + "\n".join(f"[{i + 1}] {u}" for i, u in enumerate(src.urls))
 
 
+class _Traced:
+    """Dev trace of the loop's tools: each search and fetch is a `tool_call` (`web.search` with the query,
+    `web.fetch` with the URL and its host), so the console's side panel can list them. A no-op unless the run has a
+    stream; tracing never changes a tool's result or error."""
+
+    def __init__(self, task: dict):
+        from oc.obs import devtrace
+
+        self.dt = devtrace
+        self.trace = devtrace.tracer(run_id=str(task.get("run") or ""), actor="worker")
+        self.step = devtrace.entity("step", task.get("subtask") or "x")
+        self.n = 0
+
+    def call(self, name: str, summary: str, destination: str, fn: Callable[[], object]):
+        if self.trace is None:
+            return fn()
+        self.n += 1
+        call_id = self.dt.entity("tool", f"{self.step}_{name.replace('.', '_')}_{self.n}_{int(time.time() * 1000)}")
+        base = {"id": call_id, "name": name, "step": self.step, "summary": self.dt.text(summary, 300),
+                "destination": destination or None}
+        self.trace.emit("tool_call", status="running", **base)
+        t0 = time.monotonic()
+        status = "error"
+        try:
+            out = fn()
+            status = "ok"
+            return out
+        finally:
+            self.trace.emit("tool_call", status=status, duration_ms=int((time.monotonic() - t0) * 1000), **base)
+
+
+def _traced_tools(task: dict, search, fetch: Callable[[str], Page]):
+    t = _Traced(task)
+    if t.trace is None:
+        return search, fetch
+
+    class _Search:
+        def search(self, q: str):
+            return t.call("web.search", q, "", lambda: search.search(q))
+
+    def traced_fetch(url: str) -> Page:
+        return t.call("web.fetch", url, urllib.parse.urlsplit(url).hostname or "", lambda: fetch(url))
+
+    return _Search(), traced_fetch
+
+
 def web_work(task: dict, chat: Callable[[str], str], *, env=None, allowed=None, search=None, fetch=None) -> str:
     """Execute a `needs_web` step. Providers default to the configured ones; tests inject fakes."""
     reader = None
@@ -550,4 +597,5 @@ def web_work(task: dict, chat: Callable[[str], str], *, env=None, allowed=None, 
         else:
             def fetch(url: str) -> Page:
                 return http_fetch(url, allowed)
+    search, fetch = _traced_tools(task, search, fetch)
     return web_loop(task["prompt"], chat, search, fetch)
