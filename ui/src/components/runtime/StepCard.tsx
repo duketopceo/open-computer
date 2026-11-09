@@ -1,6 +1,9 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { AnimatePresence, m } from "motion/react";
 import { cn } from "@/lib/cn";
 import { cost, dur } from "@/lib/format";
+import { SPRING } from "@/lib/motion";
+import { useMotionAllowed } from "@/lib/MotionRoot";
 import { plainError, waitingLabel, words } from "@/lib/friendly";
 import { stepDisplay, type ErrorData, type LlmCallData, type RouteData, type Step, type ToolCallData } from "@/lib/runEvents";
 import { Chip } from "../primitives";
@@ -18,7 +21,7 @@ export interface StepCardProps {
   onToggle: (id: string) => void;
   /** shared 1 s clock (epoch seconds); only passed to rows that are live */
   now: number | null;
-  /** slide in (a row that arrived after the first load) */
+  /** slide in (a row that arrived after the first load; Motion, instant when motion is not allowed) */
   slide: boolean;
   /** dev mode: show raw model detail (plan JSON, reasoning) inside the step */
   raw?: boolean;
@@ -57,8 +60,15 @@ function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, 
   const total = calls.reduce((a, c) => a + (c.cost_usd ?? 0), 0);
   const fb = route?.fallbacks?.[0];
   const panel = `step-${step.id}-detail`;
+  const moving = useMotionAllowed();
   return (
-    <div className={cn("relative overflow-hidden rounded-xl border bg-surface-1", display === "failed" ? "border-urgent" : "border-line", slide && "animate-strip-in", display === "running" && "fx-step-running", settle && "fx-step-settle")}>
+    <m.div
+      data-testid={`step-${step.id}`}
+      initial={moving && slide ? { opacity: 0, y: 8 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SPRING.snap}
+      className={cn("relative overflow-hidden rounded-xl border bg-surface-1", display === "failed" ? "border-urgent" : "border-line", display === "running" && "fx-step-running", settle && "fx-step-settle")}
+    >
       <button
         type="button"
         aria-expanded={open}
@@ -104,8 +114,18 @@ function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, 
           <span className="block h-px w-1/3 animate-run-line bg-accent" />
         </span>
       )}
+      <AnimatePresence initial={false}>
       {open && (
-        <div id={panel} className="space-y-2 border-t border-line px-4 py-3">
+        <m.div
+          key="detail"
+          id={panel}
+          initial={moving ? { height: 0, opacity: 0 } : false}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={moving ? { height: 0, opacity: 0 } : undefined}
+          transition={SPRING.settle}
+          className="overflow-hidden"
+        >
+        <div className="space-y-2 border-t border-line px-4 py-3">
           {errors.map((e) => (
             <ErrorBlock key={e.id} e={e} />
           ))}
@@ -135,8 +155,10 @@ function StepCardView({ step, route, calls, execs, errors, open, onToggle, now, 
             <p className="text-xs text-muted">Nothing recorded for this step yet.</p>
           )}
         </div>
+        </m.div>
       )}
-    </div>
+      </AnimatePresence>
+    </m.div>
   );
 }
 
