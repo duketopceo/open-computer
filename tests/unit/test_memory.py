@@ -255,3 +255,36 @@ def test_with_memory_off_nothing_changes(tdir):
     t = threads.create("hello", {"effort": "low", "model": "m", "budget": 0.1})
     threads.run_turn(t["id"], d)
     assert [msg["role"] for msg in seen[0]] == ["system", "user"]
+
+
+# --- console views ---------------------------------------------------------------------------------------------
+def test_thread_view_pairs_recalls_with_their_message_and_marks_forgotten(ledger):
+    fake = FakeKurultai(recall=[atom(1), atom(2, summary="Ring 801-555-0142.")])
+    me = mem(fake, ledger)
+    me.recall("q", m.Scope("th_1"), user_ts=10)
+    me.remember("Weekly report", "Done.", m.Scope("th_1", run="goal_00000001"))
+    me.recall("q", m.Scope("th_2"), user_ts=11)
+    m.forget("atom_1", "th_1", ledger=ledger)
+    v = m.thread_view("th_1", ledger)
+    assert [(r["user_ts"], r["withheld"]) for r in v["recalls"]] == [(10, 1)]
+    assert v["recalls"][0]["atoms"] == [{"id": "atom_1", "title": "Deploy notes", "source": "agent", "score": 0.8, "forgotten": True}]
+    assert v["writes"] == [{"ts": 100.0, "atom": "atom_new", "title": "Weekly report", "run": "goal_00000001", "forgotten": False}]
+
+
+def test_status_shows_config_but_never_the_token(ledger):
+    assert m.status({}, ledger)["enabled"] is False and "url" not in m.status({}, ledger)
+    me = mem(FakeKurultai(down=True), ledger)
+    me.recall("q", m.Scope("th_1"))
+    s = m.status({"OC_MEMORY": "kurultai", "OC_MEMORY_TOKEN": "s3cret-seat"}, ledger)
+    assert (s["enabled"], s["token"], s["url"], s["project"]) == (True, True, m.DEFAULT_URL, "open-computer")
+    assert s["counts"]["errors"] == 1 and s["last_error"]["op"] == "recall"
+    assert "s3cret-seat" not in json.dumps(s)
+
+
+def test_status_lists_recent_notes_newest_first_without_forgotten(ledger):
+    me = mem(FakeKurultai(), ledger)
+    for i in range(3):
+        me.client.opener = FakeKurultai(remember=f"remembered atom id=atom_{i} lane=trusted project=open-computer")
+        me.remember(f"Note {i}", "Done.", m.Scope("th_1"))
+    m.forget("atom_1", ledger=ledger)
+    assert [w["atom"] for w in m.status({}, ledger)["recent_writes"]] == ["atom_2", "atom_0"]

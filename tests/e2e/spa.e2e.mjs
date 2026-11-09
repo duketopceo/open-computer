@@ -180,6 +180,87 @@ test("@chat awaiting-approval run shows Open Approvals from the inline run card"
   await ctx.close();
 });
 
+test("@flow memory: a reply shows the notes its turn used, Forget posts once and marks the note", async () => {
+  const posts = [];
+  const memory = {
+    recalls: [{ user_ts: 1, ts: 1.5, withheld: 1, atoms: [{ id: "atom_e2e1", title: "Deploy notes", source: "agent", score: 0.8 }] }],
+    writes: [],
+  };
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/threads": (r) => r.fulfill(json(200, { threads: [{ id: "th_e2e00001", title: "say hi", ts: 1, archived: false, working: false, finished: true }] })),
+      "**/api/threads/th_e2e00001": (r) => r.fulfill(json(200, THREAD({ memory }))),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+      "**/api/memory/forget": (r) => {
+        posts.push(JSON.parse(r.request().postData() || "{}"));
+        return r.fulfill(json(200, { ok: true, atom: "atom_e2e1" }));
+      },
+    },
+    path: "/#th_e2e00001",
+  });
+  const chip = page.getByRole("button", { name: "Used 1 memory" });
+  await chip.waitFor();
+  assert.equal(await page.getByTestId("memory-chip").count(), 1, "one chip, on the first reply after the message");
+  await chip.click();
+  await page.getByText("Deploy notes").waitFor();
+  assert.ok(await page.getByText(/1 note held back by the privacy check/).isVisible());
+  await page.evaluate(AXE);
+  const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+  assert.deepEqual(r.violations.map((v) => v.id), []);
+  await page.getByRole("button", { name: "Forget Deploy notes" }).click();
+  await page.getByText("Forgotten", { exact: true }).waitFor();
+  assert.deepEqual(posts, [{ atom: "atom_e2e1", thread: "th_e2e00001" }]);
+  await ctx.close();
+});
+
+test("@flow memory: with memory off a thread shows no chip and Settings says how to turn it on", async () => {
+  const { ctx, page } = await open({
+    routes: {
+      "**/api/threads": (r) => r.fulfill(json(200, { threads: [] })),
+      "**/api/threads/th_e2e00001": (r) => r.fulfill(json(200, THREAD())),
+      "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, RUN)),
+      "**/api/memory": (r) => r.fulfill(json(200, { enabled: false, project: "open-computer", counts: { recalls: 0, writes: 0, withheld: 0, forgotten: 0, errors: 0 }, last_error: null, recent_writes: [] })),
+    },
+    path: "/#th_e2e00001",
+  });
+  await page.getByText("Done: it said hi.").waitFor();
+  assert.equal(await page.getByTestId("memory-chip").count(), 0);
+  await page.goto(base + "/settings", { waitUntil: "networkidle" });
+  await page.getByTestId("memory-status").filter({ hasText: "Off. Set OC_MEMORY=kurultai" }).waitFor();
+  await ctx.close();
+});
+
+test("@flow memory: Settings shows the endpoint, counts and a failure, and forgets a stored note", async () => {
+  let forgotten = false;
+  const posts = [];
+  const status = () => ({
+    enabled: true, project: "open-computer", url: "http://127.0.0.1:8421/mcp", limit: 5, include_quarantine: false, token: false,
+    counts: { recalls: 4, writes: 2, withheld: 1, forgotten: forgotten ? 1 : 0, errors: 1 },
+    last_error: { ts: Date.now() / 1000 - 120, op: "recall" },
+    recent_writes: forgotten ? [] : [{ atom: "atom_e2e9", title: "Weekly report", thread: "th_e2e00001", ts: Date.now() / 1000 - 60 }],
+  });
+  const { ctx, page } = await open({
+    path: "/settings",
+    routes: {
+      "**/api/memory": (r) => r.fulfill(json(200, status())),
+      "**/api/memory/forget": (r) => {
+        posts.push(JSON.parse(r.request().postData() || "{}"));
+        forgotten = true;
+        return r.fulfill(json(200, { ok: true, atom: "atom_e2e9" }));
+      },
+    },
+  });
+  await page.getByTestId("memory-status").filter({ hasText: "On. Each message recalls up to 5 notes" }).waitFor();
+  assert.ok(await page.getByText("http://127.0.0.1:8421/mcp").isVisible());
+  assert.ok(await page.getByText("None: Kurultai may refuse calls (OC_MEMORY_TOKEN)").isVisible());
+  assert.ok(await page.getByText(/recall 2m ago; chats carried on without memory/).isVisible());
+  await page.getByRole("button", { name: "Forget Weekly report" }).click();
+  await page.getByTestId("memory-counts").filter({ hasText: "1 forgotten" }).waitFor();
+  assert.deepEqual(posts, [{ atom: "atom_e2e9" }]);
+  assert.equal(await page.getByRole("list", { name: "Stored memories" }).count(), 0);
+  await ctx.close();
+});
+
 test("@errors a missing run offers retry instead of spinning forever", async () => {
   const { ctx, page } = await open({
     routes: {
