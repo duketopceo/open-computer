@@ -67,6 +67,7 @@ _ASSET_TYPES = {
 STATIC_TYPES = {
     "silver-lining.css": "text/css",
     "oc-scale.css": "text/css",
+    "oc-palette.css": "text/css",
     "console.css": "text/css",
     "console.js": "text/javascript",
     "theme-init.js": "text/javascript",

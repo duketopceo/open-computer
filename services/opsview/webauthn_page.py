@@ -173,7 +173,7 @@ def _page(title: str, body: str, script: str) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta name="robots" content="noindex">'
         "<title>open-computer · " + title + "</title>"
-        '<link rel="stylesheet" href="/static/silver-lining.css"><link rel="stylesheet" href="/static/oc-scale.css"><style>' + _CSS + "</style></head>\n"
+        '<link rel="stylesheet" href="/static/silver-lining.css"><link rel="stylesheet" href="/static/oc-palette.css"><link rel="stylesheet" href="/static/oc-scale.css"><style>' + _CSS + "</style></head>\n"
         "<body><main>"
         "<h1>open-computer</h1>"
         '<div id="status"><span id="word"></span> <span id="msg" class="dim"></span></div>'
