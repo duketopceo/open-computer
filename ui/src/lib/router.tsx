@@ -11,6 +11,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { withViewTransition } from "./motion";
 
 export interface Match<R> {
   route: R;
@@ -68,10 +69,11 @@ export function RouterProvider({ children }: { children: ReactNode }) {
   const [loc, setLoc] = useState<Loc>(here);
   const [navs, setNavs] = useState(0);
   useEffect(() => {
-    const onPop = () => {
-      setLoc(here());
-      setNavs((n) => n + 1);
-    };
+    const onPop = () =>
+      withViewTransition(() => {
+        setLoc(here());
+        setNavs((n) => n + 1);
+      });
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -80,8 +82,10 @@ export function RouterProvider({ children }: { children: ReactNode }) {
     if (new URL(to, window.location.href).href === window.location.href) return;
     if (opts?.replace) window.history.replaceState(null, "", to);
     else window.history.pushState(null, "", to);
-    setLoc(here());
-    setNavs((n) => n + 1);
+    withViewTransition(() => {
+      setLoc(here());
+      setNavs((n) => n + 1);
+    });
   }, []);
   const value = useMemo(() => ({ ...loc, navs, navigate }), [loc, navs, navigate]);
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;

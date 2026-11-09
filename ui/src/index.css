@@ -1,4 +1,5 @@
 @import "@tokens/silver-lining.css";
+@import "@tokens/oc-scale.css";
 
 @tailwind base;
 @tailwind components;
@@ -105,7 +106,50 @@ body::after {
   box-shadow: 0 0 0 1px var(--sl-accent), 0 0 18px -4px var(--sl-accent-soft);
 }
 
+/* While the chat's run works, a thin accent arc sweeps the composer edge. @property makes the angle animatable;
+   browsers without it show the static ring. Under reduced motion or Reduce effects the ring is static. */
+@property --fx-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes fx-sweep {
+  to { --fx-angle: 360deg; }
+}
+.fx-working {
+  position: relative;
+}
+.fx-working::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(from var(--fx-angle), transparent 0 72%, var(--sl-accent) 88%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.7;
+}
+
+/* Same-document View Transitions (thread and page changes): a short cross-fade on the settle spring's time.
+   lib/motion.ts only starts one when motion is allowed; these rules make sure none ever plays otherwise. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--motion-settle, 300ms);
+  animation-timing-function: var(--ease-out);
+}
+html[data-effects="off"]::view-transition-group(*),
+html[data-effects="off"]::view-transition-old(*),
+html[data-effects="off"]::view-transition-new(*) {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  html:not([data-effects="off"]) .fx-working::before {
+    animation: fx-sweep 2.4s linear infinite;
+  }
   html:not([data-effects="off"]) body::after {
     animation: fx-sheen 70s ease-in-out infinite;
   }
@@ -128,6 +172,11 @@ body::after {
 
 /* Reduced motion or "Reduce effects": show the settled state at once instead of fading in. */
 @media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
   .animate-fade-up,
   .animate-strip-in {
     animation: none;

@@ -52,4 +52,10 @@
   --duration-overlay: 200ms;
   --ease-standard: cubic-bezier(0.2, 0, 0.38, 0.9);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Spring presets from Rune's rune-motion tokens (anomalyco/rune, MIT): the response time of each
+     spring as a CSS duration. ui/src/lib/motion.ts carries the same values as Motion springs. */
+  --motion-snap: 250ms;
+  --motion-settle: 300ms;
+  --motion-reflow: 400ms;
+  --motion-morph: 300ms;
 }

@@ -58,4 +58,11 @@ describe("Composer", () => {
     expect(screen.queryByRole("radio", { name: /Search|Computer/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Attach|Attachments/ })).toBeNull();
   });
+
+  it("marks the edge while the chat's run works, and only then", () => {
+    const { rerender } = render(<Composer onSend={() => {}} />);
+    expect(screen.getByTestId("composer-edge")).not.toHaveClass("fx-working");
+    rerender(<Composer onSend={() => {}} working />);
+    expect(screen.getByTestId("composer-edge")).toHaveClass("fx-working");
+  });
 });
