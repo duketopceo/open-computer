@@ -17,6 +17,8 @@ vi.mock("@/lib/api", () => ({
   getMemory: (...a: unknown[]) => getMemory(...a),
   getBrain: (...a: unknown[]) => getBrain(...a),
   getRuntime: (...a: unknown[]) => getRuntime(...a),
+  getAccount: () => Promise.resolve({ id: "oc_1", email: "", name: "", created: 0, via: "local", signout: "" }),
+  getConnectors: () => Promise.resolve({ enabled: false, toolkits: [] }),
 }));
 
 vi.mock("@/lib/router", () => ({
