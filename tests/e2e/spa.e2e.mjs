@@ -182,6 +182,52 @@ test("@chat awaiting-approval run shows Open Approvals from the inline run card"
   await ctx.close();
 });
 
+const LIVE_RUN = {
+  ...RUN,
+  declared: 2,
+  started: Date.now() / 1000 - 5,
+  ended: Date.now() / 1000 - 1, // the API stamps the latest audit row's time on live runs too
+  subtasks: [
+    { ...RUN.subtasks[0], subtask: "s1", title: "Read the page" },
+    { ...RUN.subtasks[0], subtask: "s2", title: "Summarise it", state: "RUNNING", result: "", started_ts: Date.now() / 1000 - 3, finished_ts: null },
+  ],
+};
+const liveChat = () => ({
+  "**/api/threads": (r) => r.fulfill(json(200, { threads: [{ id: "th_e2e00001", title: "say hi", ts: 1, archived: false, working: true, finished: false }] })),
+  "**/api/threads/th_e2e00001": (r) =>
+    r.fulfill(json(200, THREAD({ working: true, runs: { g_e2e01: LIVE_RUN }, messages: THREAD().messages.slice(0, 3) }))),
+  "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, LIVE_RUN)),
+});
+
+test("@flow chat: a live run folds to one Now line; Follow opens the steps and Hide folds them", async () => {
+  const { ctx, page } = await open({ routes: liveChat(), path: "/#th_e2e00001" });
+  const now = page.getByRole("button", { name: /Now: Summarise it/ });
+  await now.waitFor();
+  assert.equal(await now.getAttribute("aria-expanded"), "false");
+  assert.equal(await page.getByText("Read the page").count(), 0, "the step list waits behind Follow");
+  await now.click();
+  await page.getByText("Read the page").waitFor();
+  assert.equal(await now.getAttribute("aria-expanded"), "true");
+  await page.getByRole("button", { name: /Hide/ }).click();
+  assert.equal(await page.getByText("Read the page").count(), 0);
+  await ctx.close();
+});
+
+for (const scheme of ["light", "dark"]) {
+  test(`@a11y chat Now line, folded and open: axe 0 violations, ${scheme}`, async () => {
+    const { ctx, page } = await open({ scheme, routes: liveChat(), path: "/#th_e2e00001" });
+    const now = page.getByRole("button", { name: /Now: Summarise it/ });
+    await now.waitFor();
+    await page.evaluate(AXE);
+    for (const state of ["folded", "open"]) {
+      if (state === "open") await now.click();
+      const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }));
+      assert.deepEqual(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`), [], `${scheme} ${state}`);
+    }
+    await ctx.close();
+  });
+}
+
 const SOURCED_RUN = {
   ...RUN,
   subtasks: [{ ...RUN.subtasks[0], title: "Look it up", result: "Cats are small.\n\nSources:\n[1] https://example.com/cats\n[2] https://docs.test/a" }],
