@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import type { RunDetail, SubTask } from "@/lib/api";
 import { cost, dur, totalCost } from "@/lib/format";
 import { engine, errorKind, fallbackWhy, modelName, placement, skippedWhy, waitingText } from "@/lib/friendly";
+import { nowDoing } from "@/lib/nowDoing";
 import { hasStream } from "@/lib/runEvents";
 import { Artifacts } from "./Artifacts";
+import { NowDoing } from "./NowDoing";
 import { PlanCard } from "./PlanCard";
 import { Timeline } from "./runtime/Timeline";
 import { Chip, Dot, StateWord } from "./primitives";
@@ -34,6 +36,15 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
     };
   }, [run.run]);
   const planned = run.plan?.state === "planned";
+  // In a chat a live run folds to one "Now: …" line; Follow opens the steps and, with a stream, the live timeline.
+  const now = compact ? nowDoing(run) : null;
+  const steps = run.subtasks.length > 0 && (
+    <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
+      {run.subtasks.map((s) => (
+        <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
+      ))}
+    </ol>
+  );
   return (
     <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
       <header className={compact ? "mb-3" : "mb-6"}>
@@ -118,16 +129,20 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
           ))}
         </div>
       )}
-      {showLive ? (
+      {now ? (
+        <NowDoing now={now}>
+          {steps}
+          {stream && (
+            <div className="mt-3">
+              <Timeline key={run.run} runId={run.run} goal={run.goal} embedded />
+            </div>
+          )}
+        </NowDoing>
+      ) : showLive ? (
         <Timeline key={run.run} runId={run.run} goal={run.goal} embedded />
       ) : (
-      run.subtasks.length > 0 && (
-        <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
-          {run.subtasks.map((s) => (
-            <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
-          ))}
-        </ol>
-      ))}
+        steps
+      )}
 
       {!compact && <Artifacts runId={run.run} refresh={states.DONE} />}
 

@@ -43,9 +43,9 @@ export function ThreadView({
             );
           })}
           {thread.working && (
-            <li className="flex items-center gap-2 text-sm text-muted" role="status">
+            <li className="flex items-center gap-2 text-sm text-muted">
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line border-t-accent" />
-              Working…
+              <span role="status">Working…</span>
             </li>
           )}
         </ol>

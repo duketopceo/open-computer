@@ -166,6 +166,9 @@ html[data-effects="off"]::view-transition-new(*) {
   html:not([data-effects="off"]) .fx-mark-running svg {
     animation: fx-pulse 1.6s ease-in-out infinite;
   }
+  html:not([data-effects="off"]) .fx-now-doing {
+    animation: fx-pulse 1.6s ease-in-out infinite;
+  }
   html:not([data-effects="off"]) .fx-step-running {
     animation: fx-edge-run 2.4s ease-in-out infinite;
   }
