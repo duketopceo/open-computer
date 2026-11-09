@@ -35,7 +35,7 @@ related: docs/plans/2026-11-06-1222-feat-everyday-chat-ui-plan.md; ROADMAP.md; D
 | U1 | Stronger ambient background; effort caption cut to one line, details in Advanced | `EffortPicker.test.tsx`; e2e effort flow | #144 |
 | U2 | Routing: no local placements, every model call via OpenRouter with fallbacks; paused runs hold steps at dispatch; PII email pattern needs a TLD; approving a held plan resumes the chat | placement table I0 over 1,152 cases; health; conformance; cost-ledger pause; threads resume | #148 |
 | U3 | Accounts (`services/accounts`), `GET/POST /api/account`, sign-out; Composio connectors (`services/connectors/composio.py`), `GET /api/connectors`, connect and disconnect; Settings Account and Connectors sections | pytest: account ids, store, API; Composio wiring with the SDK mocked (off without key, connect, ownership check, key never in responses or logs); vitest for both sections | this plan's PR |
-| U4 | Composio tools in step workers, gated: read tools run, write tools ask first | pytest with the session mocked | next |
+| U4 | Composio tools in step workers, gated: read tools run, write tools ask first | pytest with the session mocked | stacked on U3 |
 | U5 | Colour scheme: one accent plus neutrals as `--sl-*` tokens in DESIGN.md; Send uses the accent; keep and strengthen the composer thinking glow | vitest token test; axe contrast in e2e | next |
 | U6 | Run card copy: drop `LEASED`, `origin cloud`, `routed by jev` and `<$0.0001` from the card; plain state words; details move to the click-in view | vitest for `RunView` compact; e2e text checks | next |
 | U7 | Live progress: a one-line, plain-words "now doing…" line on the card, fed by the run's event stream; click opens the live view | vitest with a fake stream | next |

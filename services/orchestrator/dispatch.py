@@ -112,6 +112,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         "est_cost": sub.get("est_cost", 0.0),
         **({"chat": chat_id} if chat_id else {}),
         **({"needs_web": True} if sub.get("needs_web") else {}),
+        **({"needs_apps": True} if sub.get("needs_apps") else {}),
         **({"egress_hosts": list(placement.egress_hosts)} if placement.egress_hosts else {}),
         **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
     }

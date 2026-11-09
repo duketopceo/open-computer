@@ -37,6 +37,7 @@ _FIELDS = {
     "needs_sandbox": bool,
     "needs_egress": bool,
     "needs_web": bool,
+    "needs_apps": bool,
     "egress_hosts": list,
 }
 
@@ -100,6 +101,7 @@ def _canon(raw: dict, i: int) -> dict:
         "needs_sandbox": bool(raw.get("needs_sandbox", False)),
         "needs_egress": bool(raw.get("needs_egress", False)),
         "needs_web": bool(raw.get("needs_web", False)),
+        "needs_apps": bool(raw.get("needs_apps", False)),
         "egress_hosts": [
             h.strip().lower() for h in (raw.get("egress_hosts") or []) if isinstance(h, str) and h.strip()
         ],
@@ -156,9 +158,11 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         "Decompose this goal into subtasks. Return ONLY a JSON array; each "
         'item: {"id","title","prompt","deps":[ids],"tier":cheap|mid|frontier,'
         '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool,'
-        '"needs_egress":bool,"needs_web":bool,"egress_hosts":[domain,...]}. '
+        '"needs_egress":bool,"needs_web":bool,"needs_apps":bool,"egress_hosts":[domain,...]}. '
         "Set needs_web when the step must look something up on the web or read a page (the "
         "worker has a search and page-reading tool; no sandbox or egress_hosts needed for that). "
+        "Set needs_apps when the step must read the owner's own connected apps (their email, calendar, "
+        "Drive files, GitHub, Slack or Notion); the worker can read them but not send or change anything. "
         "Set needs_egress when the step must reach the network (downloads, "
         "APIs); name the exact domains it needs in egress_hosts. Sandbox steps "
         "share one filesystem per run while the VM lives, but a step that adds "
