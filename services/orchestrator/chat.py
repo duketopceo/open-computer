@@ -103,8 +103,11 @@ def run_status(view: dict) -> str:
     return "failed" if any(s.get("state") == "FAILED" for s in subs) else "done"
 
 
-def build_messages(thread: dict, runs: dict[str, dict | None], *, final: bool = False) -> list[dict]:
+def build_messages(thread: dict, runs: dict[str, dict | None], *, final: bool = False, memory: str = "") -> list[dict]:
+    """`memory` is the data-only block of recalled notes (services.memory.render_block), already PII-checked."""
     msgs = [{"role": "system", "content": SYSTEM}]
+    if memory:
+        msgs.append({"role": "system", "content": memory})
     for m in thread.get("messages", []):
         if m["role"] == "user":
             msgs.append({"role": "user", "content": m["text"]})

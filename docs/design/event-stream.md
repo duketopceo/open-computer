@@ -126,6 +126,12 @@ model returned, <= 16 000 characters), `detail`, and for a failed call `error_cl
 The planner's output is one extra row, id `call_plan`, whose `detail` is the plan JSON (no cost: the planner's HTTP call
 is its own `plan` row).
 
+### `memory_recall` and `memory_write`: the owner's memory (dev trace, optional)
+Written only when memory is on (`OC_MEMORY=kurultai`, `services/memory`). `memory_recall`: `id`, `atoms[]`
+(`{id, title, source?, score?}`) the orchestrator saw before it wrote this run's goal, optional `withheld` (hits the PII
+check held back). `memory_write`: `id`, `atom`, `title`, optional `lane`: the note the thread stored after reporting this
+run. Neither carries recalled or stored text; the full record is `memory.ndjson` (see `services/memory/__init__.py`).
+
 ## Dev trace: a per-run stream, and a content-capture mode
 
 With dev trace on, every console run writes this same contract to `<run dir>/events.ndjson` (goal id = the run id,

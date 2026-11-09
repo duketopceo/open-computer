@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from services import memory as oc_memory
 from services.opsview import goalruns
 from services.orchestrator import chat
 
@@ -199,6 +200,21 @@ class Deps:
     start_run: Callable[[str], str]  # goal in, run id out
     load_run: Callable[[str], dict | None]
     wait_run: Callable[[str], str]  # blocks; returns done | approval | paused | timeout
+    memory: oc_memory.Memory | None = None  # off unless OC_MEMORY=kurultai
+    trace: Callable[[str, str, dict], None] | None = None  # (run id, event type, data) onto the run's stream
+
+
+def _last_user(t: dict) -> dict | None:
+    return next((m for m in reversed(t.get("messages", [])) if m.get("role") == "user"), None)
+
+
+def _run_trace(rid: str, type_: str, data: dict) -> None:
+    """Memory events on a run's dev-trace stream. A no-op when the run has no stream."""
+    from oc.obs import devtrace
+
+    tr = devtrace.tracer(run_id=rid, actor="orchestrator")
+    if tr is not None:
+        tr.emit(type_, id=devtrace.entity("mem", f"{type_}_{int(time.time() * 1000)}"), **data)
 
 
 def wait_for_run(rid: str, *, timeout: float = WAIT_TIMEOUT_S, poll: float = 1.0) -> str:
@@ -225,18 +241,32 @@ _STOP_NOTES = {
 
 def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES) -> None:
     """Drive one user message to a reply. Never raises: a failure becomes an assistant message."""
+    trace = d.trace or _run_trace
     try:
+        hits: list[oc_memory.Hit] = []
+        first = _read(tid)
+        user = _last_user(first) if first else None
+        if d.memory is not None and user is not None:
+            # One recall per user message, before the first pass; every pass of this turn sees the same notes.
+            hits = d.memory.recall(user["text"], oc_memory.Scope(tid), user_ts=user.get("ts"))
+        block = oc_memory.render_block(hits)
+        last_run: str | None = None
         for n in range(max_passes + 1):
             t = _read(tid)
             if t is None:
                 return
             final = n == max_passes
             runs = {rid: d.load_run(rid) for rid in dict.fromkeys(run_ids(t))}
-            dec = chat.parse_decision(d.engine(chat.build_messages(t, runs, final=final)))
+            dec = chat.parse_decision(d.engine(chat.build_messages(t, runs, final=final, memory=block)))
             if dec.action != "run" or final:
                 append(tid, "assistant", dec.text, **({"ask": True} if dec.action == "ask" else {}))
+                if d.memory is not None and last_run and dec.action == "reply":
+                    _remember_outcome(d.memory, t, tid, last_run, dec.text, trace)
                 return
             rid = d.start_run(dec.goal)
+            last_run = rid
+            if hits:
+                trace(rid, "memory_recall", {"atoms": [h.cite() for h in hits]})
             append(tid, "assistant", dec.text)
             append(tid, "run", dec.goal, run=rid, goal=dec.goal)
             stop = d.wait_run(rid)
@@ -245,6 +275,15 @@ def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES) -> None:
                 return
     except Exception as e:
         append(tid, "assistant", f"I could not finish that: {e}", error=True)
+
+
+def _remember_outcome(mem: oc_memory.Memory, t: dict, tid: str, rid: str, reply: str,
+                      trace: Callable[[str, str, dict], None]) -> None:
+    """After a turn whose run finished and was reported, store the report as one distilled note."""
+    title = (t.get("title") or "Open Computer chat").strip()
+    atom = mem.remember(title, reply, oc_memory.Scope(tid, run=rid))
+    if atom:
+        trace(rid, "memory_write", {"atom": atom, "title": title[: oc_memory.TITLE_MAX]})
 
 
 def start_turn(tid: str, d: Deps) -> bool:
