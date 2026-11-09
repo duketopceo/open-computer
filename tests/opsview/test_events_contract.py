@@ -28,7 +28,7 @@ from services.gate.queue import payload_hash as queue_payload_hash
 
 FIX = Path(__file__).resolve().parents[2] / "services/workspace/fixtures"
 FIXTURE_TYPES = ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error"]
-TYPES = [*FIXTURE_TYPES, "route", "llm_call"]  # route and llm_call are the dev-trace additions (KTD7)
+TYPES = [*FIXTURE_TYPES, "route", "llm_call", "memory_recall", "memory_write"]  # dev-trace additions (KTD7, memory)
 
 
 def fixture_events(goal):

@@ -14,7 +14,7 @@
         "goal": { "type": "string", "pattern": "^(g_[a-z0-9_]+|goal_[0-9a-f]{8})$", "description": "A workspace goal (g_...) or a console run id (goal_<8 hex>, the dev trace stream)." },
         "seq": { "type": "integer", "minimum": 1, "description": "Gapless, strictly increasing per goal, starting at 1. Doubles as the SSE id." },
         "ts": { "type": "number", "minimum": 0, "description": "Epoch seconds, millisecond precision. The UI derives all durations from event ts, never from its own clock." },
-        "type": { "enum": ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error", "route", "llm_call"] },
+        "type": { "enum": ["run", "step", "tool_call", "source", "artifact", "change", "approval", "cost", "note", "error", "route", "llm_call", "memory_recall", "memory_write"] },
         "actor": { "$ref": "#/$defs/actor" },
         "data": { "type": "object" }
       },
@@ -31,7 +31,9 @@
         { "properties": { "type": { "const": "note" }, "data": { "$ref": "#/$defs/note" } } },
         { "properties": { "type": { "const": "error" }, "data": { "$ref": "#/$defs/error" } } },
         { "properties": { "type": { "const": "route" }, "data": { "$ref": "#/$defs/route" } } },
-        { "properties": { "type": { "const": "llm_call" }, "data": { "$ref": "#/$defs/llm_call" } } }
+        { "properties": { "type": { "const": "llm_call" }, "data": { "$ref": "#/$defs/llm_call" } } },
+        { "properties": { "type": { "const": "memory_recall" }, "data": { "$ref": "#/$defs/memory_recall" } } },
+        { "properties": { "type": { "const": "memory_write" }, "data": { "$ref": "#/$defs/memory_write" } } }
       ]
     },
     "actor": {
@@ -339,6 +341,42 @@
         "hint": { "type": "string", "description": "What the operator can do next." },
         "step": { "$ref": "#/$defs/ref" },
         "recoverable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "memory_recall": {
+      "type": "object",
+      "description": "Notes recalled from the owner's memory (Kurultai) that the orchestrator saw before it wrote this run's goal. Titles and ids only, never the recalled text.",
+      "required": ["id", "atoms"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "atoms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "title": { "type": "string" },
+              "source": { "type": "string" },
+              "score": { "type": "number" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "withheld": { "type": "integer", "minimum": 0, "description": "Hits the PII check held back before they could reach a cloud model." }
+      },
+      "additionalProperties": false
+    },
+    "memory_write": {
+      "type": "object",
+      "description": "A distilled note this run's thread stored in the owner's memory.",
+      "required": ["id", "atom", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ref" },
+        "atom": { "type": "string", "minLength": 1 },
+        "lane": { "type": "string", "description": "Kurultai's trust lane for the new atom: trusted, or quarantined:<reason>." },
+        "title": { "type": "string" }
       },
       "additionalProperties": false
     }
