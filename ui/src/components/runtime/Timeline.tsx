@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { m } from "motion/react";
 import { ApiError, errorMessage } from "@/lib/api";
 import { useDevTrace } from "@/lib/devmode";
 import { cost, dur } from "@/lib/format";
+import { SPRING } from "@/lib/motion";
+import { MotionRoot, useMotionAllowed } from "@/lib/MotionRoot";
 import {
   EVENTS_PAGE,
   applyEvents,
@@ -246,15 +249,30 @@ export function Timeline({ runId, goal, embedded = false }: { runId: string; goa
       {rows.length === 0 ? (
         <p className="text-sm text-muted">No steps yet. The first one appears here as soon as the plan is made.</p>
       ) : rows.length > VIRTUALIZE_ABOVE ? (
-        <VirtualRows rows={rows} render={(s, l) => renderRow(s, l, false)} />
+        <MotionRoot>
+          <VirtualRows rows={rows} render={(s, l) => renderRow(s, l, false)} />
+        </MotionRoot>
       ) : (
-        <ul className="space-y-2" aria-label="Steps">
-          {rows.map(({ step, live: l }) => (
-            <li key={step.id}>{renderRow(step, l, baseline != null && step.firstSeq > baseline)}</li>
-          ))}
-        </ul>
+        <MotionRoot>
+          <PlainRows rows={rows} render={(st, l) => renderRow(st, l, baseline != null && st.firstSeq > baseline)} />
+        </MotionRoot>
       )}
     </div>
+  );
+}
+
+/** The plain list: when a card opens or a new one arrives, the cards below glide to their new place.
+ *  Virtualized lists skip layout animation (rows are positioned by the virtualizer). */
+function PlainRows({ rows, render }: { rows: { step: Step; live: boolean }[]; render: (s: Step, live: boolean) => React.ReactNode }) {
+  const moving = useMotionAllowed();
+  return (
+    <ul className="space-y-2" aria-label="Steps">
+      {rows.map(({ step, live }) => (
+        <m.li key={step.id} layout={moving ? "position" : false} transition={SPRING.reflow}>
+          {render(step, live)}
+        </m.li>
+      ))}
+    </ul>
   );
 }
 

@@ -1,0 +1,7 @@
+{
+  "note": "gzip bytes per emitted JS chunk; scripts/budget.mjs fails the build past any of them (DESIGN.md, Motion and depth).",
+  "main": 133120,
+  "chunks": {
+    "motionFeatures": 40960
+  }
+}
