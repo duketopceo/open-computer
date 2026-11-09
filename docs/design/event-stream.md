@@ -122,7 +122,8 @@ redacted reason.
 `id`, `kind`, `status` (`ok error`); optional `step`, `model_requested`, `model_served`, `provider`, `tokens_in`,
 `tokens_out`, `tokens_cached`, `tokens_reasoning`, `cost_usd`, `latency_ms`, `generation_id`, `reasoning` (the text the
 model returned, <= 16 000 characters), `detail`, and for a failed call `error_class`, `http_status`, `error`. `kind` is
-`plan` (the planner), `work` (a step), `decision` (the router's decider), `thread` (a chat turn) or the client's own kind.
+`plan` (the planner), `work` (a step), `decision` (the router's decider), `thread` (a chat turn), `compact` (scoring
+spans of a long chat for compaction) or the client's own kind.
 The planner's output is one extra row, id `call_plan`, whose `detail` is the plan JSON (no cost: the planner's HTTP call
 is its own `plan` row).
 

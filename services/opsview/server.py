@@ -42,6 +42,7 @@ from services.opsview import views
 from services.opsview.auth import Auth, SESSION_TTL, rp_for
 from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import chat as chat_turns
+from services import compact as oc_compact
 from services import memory as oc_memory
 from services.orchestrator import engines as goal_engines
 from services.router import model_catalog
@@ -317,6 +318,7 @@ def _turn_deps(plan: effort.Plan, who: str) -> threads.Deps:
         load_run=goalruns.get_run,
         wait_run=threads.wait_for_run,
         memory=oc_memory.from_env(),
+        compact=oc_compact.from_env(),
     )
 
 

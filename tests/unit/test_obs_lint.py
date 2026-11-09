@@ -12,6 +12,7 @@ SERVICES = ("orchestrator", "router", "placement", "gate", "cost", "execplane", 
 # Command-line entry points whose stdout *is* their interface (a table, a minted token, a build summary).
 PRINT_OK = {
     "oc/obs/tail.py",
+    "services/compact/__main__.py",
     "services/openrouter/__main__.py",
     "services/opsview/auth.py",
     "services/workspace/fixtures/build.py",
