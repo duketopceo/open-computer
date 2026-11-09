@@ -6,10 +6,13 @@ only ever pick one of three actions (search, fetch, answer); nothing in a page c
 
 Providers are injected so tests never touch the network:
   * search: BrowserOS neo MCP when `OC_BROWSER_MCP_URL` is set (the owner's browser, default
-    http://127.0.0.1:9010/mcp with `OC_WEB_PROVIDER=browseros`), else a hosted JSON search API from
-    `OC_SEARCH_API_URL` (+ optional `OC_SEARCH_API_KEY`). Neither configured: the step fails with a plain hint.
+    http://127.0.0.1:9010/mcp with `OC_WEB_PROVIDER=browseros`); or Scrapling MCP when
+    `OC_WEB_PROVIDER=scrapling` (default URL `OC_SCRAPLING_MCP_URL` or http://127.0.0.1:8000/mcp);
+    else a hosted JSON search API from `OC_SEARCH_API_URL` (+ optional `OC_SEARCH_API_KEY`).
+    Neither configured: the step fails with a plain hint.
   * fetch: only hosts the egress policy already approves (the same list sandbox steps use), never private or
-    loopback addresses, redirects re-checked, size capped.
+    loopback addresses, redirects re-checked, size capped. Scrapling uses plain `make_request` unless
+    `OC_SCRAPLING_STEALTH=1` (then `browser_fetch_once`; off by default).
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ MAX_FETCHES = 3
 FETCH_CAP = 20_000  # characters of page text kept
 RESULTS_CAP = 6
 DEFAULT_BROWSER_MCP = "http://127.0.0.1:9010/mcp"
+DEFAULT_SCRAPLING_MCP = "http://127.0.0.1:8000/mcp"
+DEFAULT_SONAR_MODEL = "perplexity/sonar"
 
 
 class WebUnavailable(RuntimeError):
@@ -276,22 +281,165 @@ class BrowserSearch:
         return Page(url, text[:FETCH_CAP], truncated=len(text) > FETCH_CAP)
 
 
+
+
+class ScraplingWeb:
+    """Search and fetch through a Scrapling MCP sidecar (BSD-3-Clause). Host-side; egress still checked here.
+
+    Stealth / browser tools stay off unless OC_SCRAPLING_STEALTH=1. Default tool is `make_request` (HTTP
+    with browser impersonation, no Cloudflare bypass automation).
+    """
+
+    SEARCH_URL = "https://html.duckduckgo.com/html/?q="
+
+    def __init__(self, client: McpClient, *, stealth: bool = False):
+        self.client, self.stealth = client, stealth
+
+    def search(self, query: str) -> list[Hit]:
+        url = self.SEARCH_URL + urllib.parse.quote_plus(query)
+        text = self._get(url)
+        hits: list[Hit] = []
+        for m in re.finditer(r"(https?://[^\s)\]>\"']+)", text):
+            u = m.group(1).rstrip(".,;")
+            host = urllib.parse.urlsplit(u).hostname or ""
+            if "duckduckgo.com" in host or any(h.url == u for h in hits):
+                continue
+            ctx = text[max(0, m.start() - 160): m.start()].strip().splitlines()
+            hits.append(Hit((ctx[-1] if ctx else u)[:200], u))
+            if len(hits) >= RESULTS_CAP:
+                break
+        return hits
+
+    def fetch(self, url: str) -> Page:
+        text = self._get(url)
+        return Page(url, text[:FETCH_CAP], truncated=len(text) > FETCH_CAP)
+
+    def _get(self, url: str) -> str:
+        if self.stealth:
+            return self.client.call("browser_fetch_once", {"url": url})
+        # Prefer markdown/text extraction when the server returns structured content as text blocks.
+        return self.client.call("make_request", {"url": url, "method": "GET"})
+
+class SonarSearch:
+    """Web search via Perplexity Sonar on OpenRouter (citations become Hits for the Sources list).
+
+    Opt-in: OC_SEARCH_PROVIDER=sonar or OC_WEB_PROVIDER=sonar. Uses the host OpenRouter key.
+    Default model `perplexity/sonar` (override with OC_SONAR_MODEL). Fetch stays plain HTTP.
+    """
+
+    def __init__(self, *, model: str = DEFAULT_SONAR_MODEL, key: str = "", call=None):
+        self.model, self.key, self._call = model, key, call
+
+    def search(self, query: str) -> list[Hit]:
+        q = (query or "").strip()[:500]
+        if not q:
+            return []
+        if self._call is not None:
+            return self._call(q)
+        return self._openrouter_search(q)
+
+    def _openrouter_search(self, query: str) -> list[Hit]:
+        from services.openrouter.client import OpenRouterError, base_url, post
+
+        key = self.key or os.environ.get("OPENROUTER_API_KEY", "")
+        if not key:
+            raise WebUnavailable("sonar search needs OPENROUTER_API_KEY", hint="connect OpenRouter in Settings or set the key")
+        body = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a web search tool. Answer briefly with facts for the query. "
+                        "Prefer citing sources; do not invent URLs."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ],
+        }
+        try:
+            resp, _row = post(
+                f"{base_url()}/chat/completions",
+                body,
+                key=key,
+                timeout=60.0,
+                kind="web_search",
+                model=self.model,
+                sdk=True,
+            )
+        except OpenRouterError as e:
+            raise WebUnavailable(f"sonar search failed: {e}", hint="check OpenRouter / Sonar availability") from e
+        return hits_from_sonar_response(resp)
+
+
+def hits_from_sonar_response(resp: dict) -> list[Hit]:
+    """Turn an OpenRouter/Perplexity chat body into Hits. Citations preferred; never invent URLs."""
+    urls: list[str] = []
+    raw = resp.get("citations") if isinstance(resp, dict) else None
+    if isinstance(raw, list):
+        for c in raw:
+            if isinstance(c, str) and c.startswith("http"):
+                urls.append(c)
+            elif isinstance(c, dict):
+                u = c.get("url") or c.get("source") or ""
+                if isinstance(u, str) and u.startswith("http"):
+                    urls.append(u)
+    # annotations on the message (OpenRouter sometimes mirrors citations here)
+    try:
+        msg = resp["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError, AttributeError):
+        msg = {}
+    if isinstance(msg, dict):
+        for ann in msg.get("annotations") or []:
+            if not isinstance(ann, dict):
+                continue
+            u = ann.get("url")
+            if not u and isinstance(ann.get("url_citation"), dict):
+                u = ann["url_citation"].get("url")
+            if isinstance(u, str) and u.startswith("http"):
+                urls.append(u)
+        text = msg.get("content") if isinstance(msg.get("content"), str) else ""
+    else:
+        text = ""
+    # de-dupe preserve order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            ordered.append(u)
+    snippet = (text or "").strip().replace("\n", " ")[:400]
+    return [Hit(title=u, url=u, snippet=snippet if i == 0 else "") for i, u in enumerate(ordered[:RESULTS_CAP])]
+
+
 def configured_search(env=None):
     """(search provider, optional page reader) from settings, or raises WebUnavailable naming what to set."""
     env = os.environ if env is None else env
     mode = (env.get("OC_WEB_PROVIDER") or "").strip().lower()
+    search_mode = (env.get("OC_SEARCH_PROVIDER") or "").strip().lower()
+    if search_mode == "sonar" or mode == "sonar":
+        model = (env.get("OC_SONAR_MODEL") or "").strip() or DEFAULT_SONAR_MODEL
+        return SonarSearch(model=model, key=env.get("OPENROUTER_API_KEY", "")), None
+    if mode == "scrapling":
+        url = (env.get("OC_SCRAPLING_MCP_URL") or "").strip() or DEFAULT_SCRAPLING_MCP
+        stealth = (env.get("OC_SCRAPLING_STEALTH") or "").strip().lower() in ("1", "true", "yes", "on")
+        s = ScraplingWeb(McpClient(url), stealth=stealth)
+        return s, s
     mcp = (env.get("OC_BROWSER_MCP_URL") or "").strip() or (DEFAULT_BROWSER_MCP if mode == "browseros" else "")
-    if mode != "hosted" and mcp:
+    if mode not in ("hosted", "scrapling", "sonar") and mcp:
         b = BrowserSearch(McpClient(mcp))
         return b, b
     api = (env.get("OC_SEARCH_API_URL") or "").strip()
-    if api and mode != "browseros":
+    if api and mode not in ("browseros", "scrapling", "sonar"):
         return HostedSearch(api, env.get("OC_SEARCH_API_KEY", "")), None
     raise WebUnavailable(
         "web search is not configured",
-        hint="set OC_BROWSER_MCP_URL (BrowserOS neo, e.g. http://127.0.0.1:9010/mcp) or OC_SEARCH_API_URL (+ OC_SEARCH_API_KEY)",
+        hint=(
+            "set OC_SEARCH_PROVIDER=sonar (OpenRouter Perplexity), "
+            "or OC_WEB_PROVIDER=scrapling (Scrapling MCP on OC_SCRAPLING_MCP_URL), "
+            "or OC_BROWSER_MCP_URL (BrowserOS neo), or OC_SEARCH_API_URL (+ OC_SEARCH_API_KEY)"
+        ),
     )
-
 
 # ---- the loop
 
