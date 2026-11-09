@@ -1061,7 +1061,7 @@ function goalApi() {
 const goalBox = (page) => page.getByRole("textbox", { name: "Message" });
 const runBtn = (page) => page.getByRole("button", { name: "Send", exact: true });
 
-test("@flow effort: server default is selected, Advanced is closed, and the caption names the model and budget", async () => {
+test("@flow effort: server default is selected, Advanced is closed, and the one-line caption names the budget", async () => {
   const api = goalApi();
   const { ctx, page } = await open({ routes: api.routes });
   await page.getByRole("radio", { name: "Low" }).waitFor({ state: "attached" });
@@ -1070,7 +1070,9 @@ test("@flow effort: server default is selected, Advanced is closed, and the capt
   assert.equal(await page.getByRole("button", { name: "Advanced" }).getAttribute("aria-expanded"), "false");
   assert.equal(await page.getByLabel("Model").count(), 0);
   await page.getByText("up to $0.10 per run").waitFor();
-  assert.ok(await page.getByText("google/gemini-2.5-flash").first().isVisible());
+  assert.equal(await page.getByText("vendor/low-b, vendor/low-c").count(), 0, "the model chain stays inside Advanced");
+  await page.getByRole("button", { name: "Advanced" }).click();
+  assert.ok(await page.getByText(/Uses google\/gemini-2.5-flash/).isVisible());
   assert.ok(await page.getByText("vendor/low-b, vendor/low-c").isVisible());
   await ctx.close();
 });

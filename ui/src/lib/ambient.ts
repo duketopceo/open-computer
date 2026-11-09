@@ -6,9 +6,9 @@ import { DOT_MATRIX_FRAGMENT, DOT_MATRIX_VERTEX } from "@/vendor/threeui/dotMatr
 export const AMBIENT = {
   fps: 30,
   gridScale: 46,
-  pulseSpeed: 0.18,
-  radius: 0.12,
-  opacity: 0.16,
+  pulseSpeed: 0.26,
+  radius: 0.14,
+  opacity: 0.3,
   maxPixelRatio: 1.5,
 } as const;
 
