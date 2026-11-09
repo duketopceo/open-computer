@@ -327,3 +327,30 @@ def test_scrapling_web_work_refuses_unapproved_host_before_mcp():
 
     out = web.web_loop("t", chat, boom, fetch)
     assert called == [] and out.startswith("nope") and "not an approved site" in chat.seen[1]
+
+def test_sonar_provider_selection():
+    s, reader = web.configured_search({"OC_SEARCH_PROVIDER": "sonar", "OPENROUTER_API_KEY": "k"})
+    assert isinstance(s, web.SonarSearch) and reader is None and s.model == web.DEFAULT_SONAR_MODEL
+    s2, _ = web.configured_search({"OC_WEB_PROVIDER": "sonar", "OC_SONAR_MODEL": "perplexity/sonar-pro"})
+    assert s2.model == "perplexity/sonar-pro"
+
+
+def test_hits_from_sonar_response_prefer_citations():
+    resp = {
+        "citations": ["https://example.com/a", {"url": "https://example.com/b"}, "https://example.com/a"],
+        "choices": [{"message": {"content": "Answer text", "annotations": [{"url_citation": {"url": "https://example.com/c"}}]}}],
+    }
+    hits = web.hits_from_sonar_response(resp)
+    assert [h.url for h in hits] == ["https://example.com/a", "https://example.com/b", "https://example.com/c"]
+    assert hits[0].snippet.startswith("Answer text")
+
+
+def test_sonar_search_uses_injected_call_and_feeds_sources():
+    def call(q):
+        assert q == "cats"
+        return [web.Hit("Cats", "https://example.com/cats", "about cats")]
+
+    s = web.SonarSearch(call=call)
+    chat = scripted(j(action="search", query="cats"), j(action="answer", text="Cats are mammals."))
+    out = web.web_loop("what are cats", chat, s, lambda u: web.Page(u, "x"))
+    assert "Sources:\n[1] https://example.com/cats" in out
