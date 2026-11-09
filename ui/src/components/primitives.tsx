@@ -30,10 +30,13 @@ const STATE_STYLE: Record<TaskState, string> = {
   "AWAITING-APPROVAL": "text-accent",
 };
 
+/** Plain words for the engine's states: a leased step is just starting, an awaiting one needs the owner. */
+const STATE_WORD: Partial<Record<TaskState, string>> = { LEASED: "STARTING", "AWAITING-APPROVAL": "AWAITING" };
+
 export function StateWord({ state }: { state: TaskState }) {
   return (
     <span className={cn("mono uppercase tracking-wider", STATE_STYLE[state] ?? "text-muted")}>
-      {state.replace("AWAITING-APPROVAL", "AWAITING")}
+      {STATE_WORD[state] ?? state}
     </span>
   );
 }
