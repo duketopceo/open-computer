@@ -805,6 +805,12 @@ class Handler(BaseHTTPRequestHandler):
     def g_api_memory(self, qs):
         self._json(200, oc_memory.status())
 
+    def g_api_runtime(self, qs):
+        self._json(200, oc_runtime.status())
+
+    def g_api_brain(self, qs):
+        self._json(200, oc_brain.status())
+
     def p_api_memory_forget(self, who, body):
         atom, thread = body.get("atom"), body.get("thread") or ""
         if not isinstance(atom, str) or not oc_memory.ATOM_ID.match(atom):
