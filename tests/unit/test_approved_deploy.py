@@ -16,9 +16,19 @@ RUN_ID = 123
 
 
 def test_required_job_names_match_ci_workflow():
+    """REQUIRED_JOBS are the pre-deploy gates only.
+
+    Post-gate jobs whose name starts with "deploy " run after production
+    approval (auto-deploy). They must stay out of REQUIRED_JOBS so the
+    controller never waits on the deploy job that it itself would trigger.
+    """
     workflow = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
     names = set(re.findall(r"^    name: (.+)$", workflow.read_text(), re.MULTILINE))
-    assert approved_deploy.REQUIRED_JOBS == names
+    post_gate = {name for name in names if name.startswith("deploy ")}
+    gates = names - post_gate
+    assert approved_deploy.REQUIRED_JOBS == gates
+    assert "deploy (production)" in post_gate
+    assert approved_deploy.REQUIRED_JOBS.isdisjoint(post_gate)
 
 
 def mock_unit_pids(monkeypatch, *generations):
