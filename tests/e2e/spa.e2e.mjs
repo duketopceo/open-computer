@@ -114,7 +114,9 @@ test("@flow chat: double Send opens one chat, a failed send keeps the text, retr
   await send.click();
   await page.getByText("Done: it said hi.").waitFor();
   assert.ok(await page.getByText("Sending a greeting.").isVisible());
-  assert.ok(await page.getByRole("list", { name: "Conversation" }).getByText("<$0.0001").first().isVisible(), "the run renders inline");
+  const conv = page.getByRole("list", { name: "Conversation" });
+  assert.ok(await conv.getByRole("link", { name: "Details" }).first().isVisible(), "the run renders inline");
+  assert.equal(await conv.getByText("<$0.0001").count(), 0, "a sub-cent cost stays off the chat card");
   await ctx.close();
 });
 
@@ -1256,7 +1258,7 @@ for (const w of [1440, 390]) {
 }
 
 // ---- Silver Lining tokens (U19): one token file, dark and light, system by default.
-const CANVAS = { dark: "rgb(9, 9, 9)", light: "rgb(245, 245, 245)" };
+const CANVAS = { dark: "rgb(10, 11, 16)", light: "rgb(246, 246, 249)" }; // Iris, services/opsview/static/oc-palette.css
 const canvasOf = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
 test("@theme system is the default and follows an emulated scheme change without reload", async () => {

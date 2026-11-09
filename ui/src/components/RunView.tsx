@@ -10,7 +10,8 @@ import { PlanCard } from "./PlanCard";
 import { Timeline } from "./runtime/Timeline";
 import { Chip, Dot, StateWord } from "./primitives";
 
-/** `compact` is the run as it appears inside a chat: the goal is already in the thread above it. */
+/** `compact` is the run as it appears inside a chat: the goal is already in the thread above it, and the card stays plain —
+ *  state, progress and time, with the model per step. Routing, placement, origin and sub-cent costs live on the run page. */
 export function RunView({ run, compact = false, onChanged }: { run: RunDetail; compact?: boolean; onChanged?: () => void }) {
   const [decided, setDecided] = useState(false);
   const states = count(run);
@@ -41,7 +42,7 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
   const steps = run.subtasks.length > 0 && (
     <ol className="divide-y divide-line rounded-2xl border border-line bg-surface-1 shadow-card">
       {run.subtasks.map((s) => (
-        <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} />
+        <SubTaskRow key={s.subtask} s={s} steps={run.subtasks} plain={compact} />
       ))}
     </ol>
   );
@@ -52,8 +53,20 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
         <div className={compact ? "flex flex-wrap items-center gap-2 text-xs" : "mt-3 flex flex-wrap items-center gap-2 text-xs"}>
           <StateWord state={planned ? "AWAITING-APPROVAL" : aggregate(states, active)} />
           <span className="mono text-muted">
-            {states.DONE}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
-            {run.started != null ? dur(run.started, run.ended ?? Date.now() / 1000) : ""}
+            {compact ? (
+              <>
+                {plainProgress(states.DONE, run.declared)}
+                {spentNote(run.subtasks)}
+                {run.started != null && dur(run.started, run.ended ?? Date.now() / 1000)
+                  ? ` · ${dur(run.started, run.ended ?? Date.now() / 1000)}`
+                  : ""}
+              </>
+            ) : (
+              <>
+                {states.DONE}/{run.declared} done · {totalCost(run.subtasks)} ·{" "}
+                {run.started != null ? dur(run.started, run.ended ?? Date.now() / 1000) : ""}
+              </>
+            )}
           </span>
           {stream && (
             <a
@@ -63,9 +76,17 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
               Timeline
             </a>
           )}
-          <span className="mono text-muted">origin {run.origin}</span>
-          {run.device_id && <span className="mono text-muted">device {run.device_id}</span>}
-          {run.effort && (
+          {compact && (
+            <a
+              href={`#${run.run}`}
+              className="text-muted underline-offset-2 hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              Details
+            </a>
+          )}
+          {!compact && <span className="mono text-muted">origin {run.origin}</span>}
+          {!compact && run.device_id && <span className="mono text-muted">device {run.device_id}</span>}
+          {!compact && run.effort && (
             <span className="mono text-muted">
               effort {run.effort.id} · {run.effort.model} · {cost(run.effort.spent)} of {cost(run.effort.budget)}
             </span>
@@ -157,7 +178,8 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
   );
 }
 
-function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
+/** `plain` (the chat card) keeps the step's title, state, time and model; the run page adds engine, cost, route and routing. */
+function SubTaskRow({ s, steps, plain = false }: { s: SubTask; steps: SubTask[]; plain?: boolean }) {
   if (s.skipped) return <SkippedRow s={s} why={skippedWhy(s.error, steps)} />;
   const live = s.state === "RUNNING" || s.state === "LEASED";
   const took = live ? dur(s.started_ts, Date.now() / 1000) : dur(s.started_ts, s.finished_ts);
@@ -170,26 +192,34 @@ function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
         <div className="flex items-baseline justify-between gap-3">
           <p className="truncate text-sm font-medium text-ink">{s.title || s.subtask}</p>
           <div className="flex shrink-0 items-center gap-2">
-            {engine(s.engine) && <span className="mono text-muted">{engine(s.engine)}</span>}
+            {!plain && engine(s.engine) && <span className="mono text-muted">{engine(s.engine)}</span>}
             {took && (
               <span className="mono text-muted" title={live ? "Running for" : "Run time"}>
                 {took}
               </span>
             )}
-            <span className="mono text-muted">{cost(s.cost)}</span>
+            {!plain && <span className="mono text-muted">{cost(s.cost)}</span>}
             <StateWord state={s.state} />
           </div>
         </div>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
-          <span className="mono">{s.route || "route —"}</span>
-          <span>·</span>
-          <span className="mono">{placement(s.placement)}</span>
-          {(s.pii?.length ?? 0) > 0 && (
-            <span className="text-accent" title={`Detected: ${(s.pii ?? []).join(", ")}`}>
-              · private details
-            </span>
-          )}
-        </p>
+        {!plain ? (
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
+            <span className="mono">{s.route || "route —"}</span>
+            <span>·</span>
+            <span className="mono">{placement(s.placement)}</span>
+            {(s.pii?.length ?? 0) > 0 && (
+              <span className="text-accent" title={`Detected: ${(s.pii ?? []).join(", ")}`}>
+                · private details
+              </span>
+            )}
+          </p>
+        ) : (
+          (s.pii?.length ?? 0) > 0 && (
+            <p className="mt-0.5 text-xs text-accent" title={`Detected: ${(s.pii ?? []).join(", ")}`}>
+              Has private details
+            </p>
+          )
+        )}
         {s.waiting_on && s.state === "QUEUED" && (
           <p className="mt-1 text-xs text-muted" title={s.waiting_on.detail}>
             <span aria-hidden="true">– </span>
@@ -199,7 +229,7 @@ function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
             )}
           </p>
         )}
-        <StepTruth s={s} />
+        <StepTruth s={s} plain={plain} />
         {s.state === "DONE" && s.result && <StepResult text={s.result} />}
         {s.state === "AWAITING-APPROVAL" && (
           <p className="mt-1 text-xs text-accent">
@@ -221,11 +251,12 @@ function SubTaskRow({ s, steps }: { s: SubTask; steps: SubTask[] }) {
   );
 }
 
-/** Which model served the step and who routed it, as two chips; plus a plain note when no reasoning came back. */
-function StepTruth({ s }: { s: SubTask }) {
+/** Which model served the step and who routed it, as two chips; plus a plain note when no reasoning came back.
+ *  `plain` shows the model only. */
+function StepTruth({ s, plain = false }: { s: SubTask; plain?: boolean }) {
   const why = fallbackWhy(s.router);
-  const noReasoning = s.state === "DONE" && s.worker?.tokens_reasoning === 0 && !s.thinking;
-  if (!s.worker && !s.router && !noReasoning) return null;
+  const noReasoning = !plain && s.state === "DONE" && s.worker?.tokens_reasoning === 0 && !s.thinking;
+  if (!s.worker && (plain || !s.router) && !noReasoning) return null;
   return (
     <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
       {s.worker && (
@@ -233,7 +264,7 @@ function StepTruth({ s }: { s: SubTask }) {
           <span className="mono">{modelName(s.worker.model)}</span>
         </Chip>
       )}
-      {s.router && engine(s.router.engine) && (
+      {!plain && s.router && engine(s.router.engine) && (
         <Chip title={why ? `Routed by ${engine(s.router.engine)} — ${why}` : undefined}>
           routed by {engine(s.router.engine)}
           {why && <span className="sr-only"> — {why}</span>}
@@ -320,4 +351,17 @@ function aggregate(states: Record<string, number>, active: boolean) {
     return "DONE" as const;
   if (states.QUEUED || states.LEASED) return "RUNNING" as const;
   return "QUEUED" as const;
+}
+
+/** "2 of 3 steps done", or "1 step" while nothing has finished. */
+export function plainProgress(done: number, declared: number): string {
+  if (declared <= 0) return "planning";
+  if (done >= declared) return declared === 1 ? "1 step done" : `all ${declared} steps done`;
+  return `${done} of ${declared} ${declared === 1 ? "step" : "steps"} done`;
+}
+
+/** The run's spend in the chat card only once it reaches a cent; smaller sums are noise there and live on the run page. */
+export function spentNote(subtasks: { cost?: number }[]): string {
+  const sum = subtasks.reduce((a, s) => a + (s.cost ?? 0), 0);
+  return sum >= 0.01 ? ` · ${cost(sum)}` : "";
 }
