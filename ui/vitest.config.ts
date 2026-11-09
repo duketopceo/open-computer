@@ -13,6 +13,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.tsx"],
+    include: ["src/**/*.test.{ts,tsx}"],
+    // effectsCss.test.ts reads index.css as raw text; other CSS stays stubbed out.
+    css: { include: [/index\.css/] },
   },
 });

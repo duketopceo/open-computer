@@ -32,6 +32,7 @@ import { Timeline } from "@/components/runtime/Timeline";
 import { Sidebar } from "@/components/Sidebar";
 import { ThreadView } from "@/components/ThreadView";
 import { Button } from "@/components/primitives";
+import { withViewTransition } from "@/lib/motion";
 
 // What the banner says about the backend link, independent of any one action.
 type Link = "ok" | "offline" | "auth";
@@ -203,6 +204,9 @@ export default function App() {
     history.replaceState(null, "", id ? `#${id}` : location.pathname);
   }
 
+  // A person switching chats gets a cross-fade; programmatic selection (after a send, after cleanup) stays synchronous.
+  const pick = (id: string | null) => withViewTransition(() => select(id));
+
   // The message appears at once; the server answers in the background and the poll fills the reply in.
   function onSend(text: string, opts: GoalOptions) {
     if (sending) return;
@@ -273,7 +277,7 @@ export default function App() {
         onAgents={() => setView("agents")}
         pending={(jobs ?? []).reduce((n, j) => n + (j.pending || 0), 0)}
         onSelect={(id) => {
-          if (!sending) select(id || null);
+          if (!sending) pick(id || null);
         }}
         chats={chats}
         earlier={earlier}
@@ -302,7 +306,7 @@ export default function App() {
               <Button variant="subtle" onClick={() => selected && fetchSelected(selected)}>
                 Retry
               </Button>
-              <Button variant="ghost" onClick={() => select(null)}>
+              <Button variant="ghost" onClick={() => pick(null)}>
                 New chat
               </Button>
             </div>

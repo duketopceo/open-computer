@@ -27,6 +27,7 @@ export function Composer({
   placeholder = "Message",
   autoFocus = false,
   rows = 3,
+  working = false,
 }: {
   onSend: (text: string, opts: GoalOptions) => void;
   disabled?: boolean;
@@ -37,6 +38,8 @@ export function Composer({
   placeholder?: string;
   autoFocus?: boolean;
   rows?: number;
+  /** The chat's run is working: the composer edge carries a slow accent sweep (static when effects are off). */
+  working?: boolean;
 }) {
   const [value, setValue] = useState("");
   const effort = useFetch(() => (showEffort ? getEffort() : Promise.resolve(null)), [showEffort]);
@@ -220,7 +223,10 @@ export function Composer({
 
   return (
     <div className="w-full max-w-2xl">
-      <div className={cn("fx-edge rounded-2xl border border-line bg-surface-1 p-3 shadow-composer", sent && "fx-sent")}>
+      <div
+        data-testid="composer-edge"
+        className={cn("fx-edge rounded-2xl border border-line bg-surface-1 p-3 shadow-composer", sent && "fx-sent", working && "fx-working")}
+      >
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}

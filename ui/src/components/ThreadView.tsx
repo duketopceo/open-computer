@@ -54,6 +54,7 @@ export function ThreadView({
         <Composer
           onSend={onSend}
           busy={busy}
+          working={thread.working}
           disabled={disabled || thread.working}
           placeholder={thread.working ? "Working on it…" : "Reply"}
           rows={2}
