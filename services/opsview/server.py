@@ -298,13 +298,19 @@ def plan_hold(review: bool | None = None):
     return lambda subs: len(subs) > PLAN_AUTO_STEPS or sum(float(s.get("est_cost") or 0) for s in subs) > limit
 
 
+def _apps_user(who: str) -> str | None:
+    """The account whose connected apps this run's `needs_apps` steps may read: whoever started it, when
+    connectors are on. None keeps such steps from reaching any account's apps."""
+    return accounts.account_id(who) if who and composio_connectors.enabled() else None
+
+
 def _submit_goal(goal: str, who: str, plan: effort.Plan, review: bool | None = None) -> str:
     """Spending path behind POST /goals confirm. Tests patch this. The plan's model drives the planner and
     every cloud step; its budget is a hard per-run cap. A held plan waits for approval (`plan_hold`)."""
     return goalruns.submit(
         goal,
         goal_engines.decompose_engine(plan.model, effort=plan.effort),
-        goal_engines.work_fn(plan.model, effort=plan.effort),
+        goal_engines.work_fn(plan.model, effort=plan.effort, apps_user=_apps_user(who)),
         by=who,
         effort=plan.effort,
         model=plan.model,

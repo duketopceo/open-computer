@@ -468,8 +468,12 @@ def work_fn(
     or_model: str = DEFAULT_WORKER_MODEL,
     api_key: str | None = None,
     effort: str | None = None,
+    apps_user: str | None = None,
 ) -> Callable[[dict], str]:
-    """The dispatched-task executor. Placement is honored, not decorative. `effort` as for decompose_engine."""
+    """The dispatched-task executor. Placement is honored, not decorative. `effort` as for decompose_engine.
+
+    `apps_user` is the account (services.accounts.account_id) whose connected apps a `needs_apps` step may read;
+    without it such a step fails with a plain hint rather than reaching anyone's apps."""
     key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
 
     def run(task: dict):
@@ -478,7 +482,15 @@ def work_fn(
             return local_work(task)
         with collect_usage() as used, effort_scope(effort):
             try:
-                if task.get("needs_web") and target != "cloud-sandbox":
+                if task.get("needs_apps") and target != "cloud-sandbox":
+                    from services.connectors.apps_tools import AppsUnavailable, apps_work
+
+                    if not apps_user:
+                        raise AppsUnavailable("This run has no account to read apps for.",
+                                              hint="Start it from a signed-in chat.")
+                    out = apps_work(task, lambda p: _chat(OR_CHAT, or_model, p, key=key, timeout=90)[0],
+                                    user_id=apps_user)
+                elif task.get("needs_web") and target != "cloud-sandbox":
                     from services.orchestrator.tools.web import web_work
 
                     out = web_work(task, lambda p: _chat(OR_CHAT, or_model, p, key=key, timeout=90)[0])

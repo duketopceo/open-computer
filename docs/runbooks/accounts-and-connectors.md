@@ -34,4 +34,23 @@ How it works:
    provider tokens.
 3. **Disconnect** deletes that connection in Composio. Only a connection your account owns can be removed.
 
-Using connected apps from a chat is the next step (plan `docs/plans/2026-11-09-001-feat-accounts-connectors-and-chat-polish-plan.md`, U4).
+## Using connected apps in a chat
+
+Ask for something that needs your apps, for example "summarise my unread email from today" or "what's on my calendar
+tomorrow". The planner marks that step `needs_apps`, and the worker runs a short loop over your connected toolkits only
+(`services/connectors/apps_tools.py`):
+
+- It finds tools by use case (Composio session search). It can call only tools that search returned for an app
+  **you** connected. Composio's own meta tools (`COMPOSIO_*`) are never callable.
+- **Read tools run.** A tool counts as read-only when its name has a read verb (GET, LIST, FETCH, SEARCH, ...) and no
+  write verb.
+- **Anything else is not run.** That covers send, create, update, delete, and any verb OC does not recognise. The
+  answer ends with "Needs your approval (not done)", listing each request and its arguments, so you can decide.
+  One-click approval of those requests is a follow-up.
+- App content goes back to the model as untrusted data. Output is capped at 8,000 characters per call, with at most
+  4 calls per step.
+- With Dev trace on, each call shows under Tool calls in the chat's side panel as `app.<toolkit>`.
+
+Without `COMPOSIO_API_KEY`, or with no app connected, such a step fails with a plain hint pointing to Settings,
+Connectors. A run resumed after a restart has no account attached, so its app steps fail the same way. Start the
+chat turn again.
