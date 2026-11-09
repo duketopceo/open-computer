@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from services import compact as oc_compact
 from services import memory as oc_memory
 from services.opsview import goalruns
 from services.orchestrator import chat
@@ -205,6 +206,7 @@ class Deps:
     wait_run: Callable[[str], str]  # blocks; returns done | approval | paused | timeout
     memory: oc_memory.Memory | None = None  # off unless OC_MEMORY=kurultai
     trace: Callable[[str, str, dict], None] | None = None  # (run id, event type, data) onto the run's stream
+    compact: oc_compact.Compactor | None = None  # long threads: older messages compacted, restorable by range
 
 
 def _last_user(t: dict) -> dict | None:
@@ -242,6 +244,9 @@ _STOP_NOTES = {
 }
 
 
+MAX_RESTORES = 2  # restored spans per user message; bounds a model that keeps asking
+
+
 def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES) -> None:
     """Drive one user message to a reply. Never raises: a failure becomes an assistant message."""
     trace = d.trace or _run_trace
@@ -254,13 +259,26 @@ def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES) -> None:
             hits = d.memory.recall(user["text"], oc_memory.Scope(tid), user_ts=user.get("ts"))
         block = oc_memory.render_block(hits)
         last_run: str | None = None
-        for n in range(max_passes + 1):
+        restored: list[dict] = []  # this turn's restored spans, shown after the thread on every later call
+        n = 0
+        while n <= max_passes:
             t = _read(tid)
             if t is None:
                 return
             final = n == max_passes
             runs = {rid: d.load_run(rid) for rid in dict.fromkeys(run_ids(t))}
-            dec = chat.parse_decision(d.engine(chat.build_messages(t, runs, final=final, memory=block)))
+            msgs = chat.build_messages(t, runs, final=final, memory=block)
+            if d.compact is not None:
+                msgs = d.compact.fit(tid, msgs).messages
+            dec = chat.parse_decision(d.engine(msgs + restored))
+            if dec.action == "restore":
+                text = d.compact.restore(tid, dec.spans) if d.compact is not None else None
+                if len(restored) < MAX_RESTORES:
+                    body = text if text is not None else "Nothing to restore for that range."
+                    restored.append({"role": "system", "content": f"{chat.RESTORE_NOTE}\n[{dec.spans}]\n{body}"})
+                    continue  # a restore is not a pass: the model answers again with the span in view
+                dec = chat.Decision("reply", dec.text or "I could not finish that: too many restores in one turn.")
+            n += 1
             if dec.action != "run" or final:
                 append(tid, "assistant", dec.text, **({"ask": True} if dec.action == "ask" else {}))
                 if d.memory is not None and last_run and dec.action == "reply":
