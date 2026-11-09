@@ -80,5 +80,5 @@ def test_route_tables_are_disjoint_and_named():
     for _, name in server.POST_ROUTES:
         assert name.startswith("p_") and hasattr(server.Handler, name)
     assert {p for p, _ in server.GET_ROUTES}.isdisjoint(
-        {p for p, _ in server.POST_ROUTES} - {"/runs", "/goals", "/automations", "/api/agent-jobs", "/api/threads", "/api/dev"}
+        {p for p, _ in server.POST_ROUTES} - {"/runs", "/goals", "/automations", "/api/agent-jobs", "/api/threads", "/api/dev", "/api/account"}
     )

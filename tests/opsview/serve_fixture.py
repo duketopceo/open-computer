@@ -89,6 +89,8 @@ def main():
         os.environ["CUBE_API_URL"] = url
         os.environ["CUBE_API_KEY"] = "fixture"
     os.environ.pop("OPENROUTER_API_KEY", None)
+    os.environ.pop("COMPOSIO_API_KEY", None)  # connectors stay off: no request ever leaves for Composio
+    os.environ["OC_ACCOUNTS_PATH"] = str(base / "accounts.json")
     if "--replay" in sys.argv:
         os.environ["OC_REPLAY"] = "1"
         os.environ["OC_WORKSPACE_DIR"] = str(base / "workspace")

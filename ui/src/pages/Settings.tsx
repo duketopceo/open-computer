@@ -15,6 +15,8 @@ import { getEffects, setEffects } from "@/lib/effects";
 import { rel } from "@/lib/format";
 import { useRouter } from "@/lib/router";
 import { useFetch } from "@/lib/useFetch";
+import { AccountSection } from "./settings/AccountSection";
+import { ConnectorsSection } from "./settings/ConnectorsSection";
 
 // The one-shot OAuth callback (?code=...&oc_state=...) must be exchanged once, even under StrictMode's double effect.
 let exchanged: string | null = null;
@@ -76,8 +78,10 @@ export default function Settings() {
 
   const connected = data?.connected ?? false;
   return (
-    <PageShell title="Settings" sub="Connections for this computer.">
-      <section aria-labelledby="or-h" className="max-w-xl rounded-xl border border-line bg-surface-1 p-4">
+    <PageShell title="Settings" sub="Your account and connections.">
+      <AccountSection />
+      <ConnectorsSection />
+      <section aria-labelledby="or-h" className="mt-4 max-w-xl rounded-xl border border-line bg-surface-1 p-4">
         <h2 id="or-h" className="text-sm font-semibold text-ink">
           OpenRouter
         </h2>
