@@ -67,6 +67,10 @@ body::before {
     repeating-linear-gradient(-45deg, var(--fx-weave) 0 1px, transparent 1px 5px),
     conic-gradient(from 90deg at 50% 50%, var(--fx-weave-2) 0 25%, transparent 0 50%, var(--fx-weave-2) 0 75%, transparent 0) 0 0 / 10px 10px;
 }
+/* While the ambient shader draws (components/Ambient.tsx), it replaces the weave; the weave is the fallback. */
+html[data-ambient="on"] body::before {
+  display: none;
+}
 /* The sheen: one wide soft band that drifts across the weave very slowly. */
 body::after {
   inset: -10% -60%;

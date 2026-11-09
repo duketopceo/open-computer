@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { Ambient } from "./components/Ambient";
 import { RouterProvider, matchRoute, useRouter } from "./lib/router";
 import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
@@ -41,10 +42,18 @@ const ROUTES: Row[] = [
   { path: "/settings", page: () => <Settings /> },
 ];
 
+// Nothing moves while a human decides (DESIGN.md): the ambient field is off on the approvals page.
+const STILL = new Set(["/approvals"]);
+
 function Routes() {
   const { path } = useRouter();
   const m = matchRoute(path, ROUTES);
-  return m ? m.route.page(m.params) : <NotFound />;
+  return (
+    <>
+      {!STILL.has(path.replace(/\/+$/, "") || "/") && <Ambient />}
+      {m ? m.route.page(m.params) : <NotFound />}
+    </>
+  );
 }
 
 createRoot(document.getElementById("root")!).render(
