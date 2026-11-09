@@ -118,3 +118,23 @@ Flight Strip still governs the CLI, the approval TUI and the Developer area in S
   output open on demand. Only a running step uses the accent. "Waiting" uses the leased dash and "Skipped" a muted dashed box;
   neither is accent. Above 60 steps the list is virtualized with measured rows. A new card slides in over 160 ms and the running
   line is static under reduced motion. The Dev trace switch under Operator asks before turning on, because it captures content.
+
+## Motion and depth (2026-11-08)
+
+Signed off by Luke on 2026-11-08. This section amends "Depth and texture, CSS only" above for the web console. Flight Strip
+still governs the CLI, the approval TUI and Settings > Developer.
+
+- **Allowed:** one subtle ambient shader behind the canvas (never behind text, cards or the sidebar), and the Motion library
+  (`motion`, loaded through `LazyMotion` + `m`) for layout and enter/exit motion in the run timeline. Everything else stays CSS:
+  View Transitions for thread and page changes, `@property` for the composer edge while a run works.
+- **The shader:** loaded on demand in its own chunk with its own byte budget, raw WebGL (no three.js), capped frame rate, paused
+  while the tab is hidden or the canvas is off screen. Shader source copied from ThreeUI Community (MIT) keeps its credit in
+  `ui/src/vendor/`. Without WebGL, and whenever effects are off, the CSS weave is the background.
+- **Timing:** motion tokens come from Rune's spring presets (anomalyco/rune `rune-motion`, MIT): snap 250 ms, settle 300 ms,
+  reflow 400 ms, morph 300 ms with a small bounce. They live in `oc-scale.css` as `--motion-*` and in `ui/src/lib/motion.ts`.
+- **Never moves:** approval cards and anything a human is deciding on; text a person is reading (no parallax, no drifting copy);
+  the accent stays "live or needs you", never decoration.
+- **Always respected:** `prefers-reduced-motion: reduce` and Settings "Reduce effects" (`data-effects="off"`) stop every animation,
+  the shader and View Transitions; the settled state shows at once and nothing is ever hidden waiting for an animation.
+- **Budgets:** the main SPA chunk stays under 130 kB gzip; the shader chunk under 8 kB gzip. CI fails the build past either.
+- **Still rejected:** glassmorphism, 3D scenes, particle fields, glow used as decoration, robot or brain imagery.
