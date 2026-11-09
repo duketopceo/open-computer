@@ -17,11 +17,20 @@ const CHOICE: EffortChoice = { effort: "low", model: "", budget: "" };
 
 describe("EffortPicker", () => {
   it("shows only the levels and a one-line budget until Advanced is opened", () => {
-    render(<EffortPicker catalog={CAT} value={CHOICE} onChange={() => {}} />);
+    const { rerender } = render(<EffortPicker catalog={CAT} value={CHOICE} onChange={() => {}} />);
     expect(screen.getByText("up to $0.10 per run")).toBeInTheDocument();
     expect(screen.queryByText(/Quick and cheap/)).toBeNull();
     expect(screen.queryByText("small/x, small/y")).toBeNull();
     expect(screen.getByText("Low").closest("label")).toHaveAttribute("title", "Quick and cheap.");
+    rerender(<EffortPicker catalog={CAT} value={{ ...CHOICE, budget: "0.25" }} onChange={() => {}} />);
+    expect(screen.getByText("up to $0.25 per run")).toBeInTheDocument();
+    rerender(<EffortPicker catalog={CAT} value={{ ...CHOICE, budget: "0.001" }} onChange={() => {}} />);
+    expect(screen.getByText("up to $0.001 per run")).toBeInTheDocument();
+  });
+
+  it("flags an invalid Advanced budget on the caption even while Advanced is closed", () => {
+    render(<EffortPicker catalog={CAT} value={{ ...CHOICE, budget: "5" }} onChange={() => {}} />);
+    expect(screen.getByText("budget must be above $0 and up to $1.00")).toBeInTheDocument();
   });
 
   it("puts the level's explainer, model and fallbacks inside Advanced", async () => {

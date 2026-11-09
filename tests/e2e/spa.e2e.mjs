@@ -1012,7 +1012,7 @@ test("@flow effort: server default is selected, Advanced is closed, and the one-
   await page.getByText("up to $0.10 per run").waitFor();
   assert.equal(await page.getByText("vendor/low-b, vendor/low-c").count(), 0, "the model chain stays inside Advanced");
   await page.getByRole("button", { name: "Advanced" }).click();
-  assert.ok(await page.getByText("google/gemini-2.5-flash").first().isVisible());
+  assert.ok(await page.getByText(/Uses google\/gemini-2.5-flash/).isVisible());
   assert.ok(await page.getByText("vendor/low-b, vendor/low-c").isVisible());
   await ctx.close();
 });

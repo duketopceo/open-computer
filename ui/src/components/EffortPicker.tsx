@@ -22,7 +22,8 @@ export function toOptions(c: EffortChoice, cat: EffortCatalog | null): GoalOptio
   return opts;
 }
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
+/** Dollars with cents, and up to four places when the amount needs them ($0.10, $0.001). */
+const usd = (n: number) => `$${n.toFixed(4).replace(/0{1,2}$/, "")}`;
 
 export function EffortPicker({
   catalog,
@@ -76,8 +77,10 @@ export function EffortPicker({
             ))}
           </div>
         </fieldset>
-        <span className="mono text-xs text-muted" aria-live="polite">
-          up to {usd(Number(value.budget.trim()) > 0 && !budgetBad ? Number(value.budget) : level.budget)} per run
+        <span className={cn("mono text-xs", budgetBad ? "text-urgent" : "text-muted")} aria-live="polite">
+          {budgetBad
+            ? `budget must be above $0 and up to ${usd(catalog.max_budget)}`
+            : `up to ${usd(Number(value.budget.trim()) > 0 ? Number(value.budget) : level.budget)} per run`}
         </span>
         <button
           type="button"
