@@ -35,9 +35,10 @@ def test_work_fn_returns_provider_usage_for_the_ledger(fake):
     assert (out.usage.cost, out.usage.tokens_in, out.usage.tokens_out, out.usage.model) == (0.0031, 7, 3, "vendor/served")
 
 
-def test_local_placement_reports_no_usage_and_plain_text(monkeypatch):
-    monkeypatch.setattr(engines, "_chat", lambda *a, **k: ("local text", 0.0))
-    assert engines.work_fn(api_key="k")({"placement": "local-llamacpp", "prompt": "p"}) == "local text"
+def test_an_old_local_placement_runs_on_openrouter(fake):
+    fake.chat_replies.append(chat_reply("cloud text", cost=0.001, model="vendor/served"))
+    out = engines.work_fn(api_key="k")({"placement": "local-llamacpp", "prompt": "p", "run": "r", "subtask": "s"})
+    assert out.output == "cloud text" and out.usage.model == "vendor/served"
 
 
 def test_sandbox_script_writer_spend_is_collected(fake, monkeypatch):

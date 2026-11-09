@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from .model_catalog import CATALOG, LOCAL_MODELS
+from .model_catalog import CATALOG
 
 ROUTES = {
     "launch": "open, start, or close an application and nothing else",
@@ -26,7 +26,6 @@ ROUTES = {
 }
 
 TIERS = {
-    "local": "trivial task a small local model handles fine",
     "cheap": "routine task needing a hosted flash-class model",
     "mid": "hard task needing a strong mid-tier model",
     "frontier": "exceptional task only the strongest frontier model can handle",
@@ -46,8 +45,8 @@ QUESTIONS = {
 }
 
 # tier -> candidate models the placement layer may bind to. The cloud tiers come from the curated catalog
-# (services/router/model_catalog.json); only the local tier is a separate list (gated by OC_LOCAL_MODELS).
-TIER_MODELS = {"local": list(LOCAL_MODELS), **CATALOG.tier_models()}
+# (services/router/model_catalog.json). There is no local tier: every model call goes through OpenRouter.
+TIER_MODELS = dict(CATALOG.tier_models())
 
 _KW = [
     (re.compile(r"\b(agent|spawn|delegate|background)\b", re.I), "agent"),
@@ -61,7 +60,7 @@ _KW = [
 
 def candidates(task_type: str, complexity: str, latency: str) -> list[str]:
     """task_type x complexity x latency -> concrete model candidates."""
-    tier = "local" if latency == "low" or complexity == "trivial" else complexity if complexity in TIERS else "cheap"
+    tier = complexity if complexity in TIERS else "cheap"  # trivial and low-latency work: the cheap cloud tier
     return TIER_MODELS.get(tier, TIER_MODELS["cheap"])
 
 
@@ -70,6 +69,6 @@ def offline_decide(utterance: str) -> dict:
     route = next((r for pat, r in _KW if pat.search(utterance)), "clarify")
     return {
         "route": route,
-        "tier": "local" if route in ("launch", "dictation", "clarify", "answer") else "cheap",
+        "tier": "cheap",
         "confidence": 0.0,
     }

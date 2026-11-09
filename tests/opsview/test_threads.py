@@ -125,7 +125,7 @@ def test_runs_per_message_are_capped_and_the_last_call_may_not_start_another(tdi
     assert last["role"] == "assistant" and last["text"] == "again"
 
 
-@pytest.mark.parametrize("stop", ["approval", "paused", "timeout"])
+@pytest.mark.parametrize("stop", ["plan", "approval", "paused", "timeout"])
 def test_a_run_that_cannot_finish_says_why_and_stops(tdir, stop):
     t = threads.create("go", PLAN)
     d, started = deps(Script(decision("run", "ok", "g")), stops={"goal_00000000": stop})
@@ -133,6 +133,32 @@ def test_a_run_that_cannot_finish_says_why_and_stops(tdir, stop):
     last = threads.get(t["id"])["messages"][-1]
     assert last["role"] == "assistant" and len(started) == 1
     assert threads._STOP_NOTES[stop] == last["text"]
+
+
+def test_wait_tells_a_held_plan_from_a_step_approval(tdir, monkeypatch):
+    seen = {"r_plan": {"plan": {"state": "planned"}, "subtasks": []},
+            "r_step": {"declared": 1, "subtasks": [{"state": "AWAITING-APPROVAL"}]}}
+    monkeypatch.setattr(goalruns, "get_run", seen.get)
+    assert threads.wait_for_run("r_plan", timeout=1) == "plan"
+    assert threads.wait_for_run("r_step", timeout=1) == "approval"
+    assert "tell me to carry on" not in threads._STOP_NOTES["plan"]
+
+
+def test_approving_the_plan_resumes_the_chat_and_it_replies(tdir):
+    # First turn stops on the held plan; the resume waits for that run, then the model answers with its result.
+    t = threads.create("go", PLAN)
+    d, started = deps(Script(decision("run", "on it", "g")), stops={"goal_00000000": "plan"})
+    threads.run_turn(t["id"], d)
+    assert threads.get(t["id"])["messages"][-1]["text"] == threads._STOP_NOTES["plan"]
+    assert threads.thread_for_run("goal_00000000") == t["id"]
+    assert threads.thread_for_run("goal_ffffffff") is None
+    model = Script(decision("reply", "here it is"))
+    d2, started2 = deps(model, views={"goal_00000000": view("goal_00000000")})
+    threads.run_turn(t["id"], d2, waiting_on="goal_00000000")
+    last = threads.get(t["id"])["messages"][-1]
+    assert last["role"] == "assistant" and last["text"] == "here it is"
+    assert started2 == []  # no second run: the approved one is reported
+    assert "out" in json.dumps(model.seen[0])  # the model saw the finished run's result
 
 
 def test_a_model_failure_becomes_a_message_not_a_crash(tdir):
@@ -264,3 +290,14 @@ def test_thread_runs_leave_the_loose_run_list_and_survive_clear_runs(console):
     hdr = {"Content-Type": "application/json", "X-CSRF-Token": console.csrf()}
     assert json.loads(console.request("POST", "/api/runs/clear", body='{"confirm":true}', headers=hdr)[2]) == {"cleared": 1}
     assert ids("") == {"goal_0000000a"}
+
+
+def test_a_plan_decision_resumes_the_chat_that_owns_the_run(tdir, monkeypatch):
+    t = threads.create("go", PLAN)
+    threads.append(t["id"], "run", "g", run="goal_0000abcd", goal="g")
+    calls = []
+    monkeypatch.setattr(server, "_turn_deps", lambda plan, who: "deps")
+    monkeypatch.setattr(threads, "start_turn", lambda tid, d, waiting_on=None: calls.append((tid, waiting_on)) or True)
+    assert server.resume_after_plan("goal_0000abcd", "luke")
+    assert calls == [(t["id"], "goal_0000abcd")]
+    assert not server.resume_after_plan("goal_ffffffff", "luke")  # a run no chat started: nothing to resume

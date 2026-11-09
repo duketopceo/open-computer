@@ -50,8 +50,8 @@ def test_no_catalog_id_matches_the_premium_pattern_including_the_worker():
     assert mc.DEFAULT_WORKER_MODEL == "z-ai/glm-5.3-flash"
 
 
-def test_tier_models_come_from_the_catalog_and_local_stays_separate():
-    assert TIER_MODELS["local"] == list(mc.LOCAL_MODELS)
+def test_tier_models_come_from_the_catalog_and_there_is_no_local_tier():
+    assert "local" not in TIER_MODELS
     for tier, ids in mc.CATALOG.tier_models().items():
         assert TIER_MODELS[tier] == ids and ids
     assert all(mc.CATALOG.get(m) for t in mc.CLOUD_TIERS for m in TIER_MODELS[t])
@@ -134,12 +134,9 @@ def test_shipped_grok_47_is_flagged_because_its_published_price_is_above_the_cei
     assert "x-ai/grok-4.7" not in {m for ms in TIER_MODELS.values() for m in ms}
 
 
-def test_local_models_appear_only_when_the_flag_is_on(monkeypatch):
-    monkeypatch.delenv("OC_LOCAL_MODELS", raising=False)
-    assert mc.payload()["local"] == []
+def test_no_local_models_even_with_the_old_flag(monkeypatch):
     monkeypatch.setenv("OC_LOCAL_MODELS", "1")
-    assert [m["id"] for m in mc.payload()["local"]] == list(mc.LOCAL_MODELS)
-    assert {m["badge"] for m in mc.payload()["local"]} == {"local"}
+    assert mc.payload()["local"] == []
 
 
 def test_engines_use_the_catalog_worker_default_not_a_hard_coded_id():

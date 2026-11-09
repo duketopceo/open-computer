@@ -128,7 +128,7 @@ def test_runs_cost_audit_and_place_tools(st, tmp_path):
     Gate(st.audit).audit.append({"event": "x"})
     assert payload(call(st, "audit_tail", n=5))["rows"][-1]["event"] == "x"
     p = payload(call(st, "place", subtask={"tier": "frontier"}, pii_flagged=True))
-    assert p["target"].startswith("local")  # the MCP can never mark PII approved
+    assert p["target"] == "blocked"  # the MCP can never mark PII approved, and there is no local model
 
 
 def test_bad_calls_are_tool_errors_not_crashes(st):

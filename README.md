@@ -36,7 +36,7 @@ It is personal infrastructure first. It does not try to match Perplexity's conne
 ```mermaid
 flowchart LR
   G[goal] --> O[orchestrator<br/>decompose, dispatch, collect]
-  O --> P[placement rules<br/>PII and budget demote to local]
+  O --> P[placement rules<br/>every model call via OpenRouter;<br/>PII and over-budget steps block]
   P -->|local or cheap model| S[sandbox per subtask<br/>CubeSandbox, egress deny]
   P -->|cloud + flagged content| A[approval gate<br/>PII scan, human OK]
   A --> S
