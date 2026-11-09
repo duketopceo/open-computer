@@ -7,8 +7,10 @@ import {
   disconnectOpenRouter,
   errorMessage,
   forgetMemory,
+  getBrain,
   getMemory,
   getOpenRouter,
+  getRuntime,
   startOpenRouterConnect,
 } from "@/lib/api";
 import { getEffects, setEffects } from "@/lib/effects";
@@ -115,6 +117,8 @@ export default function Settings() {
         </div>
       </section>
       <MemorySection />
+      <BrainSection />
+      <RuntimeSection />
       <section aria-labelledby="fx-h" className="mt-4 max-w-xl rounded-xl border border-line bg-surface-1 p-4">
         <h2 id="fx-h" className="text-sm font-semibold text-ink">
           Appearance
@@ -220,6 +224,74 @@ function MemorySection() {
         </>
       )}
       <div aria-live="polite">{failure && <p className="mt-3 text-sm text-urgent">{failure}</p>}</div>
+    </section>
+  );
+}
+
+/** Kurultai Brain UI: deep-link + health. Inert until OC_KURULTAI_BRAIN_URL is set on the host. */
+function BrainSection() {
+  const { data, error, loading, reload } = useFetch(getBrain, []);
+  return (
+    <section aria-labelledby="brain-h" className="mt-4 max-w-xl rounded-xl border border-line bg-surface-1 p-4">
+      <h2 id="brain-h" className="text-sm font-semibold text-ink">
+        Kurultai Brain
+      </h2>
+      <DataState loading={loading} error={error} hasData={!!data} onRetry={reload} />
+      {data && (
+        <>
+          <p className="mt-1 text-sm text-muted" data-testid="brain-status">
+            {data.url
+              ? data.health === "up"
+                ? "Reachable. Open the Brain UI to explore the knowledge graph; Open Computer only links to it over HTTP."
+                : "Configured but not reachable right now. Check that Kurultai's daemon is running."
+              : data.hint || "Not linked."}
+          </p>
+          {data.url && (
+            <p className="mt-3 text-sm">
+              <a
+                href={data.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline-offset-2 hover:underline"
+                data-testid="brain-link"
+              >
+                Open Brain UI
+              </a>
+              <span className="ml-2 mono text-xs text-muted">({data.health})</span>
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Where each kind of step runs. Models are always OpenRouter; tools may be host or sandbox. */
+function RuntimeSection() {
+  const { data, error, loading, reload } = useFetch(getRuntime, []);
+  return (
+    <section aria-labelledby="rt-h" className="mt-4 max-w-xl rounded-xl border border-line bg-surface-1 p-4">
+      <h2 id="rt-h" className="text-sm font-semibold text-ink">
+        Runtime
+      </h2>
+      <DataState loading={loading} error={error} hasData={!!data} onRetry={reload} />
+      {data && (
+        <>
+          <p className="mt-1 text-sm text-muted" data-testid="runtime-summary">
+            {data.summary}
+          </p>
+          <ul className="mt-3 flex flex-col divide-y divide-line" data-testid="runtime-steps" aria-label="Where steps run">
+            {data.steps.map((s) => (
+              <li key={s.id} className="py-2 text-sm" data-testid={`runtime-step-${s.id}`}>
+                <span className="block font-medium text-ink">{s.title}</span>
+                <span className="block text-muted">{s.where}</span>
+                <span className="mt-0.5 block text-xs text-muted">{s.detail}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-muted">Full write-up: docs/runbooks/runtime.md on the host checkout.</p>
+        </>
+      )}
     </section>
   );
 }

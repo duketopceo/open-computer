@@ -31,3 +31,14 @@ In the console: a reply whose turn recalled notes shows "Used N memories"; open 
 Memory shows whether it is on, the endpoint, whether a key is set (never the key), counts, the last failure, and the
 notes this computer stored, each with Forget. API: `GET /api/memory`, `POST /api/memory/forget {atom, thread?}`, and
 thread detail carries `memory` only while memory is on.
+
+## Brain UI link (Settings)
+
+Open Computer does not embed Kurultai's code (AGPL). To deep-link the Brain UI from Settings:
+
+| Env | Meaning |
+| --- | --- |
+| `OC_KURULTAI_BRAIN_URL` | Brain UI base, e.g. `http://127.0.0.1:8421/ui/`. Unset = section inert |
+| `OC_KURULTAI_BRAIN_HEALTH_URL` | Optional health probe URL (default: `{origin}/api/status`) |
+
+API: `GET /api/brain` → `{url, health: unset|up|down, hint}`.

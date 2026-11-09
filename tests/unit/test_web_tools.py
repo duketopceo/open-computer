@@ -231,3 +231,126 @@ def test_planner_canon_keeps_needs_web():
     d = importlib.import_module("services.orchestrator.decompose")
     assert d._parse('[{"id":"a","title":"t","prompt":"p","needs_web":true}]')[0]["needs_web"] is True
     assert d._parse('[{"id":"a","title":"t","prompt":"p"}]')[0]["needs_web"] is False
+
+
+def test_scrapling_provider_selection_defaults_and_stealth_flag():
+    s, reader = web.configured_search({"OC_WEB_PROVIDER": "scrapling"})
+    assert isinstance(s, web.ScraplingWeb) and reader is s
+    assert s.client.url == web.DEFAULT_SCRAPLING_MCP and s.stealth is False
+    s2, _ = web.configured_search({
+        "OC_WEB_PROVIDER": "scrapling",
+        "OC_SCRAPLING_MCP_URL": "http://127.0.0.1:9/mcp",
+        "OC_SCRAPLING_STEALTH": "1",
+    })
+    assert s2.client.url.endswith(":9/mcp") and s2.stealth is True
+
+
+def test_scrapling_uses_make_request_unless_stealth():
+    class FakeScrapling(_FakeMcp):
+        pass
+
+    FakeScrapling.calls = []
+    srv = HTTPServer(("127.0.0.1", 0), FakeScrapling)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_port}/mcp"
+
+        class Handler(FakeScrapling):
+            pass
+
+        # Reuse _FakeMcp which returns linky text on "read"; for make_request return page text with a link
+        orig = _FakeMcp.do_POST
+
+        def do_POST(self):  # noqa: N802
+            msg = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if "id" not in msg:
+                self.send_response(202)
+                self.end_headers()
+                return
+            if msg["method"] == "initialize":
+                result = {"protocolVersion": "2025-03-26", "capabilities": {}}
+            else:
+                _FakeMcp.calls.append((msg["params"]["name"], msg["params"]["arguments"]))
+                name = msg["params"]["name"]
+                if name in ("make_request", "browser_fetch_once"):
+                    text = "Title\nhttps://example.org/from-scrapling\nbody"
+                else:
+                    text = "ok"
+                result = {"content": [{"type": "text", "text": text}]}
+            body = json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Mcp-Session-Id", "s1")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        _FakeMcp.do_POST = do_POST
+        _FakeMcp.calls = []
+        try:
+            plain = web.ScraplingWeb(web.McpClient(url), stealth=False)
+            stealth = web.ScraplingWeb(web.McpClient(url), stealth=True)
+            plain.fetch("https://example.com/a")
+            assert _FakeMcp.calls[-1][0] == "make_request"
+            stealth.fetch("https://example.com/b")
+            assert _FakeMcp.calls[-1][0] == "browser_fetch_once"
+            hits = plain.search("open computer")
+            assert any(h.url.endswith("/from-scrapling") for h in hits)
+        finally:
+            _FakeMcp.do_POST = orig
+    finally:
+        srv.shutdown()
+
+
+def test_scrapling_web_work_refuses_unapproved_host_before_mcp():
+    called = []
+
+    class Boom(web.ScraplingWeb):
+        def __init__(self):
+            pass
+
+        def search(self, q):
+            return []
+
+        def fetch(self, url):
+            called.append(url)
+            raise AssertionError("must not fetch")
+
+    chat = scripted(j(action="fetch", url="https://evil.test/x"), j(action="answer", text="nope"))
+    # Pass search=Boom and a fetch that check_url wraps — mimic web_work reader path
+    boom = Boom()
+
+    def fetch(url: str):
+        web.check_url(url, lambda: ["example.com"])
+        return boom.fetch(url)
+
+    out = web.web_loop("t", chat, boom, fetch)
+    assert called == [] and out.startswith("nope") and "not an approved site" in chat.seen[1]
+
+def test_sonar_provider_selection():
+    s, reader = web.configured_search({"OC_SEARCH_PROVIDER": "sonar", "OPENROUTER_API_KEY": "k"})
+    assert isinstance(s, web.SonarSearch) and reader is None and s.model == web.DEFAULT_SONAR_MODEL
+    s2, _ = web.configured_search({"OC_WEB_PROVIDER": "sonar", "OC_SONAR_MODEL": "perplexity/sonar-pro"})
+    assert s2.model == "perplexity/sonar-pro"
+
+
+def test_hits_from_sonar_response_prefer_citations():
+    resp = {
+        "citations": ["https://example.com/a", {"url": "https://example.com/b"}, "https://example.com/a"],
+        "choices": [{"message": {"content": "Answer text", "annotations": [{"url_citation": {"url": "https://example.com/c"}}]}}],
+    }
+    hits = web.hits_from_sonar_response(resp)
+    assert [h.url for h in hits] == ["https://example.com/a", "https://example.com/b", "https://example.com/c"]
+    assert hits[0].snippet.startswith("Answer text")
+
+
+def test_sonar_search_uses_injected_call_and_feeds_sources():
+    def call(q):
+        assert q == "cats"
+        return [web.Hit("Cats", "https://example.com/cats", "about cats")]
+
+    s = web.SonarSearch(call=call)
+    chat = scripted(j(action="search", query="cats"), j(action="answer", text="Cats are mammals."))
+    out = web.web_loop("what are cats", chat, s, lambda u: web.Page(u, "x"))
+    assert "Sources:\n[1] https://example.com/cats" in out
