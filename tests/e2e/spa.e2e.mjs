@@ -114,7 +114,9 @@ test("@flow chat: double Send opens one chat, a failed send keeps the text, retr
   await send.click();
   await page.getByText("Done: it said hi.").waitFor();
   assert.ok(await page.getByText("Sending a greeting.").isVisible());
-  assert.ok(await page.getByRole("list", { name: "Conversation" }).getByText("<$0.0001").first().isVisible(), "the run renders inline");
+  const conv = page.getByRole("list", { name: "Conversation" });
+  assert.ok(await conv.getByRole("link", { name: "Details" }).first().isVisible(), "the run renders inline");
+  assert.equal(await conv.getByText("<$0.0001").count(), 0, "a sub-cent cost stays off the chat card");
   await ctx.close();
 });
 
