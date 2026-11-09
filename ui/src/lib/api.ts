@@ -272,6 +272,29 @@ export interface MemoryStatus {
   recent_writes: { atom: string; title: string; thread?: string; ts: number }[];
 }
 
+
+export interface RuntimeStep {
+  id: string;
+  title: string;
+  where: string;
+  detail: string;
+}
+
+export interface RuntimeStatus {
+  summary: string;
+  steps: RuntimeStep[];
+  docs: string;
+}
+
+export interface BrainStatus {
+  url: string | null;
+  health: "unset" | "up" | "down";
+  hint: string | null;
+}
+
+export const getRuntime = () => json<RuntimeStatus>("/api/runtime");
+export const getBrain = () => json<BrainStatus>("/api/brain");
+
 export const getMemory = () => json<MemoryStatus>("/api/memory");
 export const forgetMemory = (atom: string, thread?: string) =>
   postJson<{ ok: true; atom: string }>("/api/memory/forget", thread ? { atom, thread } : { atom });

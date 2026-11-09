@@ -44,6 +44,8 @@ from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import chat as chat_turns
 from services import compact as oc_compact
 from services import memory as oc_memory
+from services import runtime_map as oc_runtime
+from services import kurultai_brain as oc_brain
 from services.orchestrator import engines as goal_engines
 from services.router import model_catalog
 from services.workspace import routes as workspace
@@ -375,6 +377,8 @@ GET_ROUTES = [
     (r"/api/skills", "g_api_skills"),
     (r"/api/automations", "g_api_automations"),
     (r"/api/memory", "g_api_memory"),
+    (r"/api/runtime", "g_api_runtime"),
+    (r"/api/brain", "g_api_brain"),
     (r"/work", "g_work_redirect"),
     (r"/overview", "g_spa_route"),
     (r"/sandboxes", "g_spa_route"),
