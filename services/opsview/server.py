@@ -29,7 +29,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from oc.obs import bind, devtrace, get_logger
 from services.openrouter import lanes as or_lanes
@@ -45,6 +45,8 @@ from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import chat as chat_turns
 from services import compact as oc_compact
 from services import memory as oc_memory
+from services import accounts
+from services.connectors import composio as composio_connectors
 from services import runtime_map as oc_runtime
 from services import kurultai_brain as oc_brain
 from services.orchestrator import engines as goal_engines
@@ -405,6 +407,8 @@ GET_ROUTES = [
     (r"/audit", "g_spa_route"),
     (r"/settings", "g_spa_route"),
     (r"/api/openrouter", "g_api_openrouter"),
+    (r"/api/account", "g_api_account"),
+    (r"/api/connectors", "g_api_connectors"),
     (r"/api/devices", "g_api_devices"),
     (r"/api/sandboxes", "g_api_sandboxes"),
     (r"/api/router", "g_api_router"),
@@ -435,6 +439,10 @@ POST_ROUTES = [
     (r"/api/openrouter/connect", "p_api_or_connect"),
     (r"/api/openrouter/complete", "p_api_or_complete"),
     (r"/api/openrouter/disconnect", "p_api_or_disconnect"),
+    (r"/api/account", "p_api_account"),
+    (r"/api/logout", "p_api_logout"),
+    (r"/api/connectors/connect", "p_api_connector_connect"),
+    (r"/api/connectors/disconnect", "p_api_connector_disconnect"),
     (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_api_approve"),
     (r"/api/approvals/(?P<id>ap_[0-9a-f]{8})/send-back", "p_api_sendback"),
     (r"/approvals/(?P<id>ap_[0-9a-f]{8})/approve", "p_approve"),
@@ -716,6 +724,53 @@ class Handler(BaseHTTPRequestHandler):
 
     def g_api_openrouter(self, qs):
         self._json(200, or_connect.status())
+
+    # --- account and connectors (services.accounts, services.connectors.composio) ---------------
+    def _account(self, who: str) -> dict:
+        acct = accounts.get_or_create(who)
+        # Behind Cloudflare Access the console session re-mints from the Access cookie, so signing out ends both.
+        acct["signout"] = "/cdn-cgi/access/logout" if acct["via"] == "email" else ""
+        return acct
+
+    def g_api_account(self, qs):
+        self._json(200, self._account(self._identity() or ""))
+
+    def p_api_account(self, who, body):
+        try:
+            accounts.set_name(who, body.get("name"))
+        except ValueError as e:
+            return self._json(422, {"error": str(e)})
+        self._json(200, self._account(who))
+
+    def p_api_logout(self, who, body):
+        self._local_cookie = None
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        secure = "" if self._rp() in self._LOOPBACK else "; Secure"
+        self.send_header("Set-Cookie", f"oc_sess=; HttpOnly{secure}; SameSite=Strict; Path=/; Max-Age=0")
+        out = json.dumps({"ok": True, "next": self._account(who)["signout"] or "/login"}).encode()
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def _connectors_call(self, fn, *args):
+        try:
+            self._json(200, fn(*args))
+        except composio_connectors.ConnectorError as e:
+            self._json(400, {"error": str(e)})
+
+    def g_api_connectors(self, qs):
+        self._connectors_call(composio_connectors.status, accounts.account_id(self._identity() or ""))
+
+    def p_api_connector_connect(self, who, body):
+        scheme = "http" if self._rp() in self._LOOPBACK else "https"
+        toolkit = body.get("toolkit")
+        callback = f"{scheme}://{self.headers.get('Host', 'localhost')}/settings?" + urlencode(
+            {"connected": toolkit if isinstance(toolkit, str) else ""})
+        self._connectors_call(composio_connectors.connect, accounts.account_id(who), toolkit, callback)
+
+    def p_api_connector_disconnect(self, who, body):
+        self._connectors_call(composio_connectors.disconnect, accounts.account_id(who), body.get("account"))
 
     def _or_call(self, fn, *args):
         try:

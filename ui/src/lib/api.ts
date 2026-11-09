@@ -695,3 +695,31 @@ export const startOpenRouterConnect = () =>
 export const completeOpenRouterConnect = (code: string, state: string) =>
   postJson<OpenRouterStatus>("/api/openrouter/complete", { code, state });
 export const disconnectOpenRouter = () => postJson<OpenRouterStatus>("/api/openrouter/disconnect", {});
+
+// ---- account (one per signed-in identity; sign-in itself is Cloudflare Access, a passkey, or loopback)
+export interface Account {
+  id: string;
+  email: string;
+  name: string;
+  created: number;
+  via: "email" | "passkey" | "local";
+  signout: string; // "" when there is nothing to sign out of (loopback)
+}
+export const getAccount = () => json<Account>("/api/account");
+export const saveAccountName = (name: string) => postJson<Account>("/api/account", { name });
+export const logout = () => postJson<{ ok: boolean; next: string }>("/api/logout", {});
+
+// ---- connectors (Composio; off unless the host sets COMPOSIO_API_KEY)
+export interface ConnectorToolkit {
+  slug: string;
+  label: string;
+  connected: boolean;
+  account: string | null;
+}
+export interface ConnectorsStatus {
+  enabled: boolean;
+  toolkits: ConnectorToolkit[];
+}
+export const getConnectors = () => json<ConnectorsStatus>("/api/connectors");
+export const startConnector = (toolkit: string) => postJson<{ url: string }>("/api/connectors/connect", { toolkit });
+export const removeConnector = (account: string) => postJson<{ ok: boolean }>("/api/connectors/disconnect", { account });

@@ -142,6 +142,7 @@ them by hand, never in CI. The first runnable command (`oc run "<goal>"`) is OC-
 - [Landscape research](./docs/research/2026-10-10-landscape.md): Perplexity Computer, Manus, ChatGPT agent, Claude computer use, browser-use, OpenHands, Open Interpreter, E2B/Cube/Daytona, routers.
 - [ROADMAP.md](./ROADMAP.md): unit board, numbering map (OC-nnn to the old PR #1/#6 ids), spend rule.
 - [docs/FEATURES.md](./docs/FEATURES.md): feature inventory verified against code (as of 2026-10-14).
+- [docs/runbooks/accounts-and-connectors.md](./docs/runbooks/accounts-and-connectors.md): accounts, sign-out, and Composio connectors (`COMPOSIO_API_KEY`).
 - [docs/runbooks/observability.md](./docs/runbooks/observability.md): logging, OpenRouter cost records, and the trace timeline.
 - [Program roadmap plan](./docs/plans/2026-10-10-program-roadmap-plan.md)
 - [ARCHITECTURE_MAP.md](./ARCHITECTURE_MAP.md): Perplexity part, open equivalent, status.
