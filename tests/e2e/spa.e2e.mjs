@@ -519,9 +519,9 @@ test("@nav client-side navigation keeps the document, retitles, moves focus, and
   const before = page.url();
   await nav.getByRole("link", { name: "Router" }).click({ modifiers: ["Control"] });
   assert.equal(page.url(), before);
-  // an unported page is a full navigation to the server-rendered console
-  await Promise.all([page.waitForURL(base + "/runs"), nav.getByRole("link", { name: "Runs" }).click()]);
-  assert.equal(await page.evaluate(() => window.__same), undefined, "Runs is a real page load");
+  // a page with no SPA route (Workspace) is a full navigation to the server-rendered console
+  await Promise.all([page.waitForURL(base + "/workspace"), nav.getByRole("link", { name: "Workspace" }).click()]);
+  assert.equal(await page.evaluate(() => window.__same), undefined, "Workspace is a real page load");
   await ctx.close();
 });
 
@@ -2212,5 +2212,76 @@ test("@plan cancel posts a cancel with no edits", async () => {
   await page.getByRole("button", { name: "Cancel run" }).click();
   await page.getByText("Decision saved").waitFor();
   assert.deepEqual(posts, [{ action: "cancel", edits: [] }]);
+  await ctx.close();
+});
+
+// ---- UI baseline (plan 2026-11-10): layout, focus and explicit states on every SPA page ----
+const BASELINE_ROUTES = ["/", "/overview", "/goals", "/automations", "/skills", "/sandboxes", "/devices", "/runs", "/approvals", "/router", "/audit", "/settings"];
+
+for (const w of [1440, 390]) {
+  test(`@baseline no horizontal scroll on any page at ${w}px`, async () => {
+    for (const route of BASELINE_ROUTES) {
+      const { ctx, page } = await open({ w, path: route });
+      await page.locator("main").first().waitFor();
+      const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(over <= 0, `${route} at ${w}px overflows by ${over}px`);
+      await ctx.close();
+    }
+  });
+}
+
+test("@baseline @keyboard the skip link comes first and every tab stop on every page shows a focus indicator", async () => {
+  for (const route of BASELINE_ROUTES) {
+    const { ctx, page } = await open({ path: route });
+    await page.locator("main").first().waitFor();
+    // The composer autofocuses on home, so assert DOM order instead of pressing Tab from wherever focus landed.
+    const first = await page.evaluate(() => document.querySelector("a[href], button, input, select, textarea, summary, [tabindex='0']")?.textContent?.trim());
+    assert.equal(first, "Skip to content", `${route}: first tab stop`);
+    await page.locator("a[href='#main']").first().focus();
+    for (let i = 0; i < 14; i++) {
+      const r = await page.evaluate(() => {
+        const e = document.activeElement;
+        if (!e || e === document.body) return { ok: true };
+        const s = getComputedStyle(e);
+        const outline = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) >= 1;
+        const ring = s.boxShadow !== "none";
+        const box = !!e.closest(".fx-edge") && e.tagName === "TEXTAREA"; // the composer edge draws the focus border for its textarea
+        return { ok: outline || ring || box, tag: e.tagName, label: (e.getAttribute("aria-label") || e.textContent || "").trim().slice(0, 30) };
+      });
+      assert.ok(r.ok, `${route}: ${r.tag} "${r.label}" has no visible focus indicator`);
+      await page.keyboard.press("Tab");
+    }
+    await ctx.close();
+  }
+});
+
+test("@baseline a failed load shows an alert with Retry that refetches; an empty list shows the empty state", async () => {
+  let calls = 0;
+  const failing = (r) => (++calls === 1 ? r.fulfill(json(500, { error: "The server is having a bad day." })) : r.fulfill(json(200, { devices: [], total: 0, online: 0, eligible: 0, parked_depth: 0 })));
+  const { ctx, page } = await open({ path: "/devices", routes: { "**/api/devices": failing } });
+  await page.getByRole("alert").waitFor();
+  assert.match(await page.getByRole("alert").innerText(), /bad day/);
+  await page.getByRole("button", { name: /retry/i }).click();
+  await page.getByTestId("empty-state").waitFor();
+  assert.equal(await page.getByRole("alert").count(), 0);
+  assert.equal(calls, 2);
+  await ctx.close();
+});
+
+test("@baseline loading shows the word Loading and a static skeleton, never a spinner", async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const slow = async (r) => { await gate; r.fulfill(json(200, { devices: [], total: 0, online: 0, eligible: 0, parked_depth: 0 })); };
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
+  const page = await ctx.newPage();
+  await page.route("**/api/devices", slow);
+  const nav = page.goto(base + "/devices");
+  await page.getByTestId("skeleton").waitFor();
+  assert.match(await page.getByRole("status").first().innerText(), /Loading/);
+  assert.equal(await page.locator(".animate-spin").count(), 0);
+  release();
+  await nav;
+  await page.getByTestId("empty-state").waitFor();
   await ctx.close();
 });

@@ -197,7 +197,7 @@ function Card({
         </details>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button data-act="approve" aria-keyshortcuts="a" onClick={() => decide("approve")} disabled={busy !== null}>
+        <Button variant="primary" data-act="approve" aria-keyshortcuts="a" onClick={() => decide("approve")} disabled={busy !== null}>
           {busy === "approve" ? "Approving…" : `Approve ${price}`}
         </Button>
         <input

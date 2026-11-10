@@ -8,7 +8,7 @@ export function DemoBanner() {
       data-testid="demo-banner"
       className="flex shrink-0 items-center justify-center gap-2 border-b border-line bg-attention-soft px-4 py-2 text-center text-sm text-ink"
     >
-      <Icon name="step" />
+      <Icon name="sandbox" />
       <span>
         <strong className="font-semibold">Demo.</strong> Sample data only. Nothing runs and nothing is sent; changes reset when you reload.
       </span>

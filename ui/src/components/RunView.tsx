@@ -190,9 +190,9 @@ function SubTaskRow({ s, steps, plain = false }: { s: SubTask; steps: SubTask[];
         <Dot state={s.state} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="truncate text-sm font-medium text-ink">{s.title || s.subtask}</p>
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0 break-words text-sm font-medium text-ink md:truncate">{s.title || s.subtask}</p>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2">
             {!plain && engine(s.engine) && <span className="mono text-muted">{engine(s.engine)}</span>}
             {took && (
               <span className="mono text-muted" title={live ? "Running for" : "Run time"}>
