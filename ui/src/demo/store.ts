@@ -22,6 +22,7 @@ export function createStore(now: number = nowSec()) {
   const connectors = fx.connectors();
   let openrouter = { connected: false, source: null as "omaseal" | "env" | null };
   let seq = 0;
+  let automationSeq = 0;
   const archivedRuns = new Set<string>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -88,6 +89,7 @@ export function createStore(now: number = nowSec()) {
         .map(threadSummary)
         .filter((t) => withArchived || !t.archived)
         .sort((a, b) => b.ts - a.ts),
+    nextAutomationId: () => `au_demo_new${++automationSeq}`,
     createThread(text: string): string {
       const id = `th_demo_new${++seq}`;
       const ts = nowSec();

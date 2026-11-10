@@ -11,6 +11,10 @@ const stripComments = (s) => s.replace(/^\s*\/\/.*$/gm, "");
 
 test("wrangler.jsonc is static assets only, with no ungated URL", () => {
   const c = JSON.parse(stripComments(fs.readFileSync(path.join(root, "edge/wrangler.jsonc"), "utf8")));
+  // An allowlist, not a denylist: any key not named here (a binding, a var, a route) fails the test.
+  const allowed = ["$schema", "name", "compatibility_date", "workers_dev", "preview_urls", "assets"];
+  assert.deepEqual(Object.keys(c).filter((k) => !allowed.includes(k)), [], "only static-asset keys");
+  assert.deepEqual(Object.keys(c.assets).filter((k) => !["directory", "not_found_handling"].includes(k)), []);
   assert.equal(c.main, undefined, "no Worker script");
   for (const k of ["vars", "kv_namespaces", "d1_databases", "r2_buckets", "services", "durable_objects", "ai", "queues", "hyperdrive", "tunnel"]) {
     assert.equal(c[k], undefined, `no ${k}`);

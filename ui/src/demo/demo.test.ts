@@ -78,6 +78,51 @@ describe("demo transport", () => {
   });
 });
 
+describe("every write the app can send has a demo handler (method-aware)", () => {
+  it("answers each api.ts mutation without 'Not part of the demo'", async () => {
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ["createThread", () => api.createThread("hi")],
+      ["sendMessage", () => api.sendMessage("th_demo1", "hi")],
+      ["archiveThread", () => api.archiveThread("th_demo3", true)],
+      ["deleteThread", () => api.deleteThread("th_demo3")],
+      ["clearFinishedThreads", () => api.clearFinishedThreads()],
+      ["archiveRun", () => api.archiveRun("goal_demo0003", true)],
+      ["deleteRun", () => api.deleteRun("goal_demo0003")],
+      ["clearFinishedRuns", () => api.clearFinishedRuns()],
+      ["decidePlan", () => api.decidePlan("goal_demo0001", "approve")],
+      ["submitGoal", () => api.submitGoal("x", true)],
+      ["saveAccountName", () => api.saveAccountName("Demo")],
+      ["logout", () => api.logout()],
+      ["forgetMemory", () => api.forgetMemory("a1")],
+      ["testRoute", () => api.testRoute("hello", true)],
+      ["newAutomation", () => api.newAutomation("x", 60)],
+      ["autoAction", () => api.autoAction("au_demo1", "pause")],
+      ["submitAgentJob", () => api.submitAgentJob("x", 1, true)],
+      ["decideApproval", () => api.decideApproval("job_demo1", "a", "approve", "h")],
+      ["decideQueueItem", () => api.decideQueueItem("ap_demo_2", "send-back", "demo-hash-2", "note")],
+      ["startOpenRouterConnect", () => api.startOpenRouterConnect()],
+      ["completeOpenRouterConnect", () => api.completeOpenRouterConnect("c", "s")],
+      ["disconnectOpenRouter", () => api.disconnectOpenRouter()],
+      ["startConnector", () => api.startConnector("docs")],
+      ["removeConnector", () => api.removeConnector("demo-calendar")],
+    ];
+    for (const [name, call] of calls) {
+      await expect(call(), name).resolves.toBeDefined();
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("gives every added automation a unique id even after a delete", async () => {
+    await api.newAutomation("a", 5);
+    await api.newAutomation("b", 5);
+    const first = (await api.getAutomations()).automations[0].id;
+    await api.autoAction(first, "delete");
+    await api.newAutomation("c", 5);
+    const ids = (await api.getAutomations()).automations.map((a) => a.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
 describe("simulated writes", () => {
   it("a new chat appears in the list, gets the canned reply, and resets with a fresh store", async () => {
     vi.useFakeTimers();

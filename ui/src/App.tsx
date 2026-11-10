@@ -123,7 +123,8 @@ export default function App() {
   useEffect(() => {
     const fromHash = () => {
       const [id, sub] = location.hash.replace(/^#/, "").split("/");
-      if (id) {
+      // "#demo-..." anchors are demo placeholders for disabled links (lib/api.ts, lib/runEvents.ts), never a run or chat id.
+      if (id && !id.startsWith("demo-")) {
         setSelected(id);
         setTimeline(sub === "timeline");
       }

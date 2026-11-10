@@ -42,10 +42,13 @@ Hostnames below are placeholders: `demo.example.com`.
 
 1. **Build:** `pnpm --dir ui build:demo` and `pnpm --dir ui check:demo`.
 2. **Deploy the static assets, once, by hand:** `cd edge && npx wrangler deploy` (log in with your own account; the Worker name
-   in `wrangler.jsonc` is a placeholder). No token is stored in the repo or in CI.
-3. **Attach a custom domain** to the Worker (Workers & Pages > the Worker > Settings > Domains), for example
-   `demo.example.com`. `workers.dev` and preview URLs are disabled in the config, so this is the only entry.
-4. **Put Access in front of it** (Zero Trust > Access > Applications > Add > Self-hosted):
+   in `wrangler.jsonc` is a placeholder). No token is stored in the repo or in CI. With `workers_dev` and `preview_urls` off
+   and no custom domain yet, nothing can reach it.
+3. **Create the Access application first** (step 4 below) for the hostname you are about to use, **then** attach the custom
+   domain to the Worker (Workers & Pages > the Worker > Settings > Domains), for example `demo.example.com`. Doing it in this
+   order means the hostname is never reachable without the gate. `workers.dev` and preview URLs are disabled in the config, so
+   the custom domain is the only entry.
+4. **Access application** (Zero Trust > Access > Applications > Add > Self-hosted; create it before step 3 attaches the domain) (Zero Trust > Access > Applications > Add > Self-hosted):
    - Application domain: `demo.example.com`, path empty (covers every route).
    - Session duration: 24 hours.
    - Identity providers: enable **GitHub** and/or **Google** for sign-up (anyone with an account can sign in, which is
@@ -55,8 +58,9 @@ Hostnames below are placeholders: `demo.example.com`.
    - No Bypass rule. Do not add `/*` exceptions.
 5. **Verify** in a private window: the demo hostname redirects to the Access login; after sign-in the banner shows; the
    `*.workers.dev` URL returns 404; `curl -I https://demo.example.com` without a session returns the Access redirect, not the app.
-6. **Rollback:** delete the Access application (the demo becomes unreachable only if you also remove the route), then delete the
-   Worker route or the Worker. Nothing else holds state.
+6. **Rollback:** remove the custom domain (or delete the Worker) **first**, so nothing is reachable, then delete the Access
+   application. Deleting Access first would leave the hostname serving the demo with no gate until the route is gone.
+   Nothing else holds state.
 
 This is separate from the owner-only live console in `docs/plans/2026-11-01-001-feat-cloudflare-hosted-frontend-plan.md`
 (OC-092), which proxies to the owner's own machine behind the passkey and a service token. Do not point the demo hostname at that.
