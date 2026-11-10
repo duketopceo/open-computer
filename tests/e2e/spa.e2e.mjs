@@ -2076,30 +2076,38 @@ for (const scheme of ["light", "dark"]) {
   });
 }
 
-// Flat canvas (DESIGN.md, 2026-11-10): the page background is one solid token. No shader canvas, no pattern layer.
-test("@effects flat canvas: no shader, no pattern or drifting layer, on any motion setting", async () => {
+// Slanted weave (DESIGN.md, Motion and depth): the canvas always carries the static crosshatch, on every motion setting,
+// with no shader canvas and no drifting layer.
+const weaveLayer = (page) =>
+  page.evaluate(() => ({
+    before: getComputedStyle(document.body, "::before").backgroundImage,
+    beforeAnim: getComputedStyle(document.body, "::before").animationName,
+    after: getComputedStyle(document.body, "::after").content,
+  }));
+test("@effects weave: shown and static on every motion setting; no shader, no sheen", async () => {
   for (const [motion, stored] of [["no-preference", undefined], ["reduce", undefined], ["no-preference", "off"]]) {
     const { ctx, page } = await open({ motion, setup: stored ? (p) => p.addInitScript((v) => localStorage.setItem("oc-effects", v), stored) : undefined });
     await page.getByRole("textbox", { name: "Message" }).waitFor();
     assert.equal(await page.getByTestId("ambient").count(), 0, `${motion}/${stored}: no canvas`);
-    assert.equal(await page.locator("html").getAttribute("data-ambient"), null);
-    const layers = await page.evaluate(() => ["::before", "::after"].map((p) => getComputedStyle(document.body, p).content));
-    assert.deepEqual(layers, ["none", "none"], `${motion}/${stored}: no body pseudo-element layers`);
-    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
-    assert.equal(bg, "none", "the body background is a flat colour");
+    const w = await weaveLayer(page);
+    assert.match(w.before, /repeating-linear-gradient/, `${motion}/${stored}: weave shown`);
+    assert.equal(w.beforeAnim, "none", `${motion}/${stored}: weave does not animate`);
+    assert.equal(w.after, "none", `${motion}/${stored}: no sheen layer`);
     await ctx.close();
   }
 });
 
 for (const scheme of ["light", "dark"]) {
-  test(`@effects flat ${scheme}: home has 0 axe violations; screenshot saved`, async () => {
-    const { ctx, page } = await open({ scheme, motion: "no-preference" });
-    await page.getByRole("textbox", { name: "Message" }).waitFor();
-    assert.deepEqual(await axeViolations(page), [], `home ${scheme}`);
-    fs.mkdirSync(SHOTS, { recursive: true });
-    await page.screenshot({ path: path.join(SHOTS, `flat-${scheme}.png`) });
-    await ctx.close();
-  });
+  for (const w of [1440, 390]) {
+    test(`@effects weave ${scheme} ${w}: home has 0 axe violations over the weave; screenshot saved`, async () => {
+      const { ctx, page } = await open({ scheme, w, motion: "no-preference" });
+      await page.getByRole("textbox", { name: "Message" }).waitFor();
+      assert.deepEqual(await axeViolations(page), [], `home ${scheme} ${w}`);
+      fs.mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(SHOTS, `weave-${scheme}-${w}.png`) });
+      await ctx.close();
+    });
+  }
 }
 
 // Live view for everyone: a run with a stream opens on the live view; dev mode off hides raw model detail.

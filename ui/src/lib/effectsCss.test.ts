@@ -30,11 +30,14 @@ describe("index.css effects gate", () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*::view-transition-group\(\*\)/);
   });
 
-  it("keeps the canvas flat: no pattern, shader, or drifting layer on the page background", () => {
-    expect(css).not.toMatch(/repeating-linear-gradient/);
-    expect(css).not.toMatch(/conic-gradient\(from 90deg/);
-    expect(css).not.toMatch(/body::(before|after)/);
-    expect(css).not.toMatch(/fx-sheen|--fx-weave|data-ambient/);
+  it("keeps the slanted weave on the canvas: static, with a light variant, and no shader, sheen or drifting layer", () => {
+    expect(css).toMatch(/body::before\s*\{[^}]*repeating-linear-gradient\(45deg[^}]*repeating-linear-gradient\(-45deg/s);
+    expect(css).toMatch(/:root\[data-theme="light"\]\s*\{\s*--fx-weave:/);
+    expect(css).toMatch(/prefers-color-scheme: light\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{\s*--fx-weave:/);
+    const weave = css.slice(css.indexOf("body::before"));
+    expect(weave.slice(0, weave.indexOf("}"))).not.toMatch(/animation/);
+    expect(css).not.toMatch(/body::after/);
+    expect(css).not.toMatch(/fx-sheen|data-ambient/);
   });
 
   it("has no decorative glow on the composer focus edge", () => {

@@ -49,11 +49,38 @@
 }
 
 /* ---- Effects -------------------------------------------------------------------------------
-   Everything decorative lives below (the background itself is flat; only state signals remain). Animations are declared only inside the "effects on" gate
+   Everything decorative lives below (the page background is the static weave; only state signals animate). Animations are declared only inside the "effects on" gate
    (no prefers-reduced-motion AND no html[data-effects="off"]), so the default state of every
    element is static and fully visible. Colours are the existing --sl-* tokens only. */
 
-/* The canvas is flat: one solid --sl-canvas token, no pattern, no shader, no drifting layer (DESIGN.md, 2026-11-10). */
+/* Carbon-fibre weave: two crossing diagonal hairlines plus a faint checker, on the canvas only
+   (cards and the sidebar stay opaque, so text never sits on the pattern). Dark is the default.
+   Static: it never animates, so reduced motion and Reduce effects leave it exactly as is. */
+:root {
+  --fx-weave: rgba(255, 255, 255, 0.06);
+  --fx-weave-2: rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] {
+  --fx-weave: rgba(0, 0, 0, 0.065);
+  --fx-weave-2: rgba(255, 255, 255, 0.7);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --fx-weave: rgba(0, 0, 0, 0.065);
+    --fx-weave-2: rgba(255, 255, 255, 0.7);
+  }
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(45deg, var(--fx-weave) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(-45deg, var(--fx-weave) 0 1px, transparent 1px 5px),
+    conic-gradient(from 90deg at 50% 50%, var(--fx-weave-2) 0 25%, transparent 0 50%, var(--fx-weave-2) 0 75%, transparent 0) 0 0 / 10px 10px;
+}
 
 @keyframes fx-word {
   from { opacity: 0; transform: translateY(2px); }

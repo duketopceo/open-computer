@@ -119,20 +119,24 @@ Flight Strip still governs the CLI, the approval TUI and the Developer area in S
   neither is accent. Above 60 steps the list is virtualized with measured rows. A new card slides in over 160 ms and the running
   line is static under reduced motion. The Dev trace switch under Operator asks before turning on, because it captures content.
 
-## Flat canvas (2026-11-10)
+## Calmer canvas, weave kept (2026-11-10)
 
-Luke found the background too loud. This section supersedes "Depth and texture, CSS only" (grain, glow, vignette) and the
-shader and weave in "Motion and depth (2026-11-08)" for the web console.
+Luke found the glow and the moving background too loud, then confirmed he likes the slanted weave. This section supersedes
+"Depth and texture, CSS only" (grain, glow, vignette) and the shader and sheen in "Motion and depth (2026-11-08)" for the web
+console. The weave stays exactly as it was.
 
-- **Canvas:** one solid `--sl-canvas` token. No pattern, no shader, no drifting layer, no gradient on the page background.
-  Cards and the sidebar stay opaque with 1 px hairline borders and the two card shadow tiers.
-- **Retired:** the WebGL ambient shader (`Ambient.tsx`, `lib/ambient.ts`, `vendor/threeui`), the carbon weave, the sheen,
+- **Canvas:** the `--sl-canvas` token with the static carbon-fibre weave on `body::before` (two crossing 45 degree hairlines plus
+  a faint checker; `--fx-weave` / `--fx-weave-2`, with a light-theme variant). It sits behind the canvas only; cards and the
+  sidebar stay opaque, so text never sits on the pattern. It never animates, so reduced motion and Reduce effects leave it as is.
+- **Retired:** the WebGL ambient shader (`Ambient.tsx`, `lib/ambient.ts`, `vendor/threeui`), the drifting sheen (`body::after`),
   and the glow on the composer focus edge (focus keeps a 1 px accent border).
-- **Kept:** the composer "working" ring (the owner's one ambient signal, static under reduced motion), step pulses while a run
-  works, View Transitions and the Motion timeline. Nothing animates while the page is idle.
-- **Budgets:** the `ambient` chunk budget is gone; the main chunk budget is unchanged.
+- **Kept:** the weave, the composer "working" ring (the owner's one ambient signal, static under reduced motion), step pulses
+  while a run works, View Transitions and the Motion timeline. Nothing animates while the page is idle.
+- **Checked:** axe (0 violations) over the weave in both themes at 390 and 1440 (`spa.e2e.mjs`, `@effects weave`); the weave
+  CSS is guarded in `ui/src/lib/effectsCss.test.ts`.
+- **Budgets:** the `ambient` chunk budget went with the shader (the weave is CSS, no JS); the main chunk budget is unchanged.
 
-## Motion and depth (2026-11-08, partly superseded by Flat canvas above)
+## Motion and depth (2026-11-08, shader and sheen superseded by the calmer canvas above)
 
 Signed off by Luke on 2026-11-08. This section amends "Depth and texture, CSS only" above for the web console. Flight Strip
 still governs the CLI, the approval TUI and Settings > Developer.
