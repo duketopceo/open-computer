@@ -12,6 +12,10 @@ export interface Seg {
 const BOX = "M2.5 2.5h11v11h-11z";
 const s = (d: string): Seg => ({ d });
 
+const SANDBOX = [s("M2.5 6V2.5h11v11h-11V10"), s("M2.5 8h4")];
+const DEVICE = [s("M3 3.5h10v7H3z"), s("M1.5 13h13")];
+const PAUSED = [s(BOX), s("M6 5.5v5"), s("M10 5.5v5")];
+
 export const ICONS = {
   // navigation
   chat: [s("M2.5 3.5h11v9h-11z"), s("M5 7h6"), s("M5 9.5h3.5")],
@@ -20,10 +24,10 @@ export const ICONS = {
   goals: [s(BOX), s("M6 6h4v4H6z")],
   automations: [s("M3 8V4h8.5"), s("M9.5 2l2.5 2-2.5 2"), s("M13 8v4H4.5"), s("M6.5 10l-2.5 2 2.5 2")],
   skills: [s("M9 2L4 9h4l-1 5 5-7H8z")],
-  sandboxes: [s("M2.5 6V2.5h11v11h-11V10"), s("M2.5 8h4")],
-  devices: [s("M3 3.5h10v7H3z"), s("M1.5 13h13")],
+  sandboxes: SANDBOX,
+  devices: DEVICE,
   runs: [s("M2 4h6"), s("M2 8h9"), s("M2 12h5"), s("M13 3v10")],
-  approvals: [s(BOX), s("M6 5.5v5"), s("M10 5.5v5")],
+  approvals: PAUSED,
   router: [s("M2 8h5"), s("M7 8l4-4h3"), s("M7 8l4 4h3")],
   audit: [s("M2.5 3.5h11"), s("M2.5 7h6"), s("M2.5 10.5h4"), s("M9 11.5l2 2 3.5-4")],
   workspace: [s(BOX), s("M7 2.5v11")],
@@ -51,8 +55,8 @@ export const ICONS = {
   thread: [s("M2.5 2.5v11"), s("M5.5 4h8"), s("M5.5 8h8"), s("M5.5 12h5")],
   run: [s(BOX), s("M6.5 5.5l4 2.5-4 2.5z")],
   step: [s("M5.5 5.5h5v5h-5z"), s("M8 2v3.5"), s("M8 10.5V14")],
-  sandbox: [s("M2.5 6V2.5h11v11h-11V10"), s("M2.5 8h4")],
-  device: [s("M3 3.5h10v7H3z"), s("M1.5 13h13")],
+  sandbox: SANDBOX,
+  device: DEVICE,
   connector: [s("M5.5 2.5v3.5"), s("M10.5 2.5v3.5"), s("M3.5 6h9v3.5h-9z"), s("M8 9.5v4")],
   artifact: [s("M3.5 2.5h6l3 3v8h-9z"), s("M9.5 2.5v3h3")],
   model: [s("M4.5 4.5h7v7h-7z"), s("M6.5 2v2.5"), s("M9.5 2v2.5"), s("M6.5 11.5V14"), s("M9.5 11.5V14"), s("M2 6.5h2.5"), s("M2 9.5h2.5"), s("M11.5 6.5H14"), s("M11.5 9.5H14")],
@@ -62,7 +66,7 @@ export const ICONS = {
   queued: [{ d: BOX, dash: "2.5 2" }],
   leased: [s(BOX), s("M5 8h6")],
   running: [s(BOX), { d: "M6 5l5 3-5 3z", fill: true }],
-  blocked: [s(BOX), s("M6 5.5v5"), s("M10 5.5v5")],
+  blocked: PAUSED,
   awaiting: [s(BOX), s("M5.5 4.5h5l-5 7h5z")],
   denied: [s(BOX), s("M5 5l6 6"), s("M11 5l-6 6")],
   done: [s(BOX), s("M5 8.5l2 2 4-5")],

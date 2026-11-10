@@ -25,9 +25,7 @@ describe("icon set", () => {
   it("keeps every coordinate inside the 16 grid", () => {
     for (const name of ICON_NAMES) {
       for (const seg of ICONS[name]) {
-        const nums = seg.d.match(/-?\d+(\.\d+)?/g)!.map(Number);
-        // relative commands (h v l lower case) carry deltas, so check the absolute pass below via a walk
-        expect(nums.length).toBeGreaterThan(0);
+        // relative commands (h v l) carry deltas, so walk the path and check every absolute position
         let x = 0, y = 0;
         const toks = seg.d.match(/[MmLlHhVvZz]|-?\d+(\.\d+)?/g)!;
         let cmd = "";

@@ -149,7 +149,7 @@ export function dispatch(store: Store, req: Req): unknown {
   for (const r of ROUTES) {
     if (r.method !== req.method) continue;
     const m = r.re.exec(req.path);
-    if (m) return r.run(req, store, m.slice(0));
+    if (m) return r.run(req, store, m);
   }
   throw new DemoError("Not part of the demo.", 404);
 }

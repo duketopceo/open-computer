@@ -1,4 +1,4 @@
-import { ICONS, type IconName } from "./paths";
+import { ICONS, type IconName, type Seg } from "./paths";
 
 export type { IconName };
 
@@ -15,7 +15,7 @@ export function Icon({
   title?: string;
   className?: string;
 }) {
-  const segs: readonly { d: string; fill?: boolean; dash?: string }[] = ICONS[name];
+  const segs: readonly Seg[] = ICONS[name];
   return (
     <svg
       width={size}

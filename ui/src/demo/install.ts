@@ -43,4 +43,3 @@ export function installDemo(): () => void {
 }
 
 export { DemoBanner } from "./DemoBanner";
-export { createStore };

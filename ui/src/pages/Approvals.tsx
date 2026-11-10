@@ -1,7 +1,7 @@
-import { Icon } from "@/components/icons/Icon";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PageShell } from "@/components/PageShell";
 import { DataState } from "@/components/DataState";
+import { Icon } from "@/components/icons/Icon";
 import { Empty, StatusWord, Time } from "@/components/DataTable";
 import { Button } from "@/components/primitives";
 import { approvalRisk, decideQueueItem, getApprovals, type ApprovalItem } from "@/lib/api";

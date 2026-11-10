@@ -3,6 +3,8 @@
 import type { ApprovalItem, AuditRow, RunDetail, RunSummary, TaskState, ThreadDetail, ThreadSummary } from "@/lib/api";
 import * as fx from "./fixtures";
 
+const nowSec = () => Math.floor(Date.now() / 1000);
+
 const STATES: TaskState[] = ["QUEUED", "LEASED", "RUNNING", "DONE", "FAILED", "AWAITING-APPROVAL"];
 
 export const SIMULATED_NOTE = "Demo: nothing was sent.";
@@ -11,7 +13,7 @@ export const REPLY =
   "This is the demo, so nothing ran and no model was called. In the real console this request would be planned, " +
   "routed to the cheapest model that fits, and run in a sandbox, with anything that leaves your machine held for your approval.";
 
-export function createStore(now: number = Math.floor(Date.now() / 1000)) {
+export function createStore(now: number = nowSec()) {
   const runs = fx.runs(now);
   const threads = fx.threads(now, runs);
   const approvals = fx.approvals(now);
@@ -48,16 +50,16 @@ export function createStore(now: number = Math.floor(Date.now() / 1000)) {
     finished: !t.working && !t.messages.some((m) => m.ask),
   });
   const log = (event: string, result: AuditRow["result"], detail: string) =>
-    audit.unshift({ ts: Math.floor(Date.now() / 1000), event, result, detail });
+    audit.unshift({ ts: nowSec(), event, result, detail });
 
   const reply = (id: string) => {
     const t = setTimeout(() => {
       timers.delete(t);
       const th = threads[id];
       if (!th) return;
-      th.messages.push({ role: "assistant", text: REPLY, ts: Math.floor(Date.now() / 1000) });
+      th.messages.push({ role: "assistant", text: REPLY, ts: nowSec() });
       th.working = false;
-      th.updated = Math.floor(Date.now() / 1000);
+      th.updated = nowSec();
     }, 1400);
     timers.add(t);
   };
@@ -88,7 +90,7 @@ export function createStore(now: number = Math.floor(Date.now() / 1000)) {
         .sort((a, b) => b.ts - a.ts),
     createThread(text: string): string {
       const id = `th_demo_new${++seq}`;
-      const ts = Math.floor(Date.now() / 1000);
+      const ts = nowSec();
       threads[id] = {
         id,
         title: text.slice(0, 48) || "New chat",
@@ -106,7 +108,7 @@ export function createStore(now: number = Math.floor(Date.now() / 1000)) {
     sendMessage(id: string, text: string) {
       const th = threads[id];
       if (!th) return false;
-      const ts = Math.floor(Date.now() / 1000);
+      const ts = nowSec();
       th.messages.push({ role: "user", text, ts });
       th.working = true;
       th.updated = ts;
@@ -116,15 +118,17 @@ export function createStore(now: number = Math.floor(Date.now() / 1000)) {
     decideApproval(id: string, verb: "approve" | "send-back"): ApprovalItem | null {
       const a = approvals.find((x) => x.id === id);
       if (!a || a.status !== "pending") return null;
-      a.status = verb === "approve" ? "approved" : "sent_back";
+      const approved = verb === "approve";
+      a.status = approved ? "approved" : "sent_back";
       a.decided_by = "demo@example.com";
-      a.decided_ts = Math.floor(Date.now() / 1000);
-      log("human_decision", verb === "approve" ? "approved" : "sent back", `${id} ${verb === "approve" ? "approved" : "sent back"}`);
+      a.decided_ts = nowSec();
+      const word = approved ? "approved" : "sent back";
+      log("human_decision", word, `${id} ${word}`);
       for (const r of Object.values(runs))
         for (const s of r.subtasks)
           if (s.approval === id) {
-            s.state = verb === "approve" ? "DONE" : "FAILED";
-            if (verb === "approve") s.result = "Approved in the demo; no model was called.";
+            s.state = approved ? "DONE" : "FAILED";
+            if (approved) s.result = "Approved in the demo; no model was called.";
             else s.error = "Sent back by the reviewer.";
             s.finished_ts = a.decided_ts;
           }
