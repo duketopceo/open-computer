@@ -244,7 +244,7 @@ export function Composer({
           autoFocus={autoFocus}
           placeholder={placeholder}
           aria-label="Message"
-          className="w-full resize-none border-0 bg-transparent p-2 text-[15px] leading-relaxed text-ink outline-none placeholder:text-muted"
+          className="w-full resize-none border-0 bg-transparent p-2 text-base leading-relaxed text-ink outline-none placeholder:text-muted"
         />
         <div className="flex flex-wrap items-start justify-between gap-2 px-1">
           <div className="min-w-0 flex-1 basis-full sm:basis-0">

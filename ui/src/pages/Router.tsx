@@ -65,7 +65,7 @@ export default function Router() {
       {data && (
         <div className="space-y-8">
           <section aria-labelledby="rt">
-            <h2 id="rt" className="font-display text-lg text-ink">
+            <h2 id="rt" className="font-semibold text-base text-ink">
               Route tester
             </h2>
             <p className="mt-1 text-sm text-muted">{dest}</p>
@@ -162,7 +162,7 @@ export default function Router() {
           </section>
 
           <section aria-labelledby="dl">
-            <h2 id="dl" className="mb-3 font-display text-lg text-ink">
+            <h2 id="dl" className="mb-3 font-semibold text-base text-ink">
               Decision ledger
             </h2>
             {data.ledger.length === 0 ? (

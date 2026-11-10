@@ -50,7 +50,7 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
   return (
     <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
       <header className={compact ? "mb-3" : "mb-6"}>
-        {!compact && <h1 className="font-display text-2xl leading-snug text-ink">{run.goal}</h1>}
+        {!compact && <h1 className="font-semibold text-xl leading-snug text-ink">{run.goal}</h1>}
         <div className={compact ? "flex flex-wrap items-center gap-2 text-xs" : "mt-3 flex flex-wrap items-center gap-2 text-xs"}>
           <StateWord state={planned ? "AWAITING-APPROVAL" : aggregate(states, active)} />
           <span className="mono text-muted">

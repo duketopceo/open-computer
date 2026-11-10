@@ -196,7 +196,7 @@ export function Timeline({ runId, goal, embedded = false }: { runId: string; goa
   return (
     <div>
       <header className={embedded ? "mb-4" : "mb-5"}>
-        {!embedded && <h1 className="font-display text-2xl leading-snug text-ink">{goal || run?.title || "Run timeline"}</h1>}
+        {!embedded && <h1 className="font-semibold text-xl leading-snug text-ink">{goal || run?.title || "Run timeline"}</h1>}
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           {run && live && <Dot state="RUNNING" />}
           <StateWord state={state} />

@@ -53,7 +53,7 @@ export default function Overview() {
 function Stat({ label, value, sub, href }: { label: string; value: string; sub?: string; href?: string }) {
   const inner = (
     <>
-      <p className="text-2xl font-semibold text-ink">{value}</p>
+      <p className="text-xl font-semibold text-ink">{value}</p>
       <p className="text-xs text-muted">
         {label}
         {sub ? ` · ${sub}` : ""}

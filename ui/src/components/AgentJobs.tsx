@@ -111,7 +111,7 @@ export function AgentJobs({
       <div role="status" aria-live="polite" className="sr-only">
         {announce}
       </div>
-      <h1 className="font-display text-2xl text-ink">Agent jobs</h1>
+      <h1 className="font-semibold text-xl text-ink">Agent jobs</h1>
       <p className="mt-1 mb-6 text-sm text-muted">
         Long-horizon jobs run by the orchestrator. Risky steps wait here for your decision.
       </p>
@@ -126,7 +126,7 @@ export function AgentJobs({
       />
 
       <section aria-labelledby="aj-list" className="mt-8">
-        <h2 id="aj-list" className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted">
+        <h2 id="aj-list" className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
           Jobs
         </h2>
         {jobsError ? (
@@ -159,7 +159,7 @@ export function AgentJobs({
                     </span>
                     <span className="mono text-muted">{rel(j.started)}</span>
                     {j.awaiting_approval && (
-                      <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold text-ink">
+                      <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-semibold text-ink">
                         awaiting approval
                       </span>
                     )}
@@ -352,7 +352,7 @@ function JobDetail({
   return (
     <div>
       <header className="mb-4">
-        <h2 className="font-display text-xl leading-snug text-ink">
+        <h2 className="font-semibold text-xl leading-snug text-ink">
           {detail.goal}
         </h2>
         <p className="mt-2 flex flex-wrap items-center gap-x-3 text-xs">
@@ -372,7 +372,7 @@ function JobDetail({
         </ul>
       )}
 
-      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted">Trail</h3>
+      <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">Trail</h3>
       {detail.events.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
           No events yet. The trail fills in as the job runs.

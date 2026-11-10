@@ -16,6 +16,16 @@ export function Brand() {
   );
 }
 
+/** The page heading: sentence-case sans 600 at 20 px (DESIGN.md), with an optional one-line purpose. */
+export function PageHeader({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <>
+      <h1 className="text-xl font-semibold text-ink">{title}</h1>
+      {sub ? <p className="mt-1 mb-6 max-w-2xl text-sm text-muted">{sub}</p> : <div className="mb-6" />}
+    </>
+  );
+}
+
 /** Chrome for every SPA page except `/` (which keeps its own run-focused layout). */
 export function PageShell({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
   const { path, search, navs } = useRouter();
@@ -59,7 +69,7 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
           <NavList items={NAV} />
         </div>
         {identity && (
-          <p className="truncate border-t border-line px-4 py-3 text-[11px] text-muted" title={identity}>
+          <p className="truncate border-t border-line px-4 py-3 text-xs text-muted" title={identity}>
             {identity}
           </p>
         )}
@@ -90,8 +100,7 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
         className="min-w-0 flex-1 overflow-y-auto px-4 py-6 focus:outline-none md:px-8 md:py-8"
       >
         <div className="mx-auto w-full max-w-5xl">
-          <h1 className="font-display text-2xl text-ink">{title}</h1>
-          {sub ? <p className="mt-1 mb-6 max-w-2xl text-sm text-muted">{sub}</p> : <div className="mb-6" />}
+          <PageHeader title={title} sub={sub} />
           {children}
         </div>
       </main>

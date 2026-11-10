@@ -222,7 +222,7 @@ export function Sidebar({
           <Icon name="approvals" /> Agent jobs
           {pending > 0 && (
             <span
-              className="ml-auto rounded-full bg-accent-soft px-1.5 text-[11px] font-semibold text-ink"
+              className="ml-auto rounded-full bg-accent-soft px-1.5 text-xs font-semibold text-ink"
               aria-label={`${pending} awaiting approval`}
             >
               {pending}
@@ -245,7 +245,7 @@ export function Sidebar({
         />
         {runs.length > 0 && (
           <details className="mt-3">
-            <summary className="cursor-pointer select-none px-4 text-[11px] font-medium uppercase tracking-wider text-muted hover:text-ink">
+            <summary className="cursor-pointer select-none px-4 text-xs font-medium uppercase tracking-wider text-muted hover:text-ink">
               Earlier runs ({runs.filter((r) => !r.archived).length})
             </summary>
             <Section
@@ -272,14 +272,14 @@ export function Sidebar({
             }
           }}
         >
-          <summary className="cursor-pointer select-none px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-muted hover:text-ink">
+          <summary className="cursor-pointer select-none px-2.5 py-1 text-xs font-medium uppercase tracking-wider text-muted hover:text-ink">
             Operator
           </summary>
           <NavList items={NAV.filter((n) => n.href !== "/")} label="Operator" />
           <DevSwitch />
         </details>
         {identity && (
-          <p className="mt-1 truncate px-2.5 text-[11px] text-muted" title={identity}>
+          <p className="mt-1 truncate px-2.5 text-xs text-muted" title={identity}>
             {identity}
           </p>
         )}
@@ -314,10 +314,10 @@ function Section({
   return (
     <section>
       <div className="flex h-5 items-center justify-between px-4">
-        {title ? <p className="text-[11px] font-medium uppercase tracking-wider text-muted">{title}</p> : <span />}
+        {title ? <p className="text-xs font-medium uppercase tracking-wider text-muted">{title}</p> : <span />}
         {removable > 0 &&
           (askClear ? (
-            <span className="flex items-center gap-2 text-[11px]">
+            <span className="flex items-center gap-2 text-xs">
               <button
                 onClick={() => {
                   setAskClear(false);
@@ -332,7 +332,7 @@ function Section({
               </button>
             </span>
           ) : (
-            <button onClick={() => setAskClear(true)} className="text-[11px] text-muted hover:text-ink">
+            <button onClick={() => setAskClear(true)} className="text-xs text-muted hover:text-ink">
               Clear finished
             </button>
           ))}
@@ -341,7 +341,7 @@ function Section({
         {live.length === 0 ? <p className="px-2.5 py-2 text-xs text-muted">{empty}</p> : live.map(row)}
         {archived.length > 0 && (
           <details className="mt-2">
-            <summary className="cursor-pointer select-none px-2.5 py-1 text-[11px] text-muted hover:text-ink">
+            <summary className="cursor-pointer select-none px-2.5 py-1 text-xs text-muted hover:text-ink">
               Archived ({archived.length})
             </summary>
             {archived.map(row)}
@@ -369,7 +369,7 @@ function Row({
   const [ask, setAsk] = useState(false);
   if (ask) {
     return (
-      <div className="mb-0.5 flex items-center justify-between gap-2 rounded-lg bg-surface-3 px-2.5 py-2 text-[13px]">
+      <div className="mb-0.5 flex items-center justify-between gap-2 rounded-lg bg-surface-3 px-2.5 py-2 text-t13">
         <span className="truncate text-ink">Delete this?</span>
         <span className="flex shrink-0 items-center gap-2">
           <button
@@ -391,8 +391,8 @@ function Row({
   return (
     <div className={cn("group relative mb-0.5 rounded-lg transition-colors", active ? "bg-accent-soft text-accent" : "text-ink hover:bg-surface-3")}>
       <button onClick={() => onSelect(item.id)} className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left">
-        <span className={cn("truncate text-[13px]", item.archived && "text-muted")}>{item.label}</span>
-        <span className="mono shrink-0 text-[10px] text-muted group-focus-within:invisible group-hover:invisible">{rel(item.ts)}</span>
+        <span className={cn("truncate text-t13", item.archived && "text-muted")}>{item.label}</span>
+        <span className="mono shrink-0 text-xs text-muted group-focus-within:invisible group-hover:invisible">{rel(item.ts)}</span>
       </button>
       <span className="absolute inset-y-0 right-1 hidden items-center gap-0.5 group-focus-within:flex group-hover:flex">
         <IconButton label={item.archived ? "Restore" : "Archive"} icon="archive" onClick={() => onArchive(item.id, !item.archived)} />

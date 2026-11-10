@@ -19,6 +19,12 @@
   ::selection {
     @apply bg-accent-soft;
   }
+  /* One visible focus indicator for everything focusable; components with their own ring (focus-visible:ring-2)
+     draw that instead. Accent against canvas and surfaces is at least 3:1 in both themes (palette.test.ts). */
+  :focus-visible {
+    outline: 2px solid var(--sl-accent);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
@@ -26,7 +32,7 @@
     @apply font-mono text-[12px] tracking-tight;
   }
   .state-word {
-    @apply inline-flex items-center rounded-full border border-line bg-surface-1 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted;
+    @apply inline-flex items-center rounded-full border border-line bg-surface-1 px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted;
   }
 }
 

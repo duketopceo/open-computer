@@ -68,7 +68,7 @@ export function EffortPicker({
                     "peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
                   )}
                 >
-                  <span aria-hidden className="text-[9px]">
+                  <span aria-hidden className="text-xs">
                     {l.id === level.id ? "●" : "○"}
                   </span>
                   {l.label}

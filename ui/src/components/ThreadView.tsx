@@ -121,7 +121,7 @@ function Message({
 }) {
   if (m.role === "user") {
     return (
-      <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl bg-surface-3 px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+      <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl bg-surface-3 px-4 py-2.5 text-base leading-relaxed text-ink">
         {m.text}
       </p>
     );
@@ -139,7 +139,7 @@ function Message({
   return (
     <p
       className={cn(
-        "max-w-[85%] whitespace-pre-wrap text-[15px] leading-relaxed",
+        "max-w-[85%] whitespace-pre-wrap text-base leading-relaxed",
         m.error ? "text-urgent" : "text-ink",
       )}
     >
