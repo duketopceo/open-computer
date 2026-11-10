@@ -177,3 +177,15 @@ themes stay Silver Lining's.
   ambient "working" signal. Reduced motion and Reduce effects keep the ring and halo, static.
 - **Checked:** `ui/src/lib/palette.test.ts` holds accent and inks at 4.5:1 or more on canvas, surface-1 and surface-3, and
   on-accent at 4.5:1 or more on the accent, in both themes. Axe runs in e2e.
+
+## Icons, baseline and demo (2026-11-10)
+
+- **Icons:** one original set of 51 on a 16 grid, square caps, 1.5 px stroke, `currentColor` (`ui/src/components/icons/`, sheet in
+  `assets/brand/icons.svg`). Navigation, actions, entities and the step-state glyphs (the six in `glyphs.svg` plus awaiting,
+  failed, skipped). No stock pack. An icon is paired with a word or carries an accessible name.
+- **Type and space:** the scale is exactly 12 / 13 / 14 / 16 / 20 / 28 (Tailwind `fontSize` is that and nothing else); headings are
+  sans 600. Form controls, filters, rail buttons and disclosure rows are at least 40 px tall on a phone.
+- **Focus and keyboard:** one global `:focus-visible` outline (2 px accent, 2 px offset); a skip link on every page; Escape closes
+  what it opened. Loading is a static skeleton plus the word "Loading"; empty and error states are explicit and error has Retry.
+- **Demo:** a fixtures-only build (`build:demo`) with a permanent banner. It is a different artifact from the real console, never a
+  mode of it. See `docs/runbooks/demo-deploy.md`.

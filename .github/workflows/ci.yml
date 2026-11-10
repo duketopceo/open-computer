@@ -53,6 +53,8 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm test
           pnpm build
+          pnpm build:demo
+          pnpm check:demo
       - name: install playwright + axe (lockfile)
         working-directory: tests/e2e
         run: |
