@@ -284,9 +284,9 @@ function SkippedRow({ s, why }: { s: SubTask; why: string }) {
         <span aria-hidden="true" className="inline-block h-2 w-2 rounded-sm border border-dashed border-muted" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="truncate text-sm font-medium text-muted">{s.title || s.subtask}</p>
-          <span className="mono shrink-0 text-muted">{why}</span>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0 break-words text-sm font-medium text-muted md:truncate">{s.title || s.subtask}</p>
+          <span className="mono text-muted">{why}</span>
         </div>
       </div>
     </li>
