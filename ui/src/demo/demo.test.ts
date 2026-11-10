@@ -136,9 +136,10 @@ describe("fixtures", () => {
       fx.session(), fx.account(), fx.effort(), fx.runtime(), fx.runs(1), fx.approvals(1), fx.audit(1), fx.devices(1), fx.sandboxes(),
       fx.router(1), fx.skills(), fx.automations(1), fx.connectors(), fx.jobs(1),
     ]);
-    for (const bad of [/sk-[A-Za-z0-9]{8}/, /ghp_/, /AKIA[0-9A-Z]{8}/, /Bearer\s/i, /-----BEGIN/, /@gmail\.|@kimball|duketopceo|shippedit|luke/i]) {
+    for (const bad of [/sk-[A-Za-z0-9]{8}/, /ghp_/, /AKIA[0-9A-Z]{8}/, /Bearer\s/i, /-----BEGIN/, /@gmail\./i]) {
       expect(blob).not.toMatch(bad);
     }
+    for (const email of blob.match(/[\w.+-]+@[\w.-]+/g) ?? []) expect(email, "only example addresses").toMatch(/@example\.(com|test)$/);
     for (const host of blob.match(/https?:\/\/[^"\s]+|\b[\w-]+\.(?:test|invalid|example\.\w+)\b/g) ?? []) {
       expect(host).toMatch(/\.(test|invalid)$|example/);
     }
