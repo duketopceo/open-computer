@@ -47,10 +47,31 @@ function Routes() {
   return m ? m.route.page(m.params) : <NotFound />;
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <RouterProvider>
-      <Routes />
-    </RouterProvider>
-  </StrictMode>,
-);
+async function boot() {
+  // Demo build only: install the fixtures transport (and the banner) before the first render. `__OC_DEMO__` is a build-time
+  // constant, so this whole branch and the demo chunk are absent from the normal bundle.
+  let Banner: (() => JSX.Element) | null = null;
+  if (__OC_DEMO__) {
+    const demo = await import("./demo/install");
+    demo.installDemo();
+    Banner = demo.DemoBanner;
+  }
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <RouterProvider>
+        {Banner ? (
+          <div className="flex h-full flex-col">
+            <Banner />
+            <div className="min-h-0 flex-1">
+              <Routes />
+            </div>
+          </div>
+        ) : (
+          <Routes />
+        )}
+      </RouterProvider>
+    </StrictMode>,
+  );
+}
+
+void boot();

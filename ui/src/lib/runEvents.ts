@@ -276,7 +276,7 @@ export interface EventsReply {
 export const getRunEvents = (run: string, after: number) =>
   json<EventsReply>(`/api/runs/${encodeURIComponent(run)}/events?after=${after}`);
 
-export const exportUrl = (run: string) => `/api/runs/${encodeURIComponent(run)}/events.jsonl`;
+export const exportUrl = (run: string) => (__OC_DEMO__ ? "#demo-unavailable" : `/api/runs/${encodeURIComponent(run)}/events.jsonl`);
 
 /** True when the run has a stream. The cursor is past any real seq (the API clamps it), so the
  *  probe returns no events: 200 means a stream exists, 404 means dev trace was off. */

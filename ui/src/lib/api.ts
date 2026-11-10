@@ -151,10 +151,21 @@ export function errorMessage(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
+/** The one door to the network. The normal build uses `fetch`; the demo build (`__OC_DEMO__`) starts with a stub that
+ *  refuses everything and is replaced by the fixtures transport before the first render, so it can never fall back to a
+ *  real request. */
+export type Transport = (url: string, init?: RequestInit) => Promise<Response>;
+let transport: Transport = __OC_DEMO__
+  ? () => Promise.reject(new ApiError("Not part of the demo.", "client", 404))
+  : (url, init) => fetch(url, init);
+export function setTransport(t: Transport): void {
+  transport = t;
+}
+
 async function request(url: string, init?: RequestInit): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await transport(url, {
       ...init,
       credentials: "same-origin",
       headers: { Accept: "application/json", ...(init?.headers ?? {}) },
@@ -333,11 +344,13 @@ export interface ArtifactItem {
 export const getArtifacts = async (id: string) =>
   (await json<{ artifacts?: ArtifactItem[] }>(`/api/runs/${encodeURIComponent(id)}/artifacts`)).artifacts ?? [];
 export const artifactUrl = (id: string, name: string, download = false) =>
-  name === "files.zip"
+  __OC_DEMO__
+    ? "#demo-unavailable"
+    : name === "files.zip"
     ? `/api/runs/${encodeURIComponent(id)}/artifacts.zip`
     : `/api/runs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(name)}${download ? "?download=1" : ""}`;
 export async function getArtifactText(id: string, name: string): Promise<string> {
-  const r = await fetch(artifactUrl(id, name), { credentials: "same-origin" });
+  const r = await transport(artifactUrl(id, name), { credentials: "same-origin" });
   if (!r.ok) throw new ApiError("file unavailable", "client", r.status);
   return r.text();
 }
