@@ -3,6 +3,7 @@ import { ApiError, errorMessage, getEffort, transcribe, voiceStatus, type GoalOp
 import { cn } from "@/lib/cn";
 import { useFetch } from "@/lib/useFetch";
 import { EffortPicker, toOptions, type EffortChoice } from "./EffortPicker";
+import { Icon } from "./icons/Icon";
 import { Button } from "./primitives";
 
 type RecState = "idle" | "probing" | "starting" | "recording" | "transcribing";
@@ -216,7 +217,7 @@ export function Composer({
       {rec === "transcribing" || rec === "probing" || rec === "starting" ? (
         <span className="h-3 w-3 animate-pulse rounded-full border border-line-strong" />
       ) : (
-        <MicIcon />
+        <Icon name="mic" />
       )}
     </button>
   );
@@ -261,6 +262,7 @@ export function Composer({
             )}
           </div>
           <Button variant="primary" className="ml-auto" disabled={!canRun} aria-busy={busy} onClick={run}>
+            <Icon name="send" />
             {busy ? "Sending…" : rec === "recording" ? "Listening…" : "Send"}
           </Button>
         </div>
@@ -282,25 +284,5 @@ export function Composer({
         </p>
       )}
     </div>
-  );
-}
-
-function MicIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M19 11a7 7 0 0 1-14 0M12 18v3"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-      />
-    </svg>
   );
 }

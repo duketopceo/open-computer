@@ -5,6 +5,7 @@ import { setDevTrace, useDevTrace } from "@/lib/devmode";
 import { rel } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { NAV } from "@/lib/nav";
+import { Icon, type IconName } from "./icons/Icon";
 import { NavList } from "./NavList";
 import { Brand } from "./PageShell";
 
@@ -167,10 +168,7 @@ export function Sidebar({
       title={`${collapsed ? "Expand" : "Collapse"} sidebar (Ctrl+B)`}
       className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-3 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
-        <path d="M9.5 4.5v15" />
-      </svg>
+      <Icon name="workspace" />
     </button>
   );
 
@@ -179,10 +177,10 @@ export function Sidebar({
       <aside id="app-sidebar" aria-label="Sidebar" data-collapsed="true" className="flex h-full w-14 shrink-0 flex-col items-center gap-1 border-r border-line bg-surface-1 py-3">
         <div className="mb-2">{toggle}</div>
         <RailButton label="New chat" active={fresh} onClick={() => onSelect("")}>
-          <PlusIcon />
+          <Icon name="plus" />
         </RailButton>
         <RailButton label="Agent jobs" active={view === "agents"} badge={pending} aria-current={view === "agents" ? "page" : undefined} onClick={onAgents}>
-          <CmdIcon />
+          <Icon name="approvals" />
         </RailButton>
       </aside>
     );
@@ -208,7 +206,7 @@ export function Sidebar({
             fresh ? "bg-accent-soft text-accent" : "text-ink hover:bg-surface-3",
           )}
         >
-          <PlusIcon /> New chat
+          <Icon name="plus" /> New chat
         </button>
         <button
           onClick={() => {
@@ -221,7 +219,7 @@ export function Sidebar({
             view === "agents" ? "bg-accent-soft text-accent" : "text-ink hover:bg-surface-3",
           )}
         >
-          <CmdIcon /> Agent jobs
+          <Icon name="approvals" /> Agent jobs
           {pending > 0 && (
             <span
               className="ml-auto rounded-full bg-accent-soft px-1.5 text-[11px] font-semibold text-ink"
@@ -397,20 +395,16 @@ function Row({
         <span className="mono shrink-0 text-[10px] text-muted group-focus-within:invisible group-hover:invisible">{rel(item.ts)}</span>
       </button>
       <span className="absolute inset-y-0 right-1 hidden items-center gap-0.5 group-focus-within:flex group-hover:flex">
-        <IconButton label={item.archived ? "Restore" : "Archive"} onClick={() => onArchive(item.id, !item.archived)}>
-          <path d="M4 7h16v3H4zM6 10v8h12v-8M10 14h4" />
-        </IconButton>
+        <IconButton label={item.archived ? "Restore" : "Archive"} icon="archive" onClick={() => onArchive(item.id, !item.archived)} />
         {item.removable && (
-          <IconButton label="Delete" onClick={() => setAsk(true)}>
-            <path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" />
-          </IconButton>
+          <IconButton label="Delete" icon="delete" onClick={() => setAsk(true)} />
         )}
       </span>
     </div>
   );
 }
 
-function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+function IconButton({ label, onClick, icon }: { label: string; onClick: () => void; icon: IconName }) {
   return (
     <button
       onClick={onClick}
@@ -418,27 +412,8 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
       title={label}
       className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-surface-4 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        {children}
-      </svg>
+      <Icon name={icon} />
     </button>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
-function CmdIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.6" />
-      <circle cx="12" cy="12" r="3.5" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
   );
 }
 

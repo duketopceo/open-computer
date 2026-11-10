@@ -33,3 +33,10 @@ Mark at 32 units plus wordmark scaled 1.5, 12 units gap.
 ## Colour
 
 Light: ink `#14181B`, accent `#B4400A`. Dark: ink `#E9ECEE`, accent `#FFB020`. See `DESIGN.md` for contrast ratios.
+
+## Icon set (`icons.svg`, `icons-dark.svg`)
+
+Fifty-one original icons on a 16 grid: straight segments only, square caps, 1.5 px stroke, `currentColor`.
+Navigation, actions, entities and the subtask-state glyphs (the six in `glyphs.svg` plus awaiting, failed and skipped).
+The source of truth is `ui/src/components/icons/paths.ts`; the sheets are generated with
+`node ui/scripts/icon-sheet.mjs` and a unit test fails if they drift. No stock pack and no third-party marks.
