@@ -119,7 +119,20 @@ Flight Strip still governs the CLI, the approval TUI and the Developer area in S
   neither is accent. Above 60 steps the list is virtualized with measured rows. A new card slides in over 160 ms and the running
   line is static under reduced motion. The Dev trace switch under Operator asks before turning on, because it captures content.
 
-## Motion and depth (2026-11-08)
+## Flat canvas (2026-11-10)
+
+Luke found the background too loud. This section supersedes "Depth and texture, CSS only" (grain, glow, vignette) and the
+shader and weave in "Motion and depth (2026-11-08)" for the web console.
+
+- **Canvas:** one solid `--sl-canvas` token. No pattern, no shader, no drifting layer, no gradient on the page background.
+  Cards and the sidebar stay opaque with 1 px hairline borders and the two card shadow tiers.
+- **Retired:** the WebGL ambient shader (`Ambient.tsx`, `lib/ambient.ts`, `vendor/threeui`), the carbon weave, the sheen,
+  and the glow on the composer focus edge (focus keeps a 1 px accent border).
+- **Kept:** the composer "working" ring (the owner's one ambient signal, static under reduced motion), step pulses while a run
+  works, View Transitions and the Motion timeline. Nothing animates while the page is idle.
+- **Budgets:** the `ambient` chunk budget is gone; the main chunk budget is unchanged.
+
+## Motion and depth (2026-11-08, partly superseded by Flat canvas above)
 
 Signed off by Luke on 2026-11-08. This section amends "Depth and texture, CSS only" above for the web console. Flight Strip
 still governs the CLI, the approval TUI and Settings > Developer.

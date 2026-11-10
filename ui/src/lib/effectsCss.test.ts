@@ -29,4 +29,16 @@ describe("index.css effects gate", () => {
     expect(css).toMatch(/html\[data-effects="off"\]::view-transition-old\(\*\)/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*::view-transition-group\(\*\)/);
   });
+
+  it("keeps the canvas flat: no pattern, shader, or drifting layer on the page background", () => {
+    expect(css).not.toMatch(/repeating-linear-gradient/);
+    expect(css).not.toMatch(/conic-gradient\(from 90deg/);
+    expect(css).not.toMatch(/body::(before|after)/);
+    expect(css).not.toMatch(/fx-sheen|--fx-weave|data-ambient/);
+  });
+
+  it("has no decorative glow on the composer focus edge", () => {
+    const focus = css.slice(css.indexOf(".fx-edge:focus-within"));
+    expect(focus.slice(0, focus.indexOf("}"))).not.toMatch(/box-shadow:[^;]*,|box-shadow:\s*0 0 [2-9]\d*px|-\d+px\s+var/);
+  });
 });

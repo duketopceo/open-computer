@@ -31,66 +31,19 @@
 }
 
 /* ---- Effects -------------------------------------------------------------------------------
-   Everything decorative lives below. Animations are declared only inside the "effects on" gate
+   Everything decorative lives below (the background itself is flat; only state signals remain). Animations are declared only inside the "effects on" gate
    (no prefers-reduced-motion AND no html[data-effects="off"]), so the default state of every
    element is static and fully visible. Colours are the existing --sl-* tokens only. */
 
-/* Carbon-fibre weave: two crossing diagonal hairlines plus a faint checker, on the canvas only
-   (cards and the sidebar stay opaque, so text never sits on the pattern). Dark is the default. */
-:root {
-  --fx-weave: rgba(255, 255, 255, 0.06);
-  --fx-weave-2: rgba(0, 0, 0, 0.35);
-  --fx-sheen: rgba(255, 255, 255, 0.05);
-}
-:root[data-theme="light"] {
-  --fx-weave: rgba(0, 0, 0, 0.065);
-  --fx-weave-2: rgba(255, 255, 255, 0.7);
-  --fx-sheen: rgba(255, 255, 255, 0.9);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    --fx-weave: rgba(0, 0, 0, 0.065);
-    --fx-weave-2: rgba(255, 255, 255, 0.7);
-    --fx-sheen: rgba(255, 255, 255, 0.9);
-  }
-}
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-}
-body::before {
-  background:
-    repeating-linear-gradient(45deg, var(--fx-weave) 0 1px, transparent 1px 5px),
-    repeating-linear-gradient(-45deg, var(--fx-weave) 0 1px, transparent 1px 5px),
-    conic-gradient(from 90deg at 50% 50%, var(--fx-weave-2) 0 25%, transparent 0 50%, var(--fx-weave-2) 0 75%, transparent 0) 0 0 / 10px 10px;
-}
-/* While the ambient shader draws (components/Ambient.tsx), it replaces the weave; the weave is the fallback. */
-html[data-ambient="on"] body::before {
-  display: none;
-}
-/* The sheen: one wide soft band that drifts across the weave very slowly. */
-body::after {
-  inset: -10% -60%;
-  background: linear-gradient(100deg, transparent 42%, var(--fx-sheen) 50%, transparent 58%);
-  opacity: 0;
-}
+/* The canvas is flat: one solid --sl-canvas token, no pattern, no shader, no drifting layer (DESIGN.md, 2026-11-10). */
 
-@keyframes fx-sheen {
-  0% { transform: translateX(-30%); opacity: 0; }
-  15%, 85% { opacity: 1; }
-  100% { transform: translateX(30%); opacity: 0; }
-}
 @keyframes fx-word {
   from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: none; }
 }
 @keyframes fx-edge {
-  0% { border-color: var(--sl-accent); box-shadow: 0 0 0 1px var(--sl-accent), 0 0 22px 0 var(--sl-accent-soft); }
-  100% { border-color: var(--sl-lining); box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+  0% { border-color: var(--sl-accent); }
+  100% { border-color: var(--sl-lining); }
 }
 @keyframes fx-pulse {
   0%, 100% { opacity: 1; }
@@ -105,10 +58,10 @@ body::after {
   100% { transform: none; }
 }
 
-/* Focus inside the composer or a run card tints the edge with the accent (static, always on). */
+/* Focus inside the composer or a run card tints the edge with a 1 px accent border (static, always on). */
 .fx-edge:focus-within {
   border-color: var(--sl-accent);
-  box-shadow: 0 0 0 1px var(--sl-accent), 0 0 18px -4px var(--sl-accent-soft);
+  box-shadow: 0 0 0 1px var(--sl-accent);
 }
 
 /* While the chat's run works, an accent arc sweeps the composer edge with a soft halo behind it (Luke likes this one:
@@ -163,9 +116,6 @@ html[data-effects="off"]::view-transition-new(*) {
 @media (prefers-reduced-motion: no-preference) {
   html:not([data-effects="off"]) .fx-working::before {
     animation: fx-sweep 2.4s linear infinite;
-  }
-  html:not([data-effects="off"]) body::after {
-    animation: fx-sheen 70s ease-in-out infinite;
   }
   html:not([data-effects="off"]) .fx-word {
     animation: fx-word 0.4s ease-out both;
