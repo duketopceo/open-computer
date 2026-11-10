@@ -1,3 +1,4 @@
+import { Icon } from "@/components/icons/Icon";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PageShell } from "@/components/PageShell";
 import { DataState } from "@/components/DataState";
@@ -91,7 +92,7 @@ function useApprovalChords(count: number, cur: number, setSel: (n: number) => vo
 }
 
 const RISK_STYLE = { high: "text-urgent", elevated: "text-attention", low: "text-accent" } as const;
-const RISK_GLYPH = { high: "✕", elevated: "▲", low: "✓" } as const;
+const RISK_GLYPH = { high: "denied", elevated: "awaiting", low: "done" } as const;
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -171,7 +172,7 @@ function Card({
         <Fact label="Estimated cost">{price}</Fact>
         <Fact label="Risk">
           <span className={RISK_STYLE[risk.level]}>
-            <span aria-hidden>{RISK_GLYPH[risk.level]}</span> {risk.level[0].toUpperCase() + risk.level.slice(1)} risk
+            <Icon name={RISK_GLYPH[risk.level]} /> {risk.level[0].toUpperCase() + risk.level.slice(1)} risk
           </span>
           <span className="block text-xs text-muted">{risk.why}</span>
         </Fact>

@@ -166,7 +166,7 @@ export function Sidebar({
       aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       aria-keyshortcuts="Control+B Meta+B"
       title={`${collapsed ? "Expand" : "Collapse"} sidebar (Ctrl+B)`}
-      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-3 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      className="inline-flex h-8 w-8 max-md:h-10 max-md:w-10 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-3 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <Icon name="workspace" />
     </button>
@@ -392,9 +392,9 @@ function Row({
     <div className={cn("group relative mb-0.5 rounded-lg transition-colors", active ? "bg-accent-soft text-accent" : "text-ink hover:bg-surface-3")}>
       <button onClick={() => onSelect(item.id)} className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left">
         <span className={cn("truncate text-t13", item.archived && "text-muted")}>{item.label}</span>
-        <span className="mono shrink-0 text-xs text-muted group-focus-within:invisible group-hover:invisible">{rel(item.ts)}</span>
+        <span className="mono shrink-0 text-xs text-muted group-focus-within:invisible group-hover:invisible max-md:hidden">{rel(item.ts)}</span>
       </button>
-      <span className="absolute inset-y-0 right-1 hidden items-center gap-0.5 group-focus-within:flex group-hover:flex">
+      <span className="absolute inset-y-0 right-1 hidden items-center gap-0.5 group-focus-within:flex group-hover:flex max-md:flex">
         <IconButton label={item.archived ? "Restore" : "Archive"} icon="archive" onClick={() => onArchive(item.id, !item.archived)} />
         {item.removable && (
           <IconButton label="Delete" icon="delete" onClick={() => setAsk(true)} />
@@ -410,7 +410,7 @@ function IconButton({ label, onClick, icon }: { label: string; onClick: () => vo
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-surface-4 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      className="inline-flex h-6 w-6 max-md:h-9 max-md:w-9 items-center justify-center rounded-md text-muted hover:bg-surface-4 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <Icon name={icon} />
     </button>

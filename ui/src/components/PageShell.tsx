@@ -82,7 +82,7 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
           aria-expanded={open}
           aria-controls="mobile-nav"
           onClick={() => setOpen((o) => !o)}
-          className="h-9 rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="h-10 min-w-[44px] rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           {open ? "Close menu" : "Menu"}
         </button>

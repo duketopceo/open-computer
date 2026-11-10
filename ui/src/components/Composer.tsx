@@ -210,7 +210,7 @@ export function Composer({
       aria-label={rec === "recording" ? "Stop recording" : "Dictate"}
       title="Dictate (Groq LPU)"
       className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+        "inline-flex h-8 w-8 max-md:h-10 max-md:w-10 items-center justify-center rounded-full transition-colors",
         rec === "recording" ? "bg-urgent text-on-accent" : "text-muted hover:bg-surface-3",
       )}
     >

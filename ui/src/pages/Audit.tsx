@@ -43,7 +43,7 @@ export default function Audit() {
               href={href(k, q)}
               aria-current={k === f ? "true" : undefined}
               className={cn(
-                "inline-flex h-7 items-center rounded-full border px-3 text-xs font-medium",
+                "inline-flex h-7 items-center rounded-full border px-3 text-xs font-medium max-md:h-10",
                 k === f ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:bg-surface-3",
               )}
             >

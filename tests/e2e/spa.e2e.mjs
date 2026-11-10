@@ -2060,11 +2060,11 @@ test("@effects reduced motion and the switch each leave no running animations; e
   assert.deepEqual(await run("reduce"), [], "prefers-reduced-motion: no running animations");
   assert.deepEqual(await run("no-preference", "off"), [], "switch off: no running animations");
   const on = await run("no-preference");
-  for (const n of ["fx-sheen", "fx-pulse", "fx-edge-run"]) assert.ok(on.includes(n), `effects on: ${n} runs (${on})`);
+  for (const n of ["fx-pulse", "fx-edge-run"]) assert.ok(on.includes(n), `effects on: ${n} runs (${on})`);
 });
 
 for (const scheme of ["light", "dark"]) {
-  test(`@effects ${scheme}: weave and running timeline have 0 axe violations; screenshot saved`, async () => {
+  test(`@effects ${scheme}: running timeline has 0 axe violations; screenshot saved`, async () => {
     const s = liveStream();
     const routes = timelineRoutes(() => s.events, { finished: () => false });
     const { ctx, page } = await open({ routes, path: TL, scheme, motion: "no-preference" });
@@ -2076,58 +2076,28 @@ for (const scheme of ["light", "dark"]) {
   });
 }
 
-// Ambient shader (components/Ambient.tsx): draws only when motion is allowed, replaces the weave while it draws,
-// and is never there under reduced motion or Reduce effects. Headless Chromium has WebGL through SwiftShader.
-const weaveShown = (page) => page.evaluate(() => getComputedStyle(document.body, "::before").display !== "none");
-
-test("@effects ambient: motion allowed draws the shader in place of the weave; reduced motion and the switch keep the weave", async () => {
-  {
-    const { ctx, page } = await open({ motion: "no-preference" });
-    await page.locator("html[data-ambient=on]").waitFor({ state: "attached" });
-    assert.equal(await page.getByTestId("ambient").count(), 1);
-    assert.equal(await page.getByTestId("ambient").getAttribute("aria-hidden"), "true");
-    assert.equal(await weaveShown(page), false, "the shader replaces the weave");
-    // the shader sits behind everything and never takes a click
-    assert.equal(await page.getByTestId("ambient").evaluate((c) => getComputedStyle(c).pointerEvents), "none");
-    await page.getByRole("textbox", { name: "Message" }).click();
-    await ctx.close();
-  }
-  for (const [motion, stored] of [["reduce", undefined], ["no-preference", "off"]]) {
+// Flat canvas (DESIGN.md, 2026-11-10): the page background is one solid token. No shader canvas, no pattern layer.
+test("@effects flat canvas: no shader, no pattern or drifting layer, on any motion setting", async () => {
+  for (const [motion, stored] of [["no-preference", undefined], ["reduce", undefined], ["no-preference", "off"]]) {
     const { ctx, page } = await open({ motion, setup: stored ? (p) => p.addInitScript((v) => localStorage.setItem("oc-effects", v), stored) : undefined });
     await page.getByRole("textbox", { name: "Message" }).waitFor();
     assert.equal(await page.getByTestId("ambient").count(), 0, `${motion}/${stored}: no canvas`);
     assert.equal(await page.locator("html").getAttribute("data-ambient"), null);
-    assert.equal(await weaveShown(page), true, `${motion}/${stored}: weave stays`);
+    const layers = await page.evaluate(() => ["::before", "::after"].map((p) => getComputedStyle(document.body, p).content));
+    assert.deepEqual(layers, ["none", "none"], `${motion}/${stored}: no body pseudo-element layers`);
+    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
+    assert.equal(bg, "none", "the body background is a flat colour");
     await ctx.close();
   }
 });
 
-test("@effects ambient: turning Reduce effects on stops the shader and brings the weave back", async () => {
-  const { ctx, page } = await open({ path: "/settings", motion: "no-preference" });
-  await page.locator("html[data-ambient=on]").waitFor({ state: "attached" });
-  await page.getByRole("checkbox", { name: /Reduce effects/ }).check();
-  await page.waitForFunction(() => !document.documentElement.hasAttribute("data-ambient"));
-  assert.equal(await page.getByTestId("ambient").count(), 0);
-  assert.equal(await weaveShown(page), true);
-  await ctx.close();
-});
-
-test("@effects ambient: nothing moves on the approvals page", async () => {
-  const { ctx, page } = await open({ path: "/approvals", motion: "no-preference" });
-  await page.locator("main").first().waitFor();
-  assert.equal(await page.getByTestId("ambient").count(), 0);
-  assert.equal(await page.locator("html").getAttribute("data-ambient"), null);
-  await ctx.close();
-});
-
 for (const scheme of ["light", "dark"]) {
-  test(`@effects ambient ${scheme}: 0 axe violations with the shader on; screenshot saved`, async () => {
+  test(`@effects flat ${scheme}: home has 0 axe violations; screenshot saved`, async () => {
     const { ctx, page } = await open({ scheme, motion: "no-preference" });
-    await page.locator("html[data-ambient=on]").waitFor({ state: "attached" });
-    await page.waitForTimeout(400); // a few frames so the screenshot shows the field
+    await page.getByRole("textbox", { name: "Message" }).waitFor();
     assert.deepEqual(await axeViolations(page), [], `home ${scheme}`);
     fs.mkdirSync(SHOTS, { recursive: true });
-    await page.screenshot({ path: path.join(SHOTS, `ambient-${scheme}.png`) });
+    await page.screenshot({ path: path.join(SHOTS, `flat-${scheme}.png`) });
     await ctx.close();
   });
 }

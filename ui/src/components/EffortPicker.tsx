@@ -1,3 +1,4 @@
+import { Icon } from "./icons/Icon";
 import { useId, useState, type ReactNode } from "react";
 import type { EffortCatalog, GoalOptions } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -63,7 +64,7 @@ export function EffortPicker({
                 />
                 <span
                   className={cn(
-                    "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs font-medium text-muted transition-colors",
+                    "inline-flex h-7 max-md:h-10 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs font-medium text-muted transition-colors",
                     "hover:text-ink peer-checked:bg-accent-soft peer-checked:text-accent peer-checked:ring-1 peer-checked:ring-accent",
                     "peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
                   )}
@@ -87,9 +88,9 @@ export function EffortPicker({
           aria-expanded={open}
           aria-controls={`${uid}-adv`}
           onClick={() => setOpen((o) => !o)}
-          className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs font-medium text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="inline-flex h-7 max-md:h-10 items-center gap-1 rounded-full px-2 text-xs font-medium text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
-          <span aria-hidden>{open ? "▾" : "▸"}</span>
+          <Icon name={open ? "collapse" : "expand"} />
           Advanced
           {advanced && !open && <span className="mono text-accent"> · changed</span>}
         </button>

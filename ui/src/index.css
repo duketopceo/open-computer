@@ -28,6 +28,18 @@
 }
 
 @layer components {
+  /* Touch targets: at least 40 px tall for form controls and disclosure rows on a phone. */
+  @media (max-width: 767px) {
+    input:not([type="checkbox"]):not([type="radio"]),
+    select {
+      min-height: 40px;
+    }
+    summary {
+      min-height: 40px;
+      padding-block: 10px;
+    }
+  }
+
   .mono {
     @apply font-mono text-[12px] tracking-tight;
   }
