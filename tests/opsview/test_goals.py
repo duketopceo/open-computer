@@ -762,6 +762,7 @@ def test_over_budget_chat_and_its_sandbox_dependency_stay_queued(tmp_path):
     orch = Orchestrator(tmp_path / "run", ledger=led, effort_model="vendor/effort")
     rid = orch.submit("clean goal", plan)
     assert orch.fs.inbox_ids("worker") == []
+    assert orch.cap_pending(rid)
     held = [r for r in orch.audit.rows() if r.get("event") == "held_cost_cap"]
     assert held and held[0]["subtask"] == "a"
     assert orch.results(rid)["a"]["state"] != "FAILED"
@@ -785,6 +786,27 @@ def test_over_budget_chat_and_its_sandbox_dependency_stay_queued(tmp_path):
     orch._cap_hold.clear()
     orch.work(work)
     assert any(d["subtask"] == "b" and d["placement"] == "cloud-sandbox" for d in orch.dispatches[rid])
+
+
+def test_sweep_holds_while_the_run_file_cannot_cover_the_step(tmp_path, monkeypatch):
+    from services.durable.activities import HELD, work_sweep
+    from services.orchestrator import Orchestrator
+    from services.orchestrator.runcfg import create_ledger
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_caphold1"
+    root = tmp_path / rid
+    root.mkdir()
+    ledger = create_ledger(root, rid, 0.10, "owner")
+
+    def plan(_goal: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0.20, "deps": []}])
+
+    Orchestrator(root, ledger=ledger).submit("clean goal", plan, run_id=rid)
+    assert work_sweep(str(root)) == HELD
+    from oc.fsproto import adapter as fs_adapter
+
+    assert fs_adapter(root / "run").inbox_ids("worker") == []
 
 
 def test_a_zero_estimate_still_starts_while_the_run_is_under_its_cap(tmp_path):

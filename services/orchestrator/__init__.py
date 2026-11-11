@@ -247,6 +247,23 @@ class Orchestrator:
         self.dispatch_ready(run_id)
         return run_id
 
+    def cap_pending(self, run_id: str) -> bool:
+        """True while a ready step is unmailed because the run ledger cannot cover it."""
+        if self.ledger is None or run_id not in self._subtasks:
+            return False
+        tids = self._tid_by_sub.get(run_id, {})
+        waiting = [sid for sid in self._subtasks[run_id] if sid not in tids]
+        if not waiting:
+            return False
+        st = self.ledger.state(run_id)
+        if st.state == PAUSED:
+            return True
+        if st.cap is None:
+            return False
+        room = st.cap - st.spend - st.reserved
+        return any(float(self._subtasks[run_id][sid].get("est_cost") or 0) > room for sid in waiting
+                   if float(self._subtasks[run_id][sid].get("est_cost") or 0) > 0)
+
     def pii_pending(self, run_id: str) -> bool:
         """True while a pii-send card is still waiting. A consumed or skipped card is not pending."""
         if self.privacy is None:

@@ -590,6 +590,16 @@ def submit(
     return rid
 
 
+def _wait_for_cap(orch: Orchestrator, rid: str, sleep) -> bool:
+    """Poll until the run can afford its next step or the egress-sized wait elapses."""
+    deadline = time.monotonic() + egress_wait_s()
+    while orch.cap_pending(rid):
+        if time.monotonic() >= deadline:
+            return False
+        sleep(2)
+    return True
+
+
 def egress_wait_s() -> float:
     """How long a run waits on its up-front egress approval before the drive stops (a restart re-drives it)."""
     try:
@@ -612,6 +622,10 @@ def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object], sleep=ti
                 sleep(wait)
             elif orch.pii_pending(rid):
                 if not orch.wait_for_privacy(rid, timeout=egress_wait_s()):
+                    break
+            elif orch.cap_pending(rid):
+                # A zero return would end the run while the owner can still raise the cap.
+                if not _wait_for_cap(orch, rid, sleep):
                     break
             elif not orch.wait_for_egress(rid, timeout=egress_wait_s()):
                 break

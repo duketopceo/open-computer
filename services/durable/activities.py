@@ -60,7 +60,7 @@ def work_sweep(run_dir: str) -> int:
     if not done and orch.retry_delay() > 0:
         return HELD  # a step is backing off after a sandbox boot failure: the workflow sleeps, then sweeps again
     if not done and rid:
-        if orch.pii_pending(rid):
+        if orch.pii_pending(rid) or orch.cap_pending(rid):
             return HELD
         if orch.wait_for_egress(rid, timeout=0):  # decided since the sweep began: held steps dispatched now
             return 1
