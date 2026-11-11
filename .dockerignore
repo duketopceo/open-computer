@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.agentflow
+.codebase-memory
+**/__pycache__
+**/node_modules
+.pytest_cache
+.ruff_cache
+ui/dist
+tests
+bench
+docs
+assets
+deploy/temporal.env
+*.env

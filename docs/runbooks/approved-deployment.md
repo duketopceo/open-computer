@@ -1,138 +1,137 @@
-# Approved production deployments
+# Production deployment (server-001)
 
-Production runs from the separate worktree managed by `~/bin/oc-deploy`.
-Restarting a service is not a deployment.
+Open Computer (`oc.example.com`) runs in Docker on **server-001**, deployed from
+git. It does not run on the owner's laptop and no deploy runner lives there.
+Pattern: kurultai's `deploy-server-001.yml` + `deploy/server-001/redeploy.sh`.
 
-## Primary path (public CI auto-deploy)
+## Flow
 
-After CI is green on `main`, the `production approval` job waits on the
-`production` environment (required reviewer: `duketopceo`). Once Luke
-approves that environment, the `deploy (production)` job runs on a
-self-hosted runner labeled `[self-hosted, linux, oc-deploy]` and invokes
-`~/bin/oc-deploy` with the exact merged SHA.
+1. PR merges to `main`. CI runs `python`, `console-e2e`.
+2. `production-approval` waits on the `production` environment (required reviewer
+   `duketopceo`; deployments restricted to `main`). This is the human gate.
+3. `deploy` (GitHub-hosted `ubuntu-latest`, push-to-main only, never on
+   `pull_request`) SSHes to server-001, fetches the exact merged SHA, checks it
+   out in `~/open-computer`, and runs `deploy/server-001/redeploy.sh <sha>`.
+   If `main` has already advanced past that SHA the job skips the stale deploy.
+4. `redeploy.sh`: build `oc-server-001:<sha12>`, back up volumes, `compose up -d`,
+   health check (SPA shell, `/api/session`, worker and console on the new image),
+   and on failure roll back to the previous image.
 
-Constraints that keep this safe on a public repository:
+## Containers (`deploy/server-001/docker-compose.oc.yml`)
 
-- The deploy job has `if: github.event_name == 'push' && github.ref ==
-  'refs/heads/main'`. Pull requests never target the self-hosted label.
-- Job `permissions: {}` — no token beyond the workflow default read.
-- The job checks out no workflow code; it only runs the host script.
-- Stale SHAs are skipped when `main` has already advanced.
-- A failed health check makes `oc-deploy` roll back and fails the job.
+| Service | Role | Exposure |
+|---|---|---|
+| `opsview` | console + API (`services.opsview.server`) | `127.0.0.1:8791` on the host |
+| `worker` | Temporal worker (goal runs, automations) | none |
+| `temporal`, `postgres` | durable workflow backend | internal network only |
+| `device-relay` (profile `relay`) | remote-device pull transport, port 8792 | host network, bound to `OC_RELAY_BIND` (tailnet IP) |
+| `space-tunnel` (profile `space`) | SSH forwards to the SPACE ECW host | internal network only |
 
-Runner setup on the production host: install the GitHub Actions runner into
-`~/actions-runner-oc`, register it to this repository with labels
-`self-hosted`, `linux`, and `oc-deploy`, and run it as a user systemd
-service. Do not register personal hostnames as labels in the public
-workflow.
+Named volumes: `oc-data` (mounted at `~/.local/share/oc` in the containers: passkeys,
+session and CSRF keys, threads, goals, runs, approvals, accounts, obs, execplane
+policy, audit ledger) and `oc-pgdata` (Temporal Postgres).
 
-The older private-control-repo path below remains documented for operators
-who prefer a fully isolated runner. It is not required once the public
-auto-deploy runner is online.
+## One-time server-001 setup
 
-## Trust boundary
+Run as the deploy user (`khan` unless you set `OC_DEPLOY_USER`).
 
-- The public repository runs CI tests on GitHub-hosted runners. Its
-  `production` environment requires an explicit review by `duketopceo`.
-- Production deploy either (a) runs on the host's self-hosted runner after
-  that approval, as above, or (b) is requested from a private control
-  repository over restricted SSH (see Setup).
-- When using the private path: an isolated runner registered **only** to
-  the private deployment repository periodically makes a restricted SSH
-  request to the production host. It never runs a public pull-request
-  workflow. The private workflow checks out a reviewed, full-SHA-pinned
-  SSH client. The production host runs its own pinned controller and
-  independently checks CI, approval, and the current `main` SHA.
-- The SSH key must enforce `restrict` and a forced command in
-  `authorized_keys`. Its agent must contain only the deployment key;
-  never forward a general 1Password or host SSH agent into the runner.
-  Authorize that dedicated key on the production host only, with no other
-  entries or unrestricted access. Every private workflow step can use its
-  agent. The private repository, runner, host configuration, and
-  administrators remain trusted production components.
-- The single maintainer can approve their own deployment. Approval does
-  not defend against compromise of that maintainer's GitHub account or
-  the production user.
+```bash
+# 1. Checkout (public repo, read-only clone is enough)
+git clone https://github.com/duketopceo/open-computer.git ~/open-computer
 
-## Setup
+# 2. Env file (secrets stay on the host; mode 600)
+mkdir -p ~/.config/oc && install -m 600 /dev/null ~/.config/oc/server-001.env
+$EDITOR ~/.config/oc/server-001.env     # variable NAMES below
+```
 
-1. In the public repository, configure the `production` environment with
-   `duketopceo` as a required reviewer and restrict deployments to `main`.
-   Keep self-review enabled if the sole maintainer must approve their own runs.
-   The controller refuses to deploy if the required reviewer is missing.
-2. Review and merge the controller and CI changes. Copy
-   `deploy/private-runner.yml` to `.github/workflows/approved-deploy.yml` in the
-   private control repository. Set its repository variable `OC_CONTROLLER_SHA`
-   to the full reviewed commit containing `deploy/approved_deploy.py`. Changing
-   this pin is a privileged production operation.
-3. Install `deploy/forced-deploy.sh` as an executable on the production host,
-   and configure a dedicated SSH public key with `restrict` and that script
-   as its forced command. Review the exact `authorized_keys` entry before
-   changing it. Put the full reviewed controller commit SHA in
-   `~/.config/oc-approved-deploy/controller.sha`. The forced command reads the
-   controller directly from that commit's Git object, not the working tree,
-   and ignores caller-supplied arguments. The host's controller pin is
-   independent of the private workflow's client pin; both are privileged
-   configuration. The host user and the existing `~/bin/oc-deploy` script
-   remain trusted.
-4. Review `deploy/private_runner_bridge.py`, `deploy/private-runner-entrypoint.sh`
-   and the bridge service. The bridge runs on the production host, resolves the
-   GitHub credential and dedicated deploy key from OmaSeal, verifies the control
-   repository is private, and sends a short-lived registration token and the key
-   to the Mac over pinned SSH. The broad GitHub credential stays on the host.
-   The pinned ARM64 runner image uses an executable tmpfs, no container swap,
-   no host mounts, a read-only root, and a dedicated SSH agent. Its registration,
-   checkout, and private key exist only in that runtime. macOS swap must remain
-   encrypted. The ephemeral runner accepts one job and exits; the bridge restarts
-   it for the next job. GitHub's runner may auto-update inside tmpfs; the pinned
-   image does not pin that downloaded update. The separate laptop-to-Mac SSH
-   identity is an existing host credential, not the ephemeral deployment key.
-5. Install the bridge, entrypoint, launcher, and user service only after review.
-   Supply a private `bridge.env` with `OC_RUNNER_REPOSITORY`, `OC_RUNNER_MAC_SSH`,
-   `OC_RUNNER_MAC_KNOWN_HOSTS`, `OC_RUNNER_MAC_IDENTITY`, `OC_RUNNER_DEPLOY_HOST`,
-   `OC_RUNNER_PUBLIC_KEY_FILE`, `OC_RUNNER_HOST_KEY_FILE`, `OC_RUNNER_GITHUB_REF`,
-   and `OC_RUNNER_KEY_REF`. These are hostnames, paths, and OmaSeal references,
-   not secrets. Confirm the keyring can be unlocked for unattended service
-   restarts; an unavailable keyring leaves the runner offline.
-6. Set the private repository variables `OC_DEPLOY_SSH_TARGET`,
-   `OC_DEPLOY_KNOWN_HOSTS=/run/oc/runner/known-hosts`, and
-   `OC_DEPLOY_PUBLIC_KEY=/run/oc/runner/public-key`. The runner has no access to
-   the broad GitHub credential and uses only the dedicated deploy-key agent.
-   The OrbStack runner and SSH setup have not yet been installed or verified
-   end-to-end; do not enable the workflow until the setup is reviewed.
-7. Verify the public CI jobs, environment protection, private runner, and
-   rejection of unapproved or failed runs before approving a production deploy.
-   Scheduled jobs can be delayed by GitHub; the host must be online.
+Env file variables (names only; values are the ones the laptop's
+`~/.config/oc/opsview.env` and omaseal hold today):
 
-The private job runs every five minutes and can also be started manually. It
-does not itself grant approval. Each CI run is attempted at most once.
+- Required: `OPENROUTER_API_KEY`, `TEMPORAL_PG_PASSWORD` (new, any strong value).
+- Console/runtime: `OC_AUDIT`, `OC_RP_PARENT`, `OC_TASK_CAP`, `OC_RUN_CAP`, `OC_DAILY_CAP`,
+  `OC_DURABLE` (compose defaults it to `1`), `OC_ACCESS_IDENTITY_URL` (optional).
+- Sandboxes: `CUBE_API_URL`, `CUBE_API_KEY`, `CUBE_TEMPLATE_ID` (a Cube API reachable from
+  server-001; see limitations), `OC_EXECPLANE_BACKEND`, `SPACE_API_KEY`, `SPACE_API_URL`,
+  `SPACE_DATA_PLANE_URL`, `SPACE_DOMAIN`, `SPACE_TEMPLATE_ID`.
+- Optional integrations: `GROQ_API_KEY` (voice), `OC_SENTRY_DSN`, `OC_TALLYLINE_KEY`, `OC_TALLYLINE_URL`, `OC_TALLYLINE_WORKSPACE`,
+  `OPENROUTER_API_KEY_CHAT` / `_SUBAGENTS` / `_BACKGROUND`, `OC_COMPOSIO_TOOLKITS`.
+- Compose switches: `COMPOSE_PROFILES` (`relay`, `space`, comma separated), `OC_RELAY_BIND`,
+  `OC_SPACE_SSH_DIR`, `OC_PORT` (default 8791).
 
-## Verification and recovery
+The omaseal keyring does not exist in the container; secrets that the laptop wrappers
+resolved with `omaseal get/run` must be put in this file instead.
 
-Before and after deployment, the controller checks that `main` still points to
-the approved SHA. These separate GitHub checks are not atomic with a branch
-update; a commit may advance immediately after a check.
-The controller also checks the target commit, a clean tracked and non-ignored
-checkout, and that each required service restarted in that checkout. It checks
-the React root, session API, and `/work` redirect, and logs the full live commit
-SHA. A failed build, restart, or verification triggers a rollback to the previous
-commit.
-Ignored build outputs and installed dependencies are not covered by Git's
-clean-worktree check.
+```bash
+# 3. Migrate state from the laptop (stop the laptop services first so nothing is mid-write)
+#    on the laptop:
+systemctl --user stop oc-opsview oc-worker oc-device-relay
+tar czf - -C ~/.local/share/oc --exclude=./deploy --exclude=./run . | ssh khan@server-001 'cat > /tmp/oc-data.tgz'
+docker compose -f ~/.local/share/oc/deploy/deploy/temporal.compose.yml --env-file ~/.local/share/oc/deploy/deploy/temporal.env \
+  exec -T postgres pg_dumpall -U temporal | gzip | ssh khan@server-001 'cat > /tmp/temporal.sql.gz'
+#    on server-001 (fill the volume before the first deploy):
+docker volume create oc-data
+docker run --rm -v oc-data:/v -v /tmp:/t alpine:3.22 sh -c 'tar xzf /t/oc-data.tgz -C /v && chown -R 1000:1000 /v'
+```
 
-Attempt records and an in-progress marker live under
-`~/.local/state/oc-approved-deploy/`. If a runner is interrupted or rollback
-fails, the marker remains and blocks further automatic deployments. Inspect the
-marker and service logs, restore and verify the prior commit using `oc-deploy`,
-then clear the marker only after the operator confirms the system is healthy.
-On a deploy timeout, inspect and stop any surviving child processes before
-attempting recovery; automatic rollback is unsafe while they may still run.
-Failed runs are not retried automatically; a new CI run and approval are
-required. GitHub reruns retain the same run ID and therefore remain blocked.
-Do not clear an attempt record to bypass the approval gate.
+(Adjust the laptop compose/env paths if `temporal.env` lives elsewhere.) Passkeys
+(`credentials.json`) are bound to the relying-party id: keep `OC_RP_PARENT` and the
+public hostname identical and existing passkeys keep working.
 
-The bridge suppresses container output to avoid persisting credentials in
-logs. Its user-service journal reports sanitized preflight and connection
-failures; private workflow job details are available in GitHub Actions.
-An existing `oc-private-runner` container prevents registration. Inspect it
-before manually removing a stopped orphan; do not terminate an active job.
+Temporal history is optional state. To keep in-flight workflows, restore after the
+first deploy has brought up an (empty) `oc-postgres`:
+
+```bash
+C="docker compose -f ~/open-computer/deploy/server-001/docker-compose.oc.yml --env-file ~/.config/oc/server-001.env"
+$C stop temporal worker opsview
+gunzip -c /tmp/temporal.sql.gz | docker exec -i oc-postgres psql -U temporal -d postgres
+$C up -d
+```
+
+```bash
+# 4. First deploy by hand (proves the build before CI relies on it)
+cd ~/open-computer && git checkout --detach origin/main && deploy/server-001/redeploy.sh
+curl -fsS http://127.0.0.1:8791/api/session
+```
+
+5. **Cloudflare tunnel**: add a public hostname route `oc.example.com` (your console hostname) to
+   `http://127.0.0.1:8791` in the existing server-001 tunnel (dashboard, or the tunnel's
+   `config.yml` ingress then restart `cloudflared`), and move the DNS record off the
+   laptop tunnel. Keep the Cloudflare Access application on `oc.example.com`.
+6. **GitHub**: in `duketopceo/open-computer`, add these secrets (repo level or on the
+   `production` environment). Same server and user as kurultai, so values can match
+   `KURULTAI_DEPLOY_*`, though a dedicated key is better:
+   - `OC_DEPLOY_HOST`: server-001 address
+   - `OC_DEPLOY_SSH_KEY`: private key whose public half is in the deploy user's `authorized_keys`
+   - `OC_DEPLOY_USER`: optional, defaults to `khan`
+   - `OC_DEPLOY_HOST_FINGERPRINT`: optional host key fingerprint (SHA256 form from `ssh-keygen -lf`)
+
+   Confirm the `production` environment requires review by `duketopceo` and is limited to `main`.
+7. Cut the laptop over once server-001 serves:
+   `systemctl --user disable --now oc-opsview oc-worker oc-device-relay oc-space-tunnel`.
+   Keep `oc-device` on the laptop (see limitations).
+
+## Rollback
+
+- Automatic: a failed health check puts the previous image back (`redeploy.sh` logs it).
+- Manual image rollback: `ssh server-001 '~/open-computer/deploy/server-001/redeploy.sh --rollback'`.
+- Data: each deploy writes `~/oc-backups/<utc>-<prev>/` with `oc-data.tgz` and
+  `temporal.sql.gz` (last 5 kept). Restore `oc-data` by stopping the stack and
+  extracting the tarball into the volume as in step 3. Data changes are forward-only;
+  an image rollback does not undo them.
+- Wedged deploy: `docker compose -f deploy/server-001/docker-compose.oc.yml --env-file ~/.config/oc/server-001.env logs --tail 100`.
+
+## Limitations on server-001
+
+- **CubeSandbox microVMs** need KVM and the Cube stack; they are not in these containers.
+  Point `CUBE_API_URL` at a Cube API reachable from server-001, or use the SPACE backend.
+- **`oc-device`** (the personal desktop agent, Wisp actuator, local file grants) needs the
+  owner's desktop session and stays on the laptop, connecting to the relay over tailscale.
+- **Agent jobs using the `ori`/`opencode` CLIs**: not installed in the image.
+- The `space` profile needs server-001 to reach the SPACE host over SSH.
+- The conformance "live" suite (real microVMs) remains manual.
+
+## Retired mechanism
+
+The earlier laptop design (`deploy/private-runner.yml`, `approved_deploy.py`,
+`forced-deploy.sh`, `private_runner_bridge.py`, `~/bin/oc-deploy`, the ephemeral runner)
+is superseded by the job above and must not be enabled.

@@ -77,41 +77,54 @@ jobs:
       - name: Record approved commit
         run: echo "Approved commit $GITHUB_SHA for production"
 
-  # Post-gate production deploy on a self-hosted runner labeled
-  # [self-hosted, linux, oc-deploy]. Push-to-main only (job-level `if`, never
-  # pull_request): no PR job may target that label. Checks out no workflow
-  # code; runs the host's own ~/bin/oc-deploy with the exact merged SHA.
-  # Gated by the `production` environment via `needs: [production-approval]`.
+  # Post-gate production deploy to server-001 over SSH (same pattern as kurultai's
+  # deploy-server-001.yml). Runs on a GitHub-hosted runner, push-to-main only (job-level
+  # `if`), after `production-approval` (the `production` environment review). No
+  # self-hosted runner exists and no pull_request job can reach the secrets. The host
+  # fetches the exact merged SHA, then runs the checkout's own redeploy script
+  # (build, backup, swap, health check, rollback on failure).
   deploy:
     name: deploy (production)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [production-approval]
-    runs-on: [self-hosted, linux, oc-deploy]
-    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
     permissions: {}
     concurrency:
-      group: oc-deploy-production
+      group: oc-server-001-deploy
       cancel-in-progress: false
     steps:
-      - name: Deploy exact merged SHA
+      - name: Require deploy secrets
         env:
-          DEPLOY_SHA: ${{ github.sha }}
+          HOST: ${{ secrets.OC_DEPLOY_HOST }}
+          KEY: ${{ secrets.OC_DEPLOY_SSH_KEY }}
         run: |
-          set -euo pipefail
-          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha" >&2; exit 1; }
-          # Production worktree (not a developer checkout). Fetch-only: never
-          # mutates the tracked tree; oc-deploy owns the checkout.
-          src="${OC_DEPLOY_DIR:-$HOME/.local/share/oc/deploy}"
-          git -C "$src" fetch -q origin main
-          head="$(git -C "$src" rev-parse origin/main)"
-          if [ "$head" != "$DEPLOY_SHA" ] && git -C "$src" merge-base --is-ancestor "$DEPLOY_SHA" "$head"; then
-            echo "main advanced to $head; skipping stale $DEPLOY_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "Deploying \`$DEPLOY_SHA\`" >> "$GITHUB_STEP_SUMMARY"
-          if "$HOME/bin/oc-deploy" "$DEPLOY_SHA"; then
-            echo "Result: live (health check passed)" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Result: FAILED health check; oc-deploy rolled back" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$HOST" ] || [ -z "$KEY" ]; then
+            echo "::error::Missing OC_DEPLOY_HOST / OC_DEPLOY_SSH_KEY (production environment or repo secrets)"
             exit 1
           fi
+      - name: SSH deploy exact merged SHA
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.OC_DEPLOY_HOST }}
+          username: ${{ secrets.OC_DEPLOY_USER || 'khan' }}
+          key: ${{ secrets.OC_DEPLOY_SSH_KEY }}
+          fingerprint: ${{ secrets.OC_DEPLOY_HOST_FINGERPRINT }}
+          envs: DEPLOY_SHA
+          command_timeout: 25m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha" >&2; exit 1; }
+            cd "${OC_DEPLOY_DIR:-$HOME/open-computer}"
+            git fetch -q origin main
+            head="$(git rev-parse origin/main)"
+            if [ "$head" != "$DEPLOY_SHA" ] && git merge-base --is-ancestor "$DEPLOY_SHA" "$head"; then
+              echo "main advanced to $head; skipping stale $DEPLOY_SHA"
+              exit 0
+            fi
+            git checkout -q --detach "$DEPLOY_SHA"
+            exec deploy/server-001/redeploy.sh "$DEPLOY_SHA"

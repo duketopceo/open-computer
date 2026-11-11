@@ -1428,11 +1428,18 @@ def make_server(port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
     return ThreadingHTTPServer((host, port), Handler)
 
 
+def bind_host() -> str:
+    """Listen address. Loopback unless OC_BIND_HOST says otherwise (the container sets 0.0.0.0 and
+    publishes the port on host loopback only; the console is never exposed beyond the tunnel)."""
+    return os.environ.get("OC_BIND_HOST", "").strip() or "127.0.0.1"
+
+
 def main(port: int = 8791):
-    log.info("console listening", host="127.0.0.1", port=port)
+    host = bind_host()
+    log.info("console listening", host=host, port=port)
     _resume_goals()
     _resume_agent_jobs()
-    make_server(port).serve_forever()
+    make_server(port, host).serve_forever()
 
 
 if __name__ == "__main__":

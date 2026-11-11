@@ -1,0 +1,124 @@
+# open-computer on server-001 (oc.example.com). Pattern: kurultai's
+# docker-compose.kurultai.yml. Run through deploy/server-001/redeploy.sh, which
+# passes --env-file (secrets live on the host, never in git).
+#
+# Exposure: the console is published on HOST LOOPBACK only (127.0.0.1:8791);
+# cloudflared on the host routes oc.example.com to it, Cloudflare Access gates it.
+# Nothing else is published, except the optional device relay (profile `relay`).
+name: oc
+
+x-oc: &oc
+  image: oc-server-001:${OC_IMAGE_TAG:-local}
+  restart: unless-stopped
+  env_file: ${OC_ENV_FILE:?set OC_ENV_FILE (redeploy.sh does)}
+  volumes:
+    - oc-data:/home/oc/.local/share/oc
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  opsview:
+    <<: *oc
+    container_name: oc-opsview
+    command: ["python", "-m", "services.opsview.server", "8791"]
+    environment:
+      OC_BIND_HOST: 0.0.0.0
+      OC_DURABLE: ${OC_DURABLE:-1}
+      OC_TEMPORAL_HOST: temporal:7233
+    ports:
+      - "127.0.0.1:${OC_PORT:-8791}:8791"
+    depends_on:
+      temporal: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u,sys; sys.exit(0 if b'csrf' in u.urlopen('http://127.0.0.1:8791/api/session', timeout=3).read() else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *oc
+    container_name: oc-worker
+    command: ["python", "-m", "services.durable.worker"]
+    environment:
+      OC_TEMPORAL_HOST: temporal:7233
+    depends_on:
+      temporal: {condition: service_healthy}
+
+  # Remote-device pull transport. Optional: COMPOSE_PROFILES=relay in the env file.
+  # Host networking because the relay refuses wildcard binds and must bind one
+  # specific tailnet IP (OC_RELAY_BIND = server-001's tailscale address).
+  device-relay:
+    <<: *oc
+    container_name: oc-device-relay
+    profiles: [relay]
+    network_mode: host
+    command: ["sh", "-c", "exec python -m services.device_relay.server --root \"$$OC_ROOT\" --bind \"$${OC_RELAY_BIND:?OC_RELAY_BIND required}\" --port 8792"]
+
+  # Optional SPACE (the SPACE ECW host) SSH forwards, replacing oc-space-tunnel.service.
+  # COMPOSE_PROFILES=space; the env file then sets SPACE_API_URL=http://space-tunnel:18080 and
+  # SPACE_DATA_PLANE_URL=http://space-tunnel:18092. Needs a dir on the host (OC_SPACE_SSH_DIR)
+  # with `config` (an SSH alias named `spacehost`), a key, and `known_hosts`.
+  space-tunnel:
+    image: alpine:3.22
+    container_name: oc-space-tunnel
+    profiles: [space]
+    restart: unless-stopped
+    volumes:
+      - ${OC_SPACE_SSH_DIR:-/home/khan/.ssh/oc-space}:/ssh:ro
+    command: >
+      sh -c "apk add --no-cache openssh-client >/dev/null &&
+      exec ssh -N -F /ssh/config -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+      -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/ssh/known_hosts
+      -L 0.0.0.0:18080:127.0.0.1:8080 -L 0.0.0.0:18092:127.0.0.1:8092 spacehost"
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: oc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${TEMPORAL_PG_PASSWORD:?TEMPORAL_PG_PASSWORD required in the env file}
+      POSTGRES_DB: temporal
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  temporal:
+    image: temporalio/auto-setup:1.23.1.1
+    container_name: oc-temporal
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      DB: postgresql
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${TEMPORAL_PG_PASSWORD:?}
+      ENABLE_ES: "false"
+      TEMPORAL_ADDRESS: temporal:7233
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address $$(hostname -i):7233 | grep -q SERVING"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  oc-data:
+    name: oc-data
+  pgdata:
+    name: oc-pgdata
