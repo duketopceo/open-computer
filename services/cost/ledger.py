@@ -234,6 +234,8 @@ class CostLedger:
         """Owner action: raise the cap above current spend and continue. Refuses otherwise."""
         with self._locked():
             st = self.state(run)
+            if st.cap is not None and new_cap <= st.cap:
+                raise ValueError(f"new cap {new_cap} must be higher than the current cap {st.cap:g}")
             if new_cap <= st.spend:
                 raise ValueError(f"new cap {new_cap} must exceed current spend {st.spend:.6f}")
             self._notify(self._append({"event": "cap_set", "run": run, "cap": float(new_cap), "by": by}))

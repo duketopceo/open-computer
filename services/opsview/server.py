@@ -50,6 +50,7 @@ from services.connectors import composio as composio_connectors
 from services import runtime_map as oc_runtime
 from services import kurultai_brain as oc_brain
 from services.orchestrator import engines as goal_engines
+from services.orchestrator.runcfg import ledger_for
 from services.router import model_catalog
 from services.workspace import routes as workspace
 
@@ -439,6 +440,7 @@ POST_ROUTES = [
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/delete", "p_api_run_delete"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/archive", "p_api_run_archive"),
     (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/plan", "p_api_run_plan"),
+    (r"/api/runs/(?P<id>goal_[0-9a-f]{8})/resume", "p_api_run_resume"),
     (r"/runs", "p_runs"),
     (r"/goals", "p_goals"),
     (r"/api/router/test", "p_api_router_test"),
@@ -914,6 +916,25 @@ class Handler(BaseHTTPRequestHandler):
             log.info("plan decided", run=id, action=body.get("action"), by=who)
             resume_after_plan(id, who)  # cancelled too: the chat says so instead of waiting on "carry on"
         self._json(code, out)
+
+    def p_api_run_resume(self, who, body, id):
+        """Owner session only: raise this run's ledger cap. MCP and automations have no route here."""
+        d = goalruns.runs_dir() / id
+        if not d.is_dir():
+            return self._json(404, {"error": "no such run"})
+        try:
+            new_cap = float(body.get("cap"))
+        except (TypeError, ValueError):
+            return self._json(400, {"error": "cap must be a number of dollars"})
+        ledger = ledger_for(d)
+        if ledger is None:
+            return self._json(404, {"error": "this run has no cost ledger"})
+        try:
+            st = ledger.resume(id, new_cap, by=who or "owner")
+        except ValueError as e:
+            return self._json(409, {"error": str(e)})
+        log.info("run cap raised", run=id, cap=st.cap, by=who)
+        self._json(200, {"ok": True, "cap": st.cap, "state": st.state})
 
     def p_api_run_archive(self, who, body, id):
         on = body.get("archived", True) not in (False, "0", "false", 0)

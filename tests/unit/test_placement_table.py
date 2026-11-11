@@ -137,9 +137,13 @@ def test_dispatch_blocks_when_the_run_ledger_cannot_cover_the_estimate(tmp_path)
     led = CostLedger(tmp_path / "c.ndjson", default_cap=0.006)
     orch = Orchestrator(tmp_path / "o", ledger=led)
     orch.run("g", _engine, lambda t: WorkResult(f"did:{t['subtask']}", Usage("m", 1, 1, 0.003)))
-    by = {d["subtask"]: d for d in orch.dispatches[next(iter(orch.dispatches))]}
+    run_id = next(iter(orch.dispatches))
+    by = {d["subtask"]: d for d in orch.dispatches[run_id]}
     assert by["a"]["placement"] == "cloud-OpenRouter"  # headroom 0.006 covers 0.004
-    assert by["b"]["placement"] == "blocked" and "over-budget" in by["b"]["reason"]
+    assert "b" not in by  # the dependent stays queued; it is not mailed or failed
+    held = [r for r in orch.audit.rows() if r.get("event") == "held_cost_cap" and r.get("subtask") == "b"]
+    assert held and held[0]["placement"] == "cloud-OpenRouter"
+    assert orch.results(run_id)["b"]["state"] != "FAILED"
 
 
 def test_no_step_ever_lands_on_a_local_model():
@@ -191,17 +195,18 @@ def test_frontier_device_egress_and_repeat_stay_put():
     assert place(*args, **kw) == place(*args, **kw)
 
 
-def test_blocked_placement_tombstones_the_subtask(tmp_path):
-    # A blocked step must fail visibly (reason + hint on the audit row), never
-    # reach a worker, and never leave dependents hanging.
-    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.001)
+def _egress_engine(_goal):
+    return json.dumps([
+        {"id": "a", "title": "a", "prompt": "fetch", "tier": "mid", "needs_egress": True, "egress_hosts": ["evil.example"]},
+        {"id": "b", "title": "b", "prompt": "then", "tier": "mid", "deps": ["a"]},
+    ])
 
+
+def test_blocked_placement_tombstones_the_subtask(tmp_path):
+    # Egress denial still fails closed. An over-budget step is held, not this path.
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=1.0)
     orch = Orchestrator(tmp_path / "o", ledger=led)
-    orch.run(
-        "g",
-        _engine,  # subtask a: est 0.004 > headroom 0.001 -> blocked
-        lambda t: WorkResult(f"did:{t['subtask']}", Usage("m", 1, 1, 0.001)),
-    )
+    orch.run("g", _egress_engine, lambda t: WorkResult(f"did:{t['subtask']}", Usage("m", 1, 1, 0.001)))
     run_id = next(iter(orch.dispatches))
     results = orch.results(run_id)
     assert results["a"]["state"] == "FAILED" and results["b"]["state"] == "FAILED"
@@ -209,4 +214,5 @@ def test_blocked_placement_tombstones_the_subtask(tmp_path):
     kinds = {f["kind"] for f in fails}
     assert "NoPlacement" in kinds and "DependencyFailed" in kinds
     no_place = next(f for f in fails if f["kind"] == "NoPlacement")
-    assert "over-budget" in no_place["error"] and "raise the cap" in no_place["hint"]
+    assert "evil.example" in no_place["error"]
+    assert not any(r.get("event") == "held_cost_cap" for r in orch.audit.rows())

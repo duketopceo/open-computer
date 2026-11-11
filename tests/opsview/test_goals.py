@@ -720,3 +720,104 @@ def test_mcp_can_list_the_card_but_cannot_send_it(tmp_path, monkeypatch):
     assert any("pii-send" in (row.get("what") or "") for row in listed["approvals"])
     t_request_approval(State(), {"what": "something else", "payload": {"kind": "note", "text": "other"}})
     assert calls == [] and orch.fs.inbox_ids("worker") == []
+
+
+def test_run_cap_not_the_router_task_cap_decides_whether_chat_is_mailed(tmp_path):
+    from services.cost import CostLedger
+    from services.orchestrator import Orchestrator
+    from services.router.budget import Budget
+    from services.router.router import RouteDecision, Router
+
+    class Engine:
+        def run(self, _utterance: str) -> RouteDecision:
+            return RouteDecision("answer", "mid", "stub", 1.0, 0.0, 1.0)
+
+    router = Router(Budget(tmp_path / "router.jsonl", daily_cap=5.0, task_cap=0.10), [Engine()])
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.30)
+
+    def plan(_goal: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0.20, "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", router=router, ledger=led, effort_model="vendor/effort")
+    rid = orch.submit("clean goal", plan)
+    assert orch.dispatches[rid][0]["placement"] == "cloud-OpenRouter"
+    assert orch.fs.inbox_ids("worker")
+
+
+def test_over_budget_chat_and_its_sandbox_dependency_stay_queued(tmp_path):
+    from services.cost import CostLedger, Usage
+    from services.orchestrator import Orchestrator
+    from services.orchestrator.runner import WorkResult
+
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.10)
+
+    def plan(_goal: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0.20, "deps": []},
+            {"id": "b", "title": "B", "prompt": "run", "tier": "mid", "est_cost": 0.05, "deps": ["a"],
+             "needs_sandbox": True},
+        ])
+
+    orch = Orchestrator(tmp_path / "run", ledger=led, effort_model="vendor/effort")
+    rid = orch.submit("clean goal", plan)
+    assert orch.fs.inbox_ids("worker") == []
+    held = [r for r in orch.audit.rows() if r.get("event") == "held_cost_cap"]
+    assert held and held[0]["subtask"] == "a"
+    assert orch.results(rid)["a"]["state"] != "FAILED"
+    # The chat fits once the cap is raised, runs, and pauses the run on its own spend.
+    led.resume(rid, 0.25, by="owner")
+    orch._cap_hold.clear()
+
+    def work(task: dict):
+        if task["subtask"] == "a":
+            return WorkResult("ok", Usage("vendor/served", 3, 4, 0.25))
+        return WorkResult("box", Usage("vendor/served", 1, 1, 0.01))
+
+    orch.work(work)
+    sand = [r for r in orch.audit.rows() if r.get("event") == "held_cost_cap" and r.get("subtask") == "b"]
+    assert sand and sand[0]["placement"] == "cloud-sandbox"
+    assert orch.results(rid)["b"]["state"] != "FAILED"
+    assert not any(r.get("kind") == "NoPlacement" for r in orch.audit.rows())
+    led.resume(rid, 1.0, by="owner")
+    with pytest.raises(ValueError):
+        led.resume(rid, 1.0, by="owner")
+    orch._cap_hold.clear()
+    orch.work(work)
+    assert any(d["subtask"] == "b" and d["placement"] == "cloud-sandbox" for d in orch.dispatches[rid])
+
+
+def test_a_zero_estimate_still_starts_while_the_run_is_under_its_cap(tmp_path):
+    from services.cost import CostLedger
+    from services.orchestrator import Orchestrator
+
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.30)
+
+    def plan(_goal: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0, "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", ledger=led)
+    rid = orch.submit("clean goal", plan)
+    assert orch.dispatches[rid][0]["placement"] == "cloud-OpenRouter"
+    assert orch.fs.inbox_ids("worker")
+
+
+def test_owner_resume_route_raises_the_cap(console):
+    from services.orchestrator.runcfg import create_ledger
+
+    rid = "goal_abc12345"
+    d = console.base / "goals" / rid
+    d.mkdir(parents=True)
+    create_ledger(d, rid, 0.30, "owner")
+    status, _, body = console.post(f"/api/runs/{rid}/resume", {"cap": "0.30"})
+    assert status == 409
+    status, _, body = console.post(f"/api/runs/{rid}/resume", {"cap": "0.80"})
+    assert status == 200 and "0.8" in body
+
+
+def test_mcp_has_no_resume_tool():
+    import inspect
+
+    from services.mcp import server as mcp
+
+    assert "resume" not in mcp.TOOLS
+    assert "CostLedger.resume" not in inspect.getsource(mcp)

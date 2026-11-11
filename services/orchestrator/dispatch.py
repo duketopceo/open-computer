@@ -89,7 +89,7 @@ def _stored_decision(sub: dict, model: str | None) -> RouteDecision:
 
 def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, ledger=None, devices=None,
              chat_id: str | None = None, *, classify: bool = True, effort_model: str | None = None,
-             pii_approved: bool = False) -> dict:
+             pii_approved: bool = False, ledger_only: bool = False) -> dict:
     """Route, place, and offer a subtask to the worker inbox.
 
     `devices` is a services.device.DeviceRegistry (or None). A step the
@@ -105,7 +105,9 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
         decision = router.route(sub["prompt"])
     pii = gate.scan("" if on_device else sub["prompt"])
     device = _pick_device(devices, sub) if devices is not None else None
-    headroom = headroom_from(getattr(router, "budget", None), ledger, run_id)
+    # Goal steps judge headroom from the run ledger only. The router task cap is not this path.
+    budget = None if ledger_only or not classify else getattr(router, "budget", None)
+    headroom = headroom_from(budget, ledger, run_id)
     placement = place(
         {
             "tier": sub.get("tier", decision.tier),

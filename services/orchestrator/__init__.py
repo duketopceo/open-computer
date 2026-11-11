@@ -86,6 +86,7 @@ class Orchestrator:
         self._pii_plan: dict[str, dict] = {}  # run_id -> plan-phase card
         self._pii_steps: dict[str, dict[str, dict]] = {}  # run_id -> step id -> card
         self._submit_ctx: dict[str, dict] = {}  # args needed to finish a held plan
+        self._cap_hold: set[tuple[str, str]] = set()  # (run, step) already audited as held_cost_cap
 
     def drain_parked(self, *, now: float | None = None) -> list[dict]:
         """Drain tasks queued in `device/parked` into eligible `device/<device_id>` mailboxes."""
@@ -570,6 +571,44 @@ class Orchestrator:
         )
         return rec
 
+    def _hold_for_cap(self, run_id: str, sub: dict, action: str) -> bool:
+        """True when this step stays queued because the run ledger cannot cover it. No mailbox, no failure."""
+        if self.ledger is None:
+            return False
+        est = float(sub.get("est_cost") or 0)
+        st = self.ledger.state(run_id)
+        room = None if st.cap is None else st.cap - st.spend - st.reserved
+        over = st.state == PAUSED or (room is not None and est > 0 and est > room)
+        if not over:
+            return False
+        legal = self.place(
+            {
+                "tier": sub.get("tier", "mid"),
+                "latency": sub.get("latency", "normal"),
+                "est_cost": est,
+                "needs_sandbox": sub.get("needs_sandbox", False),
+                "needs_egress": sub.get("needs_egress", False),
+                "egress_hosts": sub.get("egress_hosts") or [],
+            },
+            headroom=None,
+            pii_flagged=False,
+            approved=action == "approved",
+        )
+        if legal.target == "blocked":
+            return False  # egress denial and other blocks still tombstone in dispatch
+        key = (run_id, sub["id"])
+        if key not in self._cap_hold:
+            self._cap_hold.add(key)
+            self.audit.append({
+                "event": "held_cost_cap",
+                "run": run_id,
+                "subtask": sub["id"],
+                "placement": legal.target,
+                "est_cost": est,
+            })
+            log.warning("step held: run over cost cap", subtask=sub["id"], placement=legal.target, est_cost=est)
+        return True
+
     def _step_privacy(self, run_id: str, sub: dict) -> str:
         """hold, skip, approved, or go. Device steps and empty scans do not open a card."""
         if self.privacy is None or needs_device(sub):
@@ -682,8 +721,6 @@ class Orchestrator:
                     continue  # dispatched already, or dep not dispatched yet
                 states = [self._dep_state(tids[d]) for d in sub["deps"]]
                 if all(st == "done" for st in states):
-                    if self.ledger is not None and self.ledger.state(run_id).state == PAUSED:
-                        continue  # paused at its cap: hold the step (never fail it); resuming dispatches it
                     with_deps = self._with_dep_results(sub, tids)
                     if with_deps is None:
                         continue  # a dep's output isn't collectable yet — hold
@@ -692,6 +729,8 @@ class Orchestrator:
                         continue  # pii-send is pending — an egress grant does not release it
                     if held & set(requested_hosts(sub)):
                         continue  # waiting for the run's egress approval — not failed, retried next sweep
+                    if self._hold_for_cap(run_id, with_deps, action):
+                        continue
                     if action == "skip":
                         rec = self._skip_step(run_id, with_deps)
                     else:
@@ -709,6 +748,7 @@ class Orchestrator:
                             classify=self.privacy is None,
                             effort_model=self._effort_model(run_id),
                             pii_approved=action == "approved",
+                            ledger_only=True,
                         )
                 elif any(st == "failed" for st in states):
                     rec = self._dep_fail(run_id, sub, sub["deps"][states.index("failed")])
