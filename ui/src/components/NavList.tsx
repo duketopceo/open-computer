@@ -1,8 +1,9 @@
 import { Link, useRouter } from "@/lib/router";
 import type { NavItem } from "@/lib/nav";
 import { cn } from "@/lib/cn";
+import { Icon } from "./icons/Icon";
 
-const ITEM = "flex items-center rounded-lg px-2.5 py-1.5 text-sm transition-colors";
+const ITEM = "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors max-md:py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
 export function NavList({ items, label = "Console" }: { items: NavItem[]; label?: string }) {
   const { path } = useRouter();
@@ -20,10 +21,12 @@ export function NavList({ items, label = "Console" }: { items: NavItem[]; label?
             <li key={it.href}>
               {it.spa ? (
                 <Link href={it.href} aria-current={active} className={cls}>
+                  <Icon name={it.icon} />
                   {it.label}
                 </Link>
               ) : (
                 <a href={it.href} className={cls}>
+                  <Icon name={it.icon} />
                   {it.label}
                 </a>
               )}

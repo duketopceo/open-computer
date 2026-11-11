@@ -1,7 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
-import { Ambient } from "./components/Ambient";
 import { RouterProvider, matchRoute, useRouter } from "./lib/router";
 import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
@@ -42,24 +41,37 @@ const ROUTES: Row[] = [
   { path: "/settings", page: () => <Settings /> },
 ];
 
-// Nothing moves while a human decides (DESIGN.md): the ambient field is off on the approvals page.
-const STILL = new Set(["/approvals"]);
-
 function Routes() {
   const { path } = useRouter();
   const m = matchRoute(path, ROUTES);
-  return (
-    <>
-      {!STILL.has(path.replace(/\/+$/, "") || "/") && <Ambient />}
-      {m ? m.route.page(m.params) : <NotFound />}
-    </>
+  return m ? m.route.page(m.params) : <NotFound />;
+}
+
+async function boot() {
+  // Demo build only: install the fixtures transport (and the banner) before the first render. `__OC_DEMO__` is a build-time
+  // constant, so this whole branch and the demo chunk are absent from the normal bundle.
+  let Banner: (() => JSX.Element) | null = null;
+  if (__OC_DEMO__) {
+    const demo = await import("./demo/install");
+    demo.installDemo();
+    Banner = demo.DemoBanner;
+  }
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <RouterProvider>
+        {Banner ? (
+          <div className="flex h-full flex-col">
+            <Banner />
+            <div className="min-h-0 flex-1">
+              <Routes />
+            </div>
+          </div>
+        ) : (
+          <Routes />
+        )}
+      </RouterProvider>
+    </StrictMode>,
   );
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <RouterProvider>
-      <Routes />
-    </RouterProvider>
-  </StrictMode>,
-);
+void boot();

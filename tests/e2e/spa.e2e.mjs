@@ -519,9 +519,9 @@ test("@nav client-side navigation keeps the document, retitles, moves focus, and
   const before = page.url();
   await nav.getByRole("link", { name: "Router" }).click({ modifiers: ["Control"] });
   assert.equal(page.url(), before);
-  // an unported page is a full navigation to the server-rendered console
-  await Promise.all([page.waitForURL(base + "/runs"), nav.getByRole("link", { name: "Runs" }).click()]);
-  assert.equal(await page.evaluate(() => window.__same), undefined, "Runs is a real page load");
+  // a page with no SPA route (Workspace) is a full navigation to the server-rendered console
+  await Promise.all([page.waitForURL(base + "/workspace"), nav.getByRole("link", { name: "Workspace" }).click()]);
+  assert.equal(await page.evaluate(() => window.__same), undefined, "Workspace is a real page load");
   await ctx.close();
 });
 
@@ -2060,11 +2060,11 @@ test("@effects reduced motion and the switch each leave no running animations; e
   assert.deepEqual(await run("reduce"), [], "prefers-reduced-motion: no running animations");
   assert.deepEqual(await run("no-preference", "off"), [], "switch off: no running animations");
   const on = await run("no-preference");
-  for (const n of ["fx-sheen", "fx-pulse", "fx-edge-run"]) assert.ok(on.includes(n), `effects on: ${n} runs (${on})`);
+  for (const n of ["fx-pulse", "fx-edge-run"]) assert.ok(on.includes(n), `effects on: ${n} runs (${on})`);
 });
 
 for (const scheme of ["light", "dark"]) {
-  test(`@effects ${scheme}: weave and running timeline have 0 axe violations; screenshot saved`, async () => {
+  test(`@effects ${scheme}: running timeline has 0 axe violations; screenshot saved`, async () => {
     const s = liveStream();
     const routes = timelineRoutes(() => s.events, { finished: () => false });
     const { ctx, page } = await open({ routes, path: TL, scheme, motion: "no-preference" });
@@ -2076,60 +2076,38 @@ for (const scheme of ["light", "dark"]) {
   });
 }
 
-// Ambient shader (components/Ambient.tsx): draws only when motion is allowed, replaces the weave while it draws,
-// and is never there under reduced motion or Reduce effects. Headless Chromium has WebGL through SwiftShader.
-const weaveShown = (page) => page.evaluate(() => getComputedStyle(document.body, "::before").display !== "none");
-
-test("@effects ambient: motion allowed draws the shader in place of the weave; reduced motion and the switch keep the weave", async () => {
-  {
-    const { ctx, page } = await open({ motion: "no-preference" });
-    await page.locator("html[data-ambient=on]").waitFor({ state: "attached" });
-    assert.equal(await page.getByTestId("ambient").count(), 1);
-    assert.equal(await page.getByTestId("ambient").getAttribute("aria-hidden"), "true");
-    assert.equal(await weaveShown(page), false, "the shader replaces the weave");
-    // the shader sits behind everything and never takes a click
-    assert.equal(await page.getByTestId("ambient").evaluate((c) => getComputedStyle(c).pointerEvents), "none");
-    await page.getByRole("textbox", { name: "Message" }).click();
-    await ctx.close();
-  }
-  for (const [motion, stored] of [["reduce", undefined], ["no-preference", "off"]]) {
+// Slanted weave (DESIGN.md, Motion and depth): the canvas always carries the static crosshatch, on every motion setting,
+// with no shader canvas and no drifting layer.
+const weaveLayer = (page) =>
+  page.evaluate(() => ({
+    before: getComputedStyle(document.body, "::before").backgroundImage,
+    beforeAnim: getComputedStyle(document.body, "::before").animationName,
+    after: getComputedStyle(document.body, "::after").content,
+  }));
+test("@effects weave: shown and static on every motion setting; no shader, no sheen", async () => {
+  for (const [motion, stored] of [["no-preference", undefined], ["reduce", undefined], ["no-preference", "off"]]) {
     const { ctx, page } = await open({ motion, setup: stored ? (p) => p.addInitScript((v) => localStorage.setItem("oc-effects", v), stored) : undefined });
     await page.getByRole("textbox", { name: "Message" }).waitFor();
     assert.equal(await page.getByTestId("ambient").count(), 0, `${motion}/${stored}: no canvas`);
-    assert.equal(await page.locator("html").getAttribute("data-ambient"), null);
-    assert.equal(await weaveShown(page), true, `${motion}/${stored}: weave stays`);
+    const w = await weaveLayer(page);
+    assert.match(w.before, /repeating-linear-gradient/, `${motion}/${stored}: weave shown`);
+    assert.equal(w.beforeAnim, "none", `${motion}/${stored}: weave does not animate`);
+    assert.equal(w.after, "none", `${motion}/${stored}: no sheen layer`);
     await ctx.close();
   }
 });
 
-test("@effects ambient: turning Reduce effects on stops the shader and brings the weave back", async () => {
-  const { ctx, page } = await open({ path: "/settings", motion: "no-preference" });
-  await page.locator("html[data-ambient=on]").waitFor({ state: "attached" });
-  await page.getByRole("checkbox", { name: /Reduce effects/ }).check();
-  await page.waitForFunction(() => !document.documentElement.hasAttribute("data-ambient"));
-  assert.equal(await page.getByTestId("ambient").count(), 0);
-  assert.equal(await weaveShown(page), true);
-  await ctx.close();
-});
-
-test("@effects ambient: nothing moves on the approvals page", async () => {
-  const { ctx, page } = await open({ path: "/approvals", motion: "no-preference" });
-  await page.locator("main").first().waitFor();
-  assert.equal(await page.getByTestId("ambient").count(), 0);
-  assert.equal(await page.locator("html").getAttribute("data-ambient"), null);
-  await ctx.close();
-});
-
 for (const scheme of ["light", "dark"]) {
-  test(`@effects ambient ${scheme}: 0 axe violations with the shader on; screenshot saved`, async () => {
-    const { ctx, page } = await open({ scheme, motion: "no-preference" });
-    await page.locator("html[data-ambient=on]").waitFor({ state: "attached" });
-    await page.waitForTimeout(400); // a few frames so the screenshot shows the field
-    assert.deepEqual(await axeViolations(page), [], `home ${scheme}`);
-    fs.mkdirSync(SHOTS, { recursive: true });
-    await page.screenshot({ path: path.join(SHOTS, `ambient-${scheme}.png`) });
-    await ctx.close();
-  });
+  for (const w of [1440, 390]) {
+    test(`@effects weave ${scheme} ${w}: home has 0 axe violations over the weave; screenshot saved`, async () => {
+      const { ctx, page } = await open({ scheme, w, motion: "no-preference" });
+      await page.getByRole("textbox", { name: "Message" }).waitFor();
+      assert.deepEqual(await axeViolations(page), [], `home ${scheme} ${w}`);
+      fs.mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(SHOTS, `weave-${scheme}-${w}.png`) });
+      await ctx.close();
+    });
+  }
 }
 
 // Live view for everyone: a run with a stream opens on the live view; dev mode off hides raw model detail.
@@ -2242,5 +2220,76 @@ test("@plan cancel posts a cancel with no edits", async () => {
   await page.getByRole("button", { name: "Cancel run" }).click();
   await page.getByText("Decision saved").waitFor();
   assert.deepEqual(posts, [{ action: "cancel", edits: [] }]);
+  await ctx.close();
+});
+
+// ---- UI baseline (plan 2026-11-10): layout, focus and explicit states on every SPA page ----
+const BASELINE_ROUTES = ["/", "/overview", "/goals", "/automations", "/skills", "/sandboxes", "/devices", "/runs", "/approvals", "/router", "/audit", "/settings"];
+
+for (const w of [1440, 390]) {
+  test(`@baseline no horizontal scroll on any page at ${w}px`, async () => {
+    for (const route of BASELINE_ROUTES) {
+      const { ctx, page } = await open({ w, path: route });
+      await page.locator("main").first().waitFor();
+      const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(over <= 0, `${route} at ${w}px overflows by ${over}px`);
+      await ctx.close();
+    }
+  });
+}
+
+test("@baseline @keyboard the skip link comes first and every tab stop on every page shows a focus indicator", async () => {
+  for (const route of BASELINE_ROUTES) {
+    const { ctx, page } = await open({ path: route });
+    await page.locator("main").first().waitFor();
+    // The composer autofocuses on home, so assert DOM order instead of pressing Tab from wherever focus landed.
+    const first = await page.evaluate(() => document.querySelector("a[href], button, input, select, textarea, summary, [tabindex='0']")?.textContent?.trim());
+    assert.equal(first, "Skip to content", `${route}: first tab stop`);
+    await page.locator("a[href='#main']").first().focus();
+    for (let i = 0; i < 14; i++) {
+      const r = await page.evaluate(() => {
+        const e = document.activeElement;
+        if (!e || e === document.body) return { ok: true };
+        const s = getComputedStyle(e);
+        const outline = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) >= 1;
+        const ring = s.boxShadow !== "none";
+        const box = !!e.closest(".fx-edge") && e.tagName === "TEXTAREA"; // the composer edge draws the focus border for its textarea
+        return { ok: outline || ring || box, tag: e.tagName, label: (e.getAttribute("aria-label") || e.textContent || "").trim().slice(0, 30) };
+      });
+      assert.ok(r.ok, `${route}: ${r.tag} "${r.label}" has no visible focus indicator`);
+      await page.keyboard.press("Tab");
+    }
+    await ctx.close();
+  }
+});
+
+test("@baseline a failed load shows an alert with Retry that refetches; an empty list shows the empty state", async () => {
+  let calls = 0;
+  const failing = (r) => (++calls === 1 ? r.fulfill(json(500, { error: "The server is having a bad day." })) : r.fulfill(json(200, { devices: [], total: 0, online: 0, eligible: 0, parked_depth: 0 })));
+  const { ctx, page } = await open({ path: "/devices", routes: { "**/api/devices": failing } });
+  await page.getByRole("alert").waitFor();
+  assert.match(await page.getByRole("alert").innerText(), /bad day/);
+  await page.getByRole("button", { name: /retry/i }).click();
+  await page.getByTestId("empty-state").waitFor();
+  assert.equal(await page.getByRole("alert").count(), 0);
+  assert.equal(calls, 2);
+  await ctx.close();
+});
+
+test("@baseline loading shows the word Loading and a static skeleton, never a spinner", async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const slow = async (r) => { await gate; r.fulfill(json(200, { devices: [], total: 0, online: 0, eligible: 0, parked_depth: 0 })); };
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
+  const page = await ctx.newPage();
+  await page.route("**/api/devices", slow);
+  const nav = page.goto(base + "/devices");
+  await page.getByTestId("skeleton").waitFor();
+  assert.match(await page.getByRole("status").first().innerText(), /Loading/);
+  assert.equal(await page.locator(".animate-spin").count(), 0);
+  release();
+  await nav;
+  await page.getByTestId("empty-state").waitFor();
   await ctx.close();
 });

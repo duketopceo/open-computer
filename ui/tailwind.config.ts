@@ -7,6 +7,15 @@ import type { Config } from "tailwindcss";
 const config: Config = {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
+    // The DESIGN.md type scale, and only it: 12 / 13 / 14 / 16 / 20 / 28 (px), with line heights.
+    fontSize: {
+      xs: ["12px", "16px"],
+      t13: ["13px", "20px"],
+      sm: ["14px", "22px"],
+      base: ["16px", "24px"],
+      xl: ["20px", "28px"],
+      "3xl": ["28px", "36px"],
+    },
     extend: {
       colors: {
         canvas: "var(--sl-canvas)",

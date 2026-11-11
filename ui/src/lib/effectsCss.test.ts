@@ -29,4 +29,19 @@ describe("index.css effects gate", () => {
     expect(css).toMatch(/html\[data-effects="off"\]::view-transition-old\(\*\)/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*::view-transition-group\(\*\)/);
   });
+
+  it("keeps the slanted weave on the canvas: static, with a light variant, and no shader, sheen or drifting layer", () => {
+    expect(css).toMatch(/body::before\s*\{[^}]*repeating-linear-gradient\(45deg[^}]*repeating-linear-gradient\(-45deg/s);
+    expect(css).toMatch(/:root\[data-theme="light"\]\s*\{\s*--fx-weave:/);
+    expect(css).toMatch(/prefers-color-scheme: light\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{\s*--fx-weave:/);
+    const weave = css.slice(css.indexOf("body::before"));
+    expect(weave.slice(0, weave.indexOf("}"))).not.toMatch(/animation/);
+    expect(css).not.toMatch(/body::after/);
+    expect(css).not.toMatch(/fx-sheen|data-ambient/);
+  });
+
+  it("has no decorative glow on the composer focus edge", () => {
+    const focus = css.slice(css.indexOf(".fx-edge:focus-within"));
+    expect(focus.slice(0, focus.indexOf("}"))).not.toMatch(/box-shadow:[^;]*,|box-shadow:\s*0 0 [2-9]\d*px|-\d+px\s+var/);
+  });
 });

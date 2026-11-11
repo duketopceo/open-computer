@@ -1,6 +1,6 @@
 # Roadmap
 
-One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-091` (there is no OC-056). Phases P0-P6 and
+One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-097` (there is no OC-056). Phases P0-P6 and
 the exit criteria below are the plan; this file is the status board and is updated by the PR that
 changes a unit's state. Anything contradicting `main` here is a bug in this file.
 
@@ -153,6 +153,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-095 | P3 | Dev telemetry spine: per-run event stream, events API and JSONL export (dev mode) | #118 |
 | OC-096 | P3 | Live run timeline (dev mode): per-step model, router, cost, waits, commands and errors from the run event stream; virtualized; JSONL export; dev-trace switch with a content-capture warning | this PR |
 | OC-092 | P3 | Cloudflare-hosted console frontend: Worker serves `ui/dist` and proxies `/api/*` (incl. SSE) to the tunnel, offline screen, Access policy | plan: docs/plans/2026-11-01-001-feat-cloudflare-hosted-frontend-plan.md (awaiting owner OK) |
+| OC-097 | P3 | UI baseline and public demo: flat canvas (shader retired), original icon set, type scale, focus, keyboard, states, 390/1440; fixtures-only demo build behind Cloudflare Access (runbook, not deployed) | plan: docs/plans/2026-11-10-0109-feat-ui-baseline-public-demo-plan.md; PR open (draft). Production backend: owner decision pending |
 
 ## Landed since 2026-10-14
 

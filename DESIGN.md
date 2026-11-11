@@ -119,7 +119,24 @@ Flight Strip still governs the CLI, the approval TUI and the Developer area in S
   neither is accent. Above 60 steps the list is virtualized with measured rows. A new card slides in over 160 ms and the running
   line is static under reduced motion. The Dev trace switch under Operator asks before turning on, because it captures content.
 
-## Motion and depth (2026-11-08)
+## Calmer canvas, weave kept (2026-11-10)
+
+Luke found the glow and the moving background too loud, then confirmed he likes the slanted weave. This section supersedes
+"Depth and texture, CSS only" (grain, glow, vignette) and the shader and sheen in "Motion and depth (2026-11-08)" for the web
+console. The weave stays exactly as it was.
+
+- **Canvas:** the `--sl-canvas` token with the static carbon-fibre weave on `body::before` (two crossing 45 degree hairlines plus
+  a faint checker; `--fx-weave` / `--fx-weave-2`, with a light-theme variant). It sits behind the canvas only; cards and the
+  sidebar stay opaque, so text never sits on the pattern. It never animates, so reduced motion and Reduce effects leave it as is.
+- **Retired:** the WebGL ambient shader (`Ambient.tsx`, `lib/ambient.ts`, `vendor/threeui`), the drifting sheen (`body::after`),
+  and the glow on the composer focus edge (focus keeps a 1 px accent border).
+- **Kept:** the weave, the composer "working" ring (the owner's one ambient signal, static under reduced motion), step pulses
+  while a run works, View Transitions and the Motion timeline. Nothing animates while the page is idle.
+- **Checked:** axe (0 violations) over the weave in both themes at 390 and 1440 (`spa.e2e.mjs`, `@effects weave`); the weave
+  CSS is guarded in `ui/src/lib/effectsCss.test.ts`.
+- **Budgets:** the `ambient` chunk budget went with the shader (the weave is CSS, no JS); the main chunk budget is unchanged.
+
+## Motion and depth (2026-11-08, shader and sheen superseded by the calmer canvas above)
 
 Signed off by Luke on 2026-11-08. This section amends "Depth and texture, CSS only" above for the web console. Flight Strip
 still governs the CLI, the approval TUI and Settings > Developer.
@@ -164,3 +181,15 @@ themes stay Silver Lining's.
   ambient "working" signal. Reduced motion and Reduce effects keep the ring and halo, static.
 - **Checked:** `ui/src/lib/palette.test.ts` holds accent and inks at 4.5:1 or more on canvas, surface-1 and surface-3, and
   on-accent at 4.5:1 or more on the accent, in both themes. Axe runs in e2e.
+
+## Icons, baseline and demo (2026-11-10)
+
+- **Icons:** one original set of 51 on a 16 grid, square caps, 1.5 px stroke, `currentColor` (`ui/src/components/icons/`, sheet in
+  `assets/brand/icons.svg`). Navigation, actions, entities and the step-state glyphs (the six in `glyphs.svg` plus awaiting,
+  failed, skipped). No stock pack. An icon is paired with a word or carries an accessible name.
+- **Type and space:** the scale is exactly 12 / 13 / 14 / 16 / 20 / 28 (Tailwind `fontSize` is that and nothing else); headings are
+  sans 600. Form controls, filters, rail buttons and disclosure rows are at least 40 px tall on a phone.
+- **Focus and keyboard:** one global `:focus-visible` outline (2 px accent, 2 px offset); a skip link on every page; Escape closes
+  what it opened. Loading is a static skeleton plus the word "Loading"; empty and error states are explicit and error has Retry.
+- **Demo:** a fixtures-only build (`build:demo`) with a permanent banner. It is a different artifact from the real console, never a
+  mode of it. See `docs/runbooks/demo-deploy.md`.

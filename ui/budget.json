@@ -3,6 +3,6 @@
   "main": 133120,
   "chunks": {
     "motionFeatures": 40960,
-    "ambient": 8192
+    "demo": 16384
   }
 }

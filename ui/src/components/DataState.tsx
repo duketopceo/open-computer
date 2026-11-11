@@ -1,6 +1,8 @@
+import { Icon } from "./icons/Icon";
 import { Button } from "./primitives";
+import { Skeleton } from "./Skeleton";
 
-/** Loading / error states shared by every data page. Renders nothing once data is present
+/** Loading / error states shared by every data page (the empty state is EmptyState). Renders nothing once data is present
  *  and there is no error, so pages put it above their content. */
 export function DataState({
   loading,
@@ -16,8 +18,10 @@ export function DataState({
   if (error) {
     return (
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-urgent bg-urgent-soft px-3 py-2 text-sm text-urgent" role="alert">
+        <Icon name="failed" />
         <span>{error}</span>
-        <Button variant="subtle" className="h-7" onClick={onRetry}>
+        <Button variant="subtle" className="h-7 max-md:h-10" onClick={onRetry}>
+          <Icon name="retry" />
           Retry
         </Button>
       </div>
@@ -25,10 +29,10 @@ export function DataState({
   }
   if (loading && !hasData) {
     return (
-      <p className="flex items-center gap-2 text-sm text-muted" role="status">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-accent" aria-hidden />
-        Loading…
-      </p>
+      <div role="status" aria-live="polite">
+        <p className="mb-3 text-sm text-muted">Loading…</p>
+        <Skeleton rows={3} />
+      </div>
     );
   }
   return null;

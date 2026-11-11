@@ -97,3 +97,10 @@ Ranking = (does it block "goal in, artifact out") x (does it make an existing sa
 - **`ROADMAP.md`** was rewritten on main (MIT decided, Phase 1 = conformance harness) and rewritten differently on the program branch; PR #6 will conflict.
 - **Spend rule vs code:** `TIER_MODELS` names Anthropic models; `ARCHITECTURE_MAP.md` names "Opus 5" as orchestrator.
 - **Name collision:** several unrelated projects use "open-computer"/"Open Computer Use" (e.g. [e2b-dev/open-computer-use](https://gittrend.io/repo/e2b-dev/open-computer-use), an MCP "Open Computer Use" launched on Product Hunt 2026-05-14, and an "OpenComputer" VM product; search results, unverified detail). Matters for marketplace listings (see MARKETPLACES.md). Decide the listing name before any registry publish, because MCP Registry and plugin names are effectively permanent.
+
+## 5. Public demo mode (2026-11-10)
+
+`pnpm --dir ui build:demo` builds the console against in-bundle fixtures: no backend, no model call, no key, no network. Writes are
+simulated in memory and reset on reload; a banner says so on every page. The flag is a compile-time constant, the normal build
+contains no fixture code, and `ui/scripts/check-demo-bundle.mjs` proves it. Deploy steps (Cloudflare Access in front, nothing
+executed from this repo): `docs/runbooks/demo-deploy.md`. The production backend is an open owner decision.

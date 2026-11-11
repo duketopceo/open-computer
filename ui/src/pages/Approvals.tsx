@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PageShell } from "@/components/PageShell";
 import { DataState } from "@/components/DataState";
+import { Icon } from "@/components/icons/Icon";
 import { Empty, StatusWord, Time } from "@/components/DataTable";
 import { Button } from "@/components/primitives";
 import { approvalRisk, decideQueueItem, getApprovals, type ApprovalItem } from "@/lib/api";
@@ -91,7 +92,7 @@ function useApprovalChords(count: number, cur: number, setSel: (n: number) => vo
 }
 
 const RISK_STYLE = { high: "text-urgent", elevated: "text-attention", low: "text-accent" } as const;
-const RISK_GLYPH = { high: "✕", elevated: "▲", low: "✓" } as const;
+const RISK_GLYPH = { high: "denied", elevated: "awaiting", low: "done" } as const;
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -171,7 +172,7 @@ function Card({
         <Fact label="Estimated cost">{price}</Fact>
         <Fact label="Risk">
           <span className={RISK_STYLE[risk.level]}>
-            <span aria-hidden>{RISK_GLYPH[risk.level]}</span> {risk.level[0].toUpperCase() + risk.level.slice(1)} risk
+            <Icon name={RISK_GLYPH[risk.level]} /> {risk.level[0].toUpperCase() + risk.level.slice(1)} risk
           </span>
           <span className="block text-xs text-muted">{risk.why}</span>
         </Fact>
@@ -196,7 +197,7 @@ function Card({
         </details>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button data-act="approve" aria-keyshortcuts="a" onClick={() => decide("approve")} disabled={busy !== null}>
+        <Button variant="primary" data-act="approve" aria-keyshortcuts="a" onClick={() => decide("approve")} disabled={busy !== null}>
           {busy === "approve" ? "Approving…" : `Approve ${price}`}
         </Button>
         <input

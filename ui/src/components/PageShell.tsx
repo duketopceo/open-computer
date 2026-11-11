@@ -2,18 +2,27 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NAV } from "@/lib/nav";
 import { session } from "@/lib/api";
 import { useRouter } from "@/lib/router";
+import { Icon } from "./icons/Icon";
 import { NavList } from "./NavList";
 
 export function Brand() {
   return (
     <span className="flex items-center gap-2">
       <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-on-accent">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M4 5h16v12H4z M8 9h8M8 12h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <Icon name="sandbox" />
       </span>
       <span className="text-sm font-semibold text-ink">Open Computer</span>
     </span>
+  );
+}
+
+/** The page heading: sentence-case sans 600 at 20 px (DESIGN.md), with an optional one-line purpose. */
+export function PageHeader({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <>
+      <h1 className="text-xl font-semibold text-ink">{title}</h1>
+      {sub ? <p className="mt-1 mb-6 max-w-2xl text-sm text-muted">{sub}</p> : <div className="mb-6" />}
+    </>
   );
 }
 
@@ -60,7 +69,7 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
           <NavList items={NAV} />
         </div>
         {identity && (
-          <p className="truncate border-t border-line px-4 py-3 text-[11px] text-muted" title={identity}>
+          <p className="truncate border-t border-line px-4 py-3 text-xs text-muted" title={identity}>
             {identity}
           </p>
         )}
@@ -73,7 +82,7 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
           aria-expanded={open}
           aria-controls="mobile-nav"
           onClick={() => setOpen((o) => !o)}
-          className="h-9 rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="h-10 min-w-[44px] rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           {open ? "Close menu" : "Menu"}
         </button>
@@ -91,8 +100,7 @@ export function PageShell({ title, sub, children }: { title: string; sub?: strin
         className="min-w-0 flex-1 overflow-y-auto px-4 py-6 focus:outline-none md:px-8 md:py-8"
       >
         <div className="mx-auto w-full max-w-5xl">
-          <h1 className="font-display text-2xl text-ink">{title}</h1>
-          {sub ? <p className="mt-1 mb-6 max-w-2xl text-sm text-muted">{sub}</p> : <div className="mb-6" />}
+          <PageHeader title={title} sub={sub} />
           {children}
         </div>
       </main>

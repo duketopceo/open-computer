@@ -8,8 +8,11 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build && node scripts/budget.mjs",
-    "test": "vitest run && node --test scripts/budget.test.mjs",
-    "preview": "vite preview"
+    "test": "vitest run && node --test scripts/budget.test.mjs scripts/check-demo-bundle.test.mjs scripts/edge-config.test.mjs",
+    "preview": "vite preview",
+    "build:demo": "tsc --noEmit && vite build --mode demo && node scripts/budget.mjs dist-demo",
+    "dev:demo": "vite --mode demo",
+    "check:demo": "node scripts/check-demo-bundle.mjs dist-demo demo && node scripts/check-demo-bundle.mjs dist prod"
   },
   "dependencies": {
     "@tanstack/react-virtual": "3.13.12",
@@ -20,7 +23,9 @@
     "react-dom": "^18.3.1"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

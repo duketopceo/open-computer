@@ -89,6 +89,11 @@ Full guide: [docs/runbooks/observability.md](./docs/runbooks/observability.md). 
 Postgres or Supabase sink for the same data, off unless you set `OC_OBS_SINK_POSTGRES_URL`) has its plan merged
 in [#74](https://github.com/duketopceo/open-computer/pull/74) but is not built yet: no code has changed for it.
 
+## Public demo (not deployed)
+
+`pnpm --dir ui build:demo` builds the console on fixtures only (no backend, no keys, no compute) for a public demo behind
+Cloudflare Access. Nothing is deployed from this repo; the owner's steps are in [docs/runbooks/demo-deploy.md](docs/runbooks/demo-deploy.md).
+
 ## Recently merged: orchestrator and console
 
 - [#75](https://github.com/duketopceo/open-computer/pull/75): an orchestrator fix for live goal runs. Steps of

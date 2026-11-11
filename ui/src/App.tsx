@@ -123,7 +123,8 @@ export default function App() {
   useEffect(() => {
     const fromHash = () => {
       const [id, sub] = location.hash.replace(/^#/, "").split("/");
-      if (id) {
+      // "#demo-..." anchors are demo placeholders for disabled links (lib/api.ts, lib/runEvents.ts), never a run or chat id.
+      if (id && !id.startsWith("demo-")) {
         setSelected(id);
         setTimeline(sub === "timeline");
       }
@@ -268,6 +269,12 @@ export default function App() {
   const gone = selected && selError;
   return (
     <div className="flex h-full">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-surface-1 focus:px-3 focus:py-2 focus:text-sm focus:shadow-card"
+      >
+        Skip to content
+      </a>
       <Sidebar
         threads={threads}
         runs={runs}
@@ -283,7 +290,7 @@ export default function App() {
         earlier={earlier}
       />
 
-      <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
+      <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col overflow-y-auto focus:outline-none">
         {link !== "ok" && <LinkBanner link={link} />}
         {view === "agents" ? (
           <AgentJobs jobs={jobs} jobsError={jobsError} link={link} onRefresh={refreshJobs} onOk={noteSuccess} onFail={noteFailure} />
@@ -330,7 +337,7 @@ export default function App() {
                 {error}
               </p>
             )}
-            <h1 className="mb-6 text-center font-display text-3xl text-ink">What are we working on?</h1>
+            <h1 className="mb-6 text-center font-semibold text-3xl text-ink">What are we working on?</h1>
             <Composer
               onSend={onSend}
               starter={draft}

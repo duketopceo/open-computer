@@ -50,7 +50,7 @@ export function RunView({ run, compact = false, onChanged }: { run: RunDetail; c
   return (
     <div className={compact ? "w-full animate-fade-up" : "mx-auto w-full max-w-3xl animate-fade-up"}>
       <header className={compact ? "mb-3" : "mb-6"}>
-        {!compact && <h1 className="font-display text-2xl leading-snug text-ink">{run.goal}</h1>}
+        {!compact && <h1 className="font-semibold text-xl leading-snug text-ink">{run.goal}</h1>}
         <div className={compact ? "flex flex-wrap items-center gap-2 text-xs" : "mt-3 flex flex-wrap items-center gap-2 text-xs"}>
           <StateWord state={planned ? "AWAITING-APPROVAL" : aggregate(states, active)} />
           <span className="mono text-muted">
@@ -190,9 +190,9 @@ function SubTaskRow({ s, steps, plain = false }: { s: SubTask; steps: SubTask[];
         <Dot state={s.state} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="truncate text-sm font-medium text-ink">{s.title || s.subtask}</p>
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0 break-words text-sm font-medium text-ink md:truncate">{s.title || s.subtask}</p>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2">
             {!plain && engine(s.engine) && <span className="mono text-muted">{engine(s.engine)}</span>}
             {took && (
               <span className="mono text-muted" title={live ? "Running for" : "Run time"}>
@@ -284,9 +284,9 @@ function SkippedRow({ s, why }: { s: SubTask; why: string }) {
         <span aria-hidden="true" className="inline-block h-2 w-2 rounded-sm border border-dashed border-muted" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="truncate text-sm font-medium text-muted">{s.title || s.subtask}</p>
-          <span className="mono shrink-0 text-muted">{why}</span>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0 break-words text-sm font-medium text-muted md:truncate">{s.title || s.subtask}</p>
+          <span className="mono text-muted">{why}</span>
         </div>
       </div>
     </li>

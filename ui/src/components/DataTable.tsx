@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { rel } from "@/lib/format";
+import { Icon, type IconName } from "./icons/Icon";
+import { EmptyState } from "./EmptyState";
 import { cn } from "@/lib/cn";
 
 export function Table({ caption, head, children }: { caption: string; head: string[]; children: ReactNode }) {
@@ -42,35 +44,30 @@ export function Time({ ts }: { ts: number }) {
   );
 }
 
-const WORDS: Record<string, { glyph: string; cls: string }> = {
-  online: { glyph: "●", cls: "text-accent" },
-  asleep: { glyph: "◐", cls: "text-attention" },
-  offline: { glyph: "○", cls: "text-muted" },
-  allowed: { glyph: "✓", cls: "text-accent" },
-  approved: { glyph: "✓", cls: "text-accent" },
-  blocked: { glyph: "✕", cls: "text-urgent" },
-  "sent back": { glyph: "↩", cls: "text-attention" },
-  recorded: { glyph: "•", cls: "text-muted" },
-  up: { glyph: "●", cls: "text-accent" },
-  down: { glyph: "✕", cls: "text-urgent" },
+const WORDS: Record<string, { glyph: IconName; cls: string }> = {
+  online: { glyph: "done", cls: "text-accent" },
+  asleep: { glyph: "leased", cls: "text-attention" },
+  offline: { glyph: "queued", cls: "text-muted" },
+  allowed: { glyph: "done", cls: "text-accent" },
+  approved: { glyph: "done", cls: "text-accent" },
+  blocked: { glyph: "denied", cls: "text-urgent" },
+  "sent back": { glyph: "retry", cls: "text-attention" },
+  recorded: { glyph: "step", cls: "text-muted" },
+  up: { glyph: "done", cls: "text-accent" },
+  down: { glyph: "denied", cls: "text-urgent" },
 };
 
 /** State as glyph plus word, never colour alone. */
 export function StatusWord({ word }: { word: string }) {
-  const w = WORDS[word.toLowerCase()] ?? { glyph: "•", cls: "text-muted" };
+  const w = WORDS[word.toLowerCase()] ?? { glyph: "step" as IconName, cls: "text-muted" };
   return (
     <span className={cn("inline-flex items-center gap-1.5", w.cls)}>
-      <span aria-hidden>{w.glyph}</span>
+      <Icon name={w.glyph} />
       {word}
     </span>
   );
 }
 
-export function Empty({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-line bg-surface-1 p-6 text-sm">
-      <p className="font-medium text-ink">{title}</p>
-      {children && <p className="mt-1 max-w-xl text-muted">{children}</p>}
-    </div>
-  );
+export function Empty({ title, children, icon = "step" }: { title: string; children?: ReactNode; icon?: IconName }) {
+  return <EmptyState icon={icon} title={title}>{children}</EmptyState>;
 }

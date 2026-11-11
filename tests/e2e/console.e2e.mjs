@@ -151,11 +151,15 @@ test("@keyboard approvals: pending cards in queue order, keyboard-only approve, 
   await page.keyboard.press("Tab"); // note -> Send back
   await page.keyboard.press("Enter");
   await page.waitForFunction((n) => [...document.querySelectorAll("main ul > li")].filter((li) => li.querySelector("button") && /Approve/.test(li.textContent)).length === n, 2);
+  // wait for the queue itself, not a text proxy: a card reads "Approving…" before it leaves the list
+  const settled = (expected) => page.waitForFunction((exp) => JSON.stringify([...document.querySelectorAll("[data-approval]")].map((e) => e.getAttribute("data-approval"))) === JSON.stringify(exp), expected);
+  await settled([queue[0], queue[2]]);
   assert.deepEqual(await ids(), [queue[0], queue[2]]);
   // approve the first remaining card from the keyboard
   await cards.first().getByRole("button", { name: "Approve" }).focus();
   await page.keyboard.press("Enter");
   await page.waitForFunction((n) => [...document.querySelectorAll("main ul > li")].filter((li) => li.querySelector("button") && /Approve/.test(li.textContent)).length === n, 1);
+  await settled([queue[2]]);
   assert.deepEqual(await ids(), [queue[2]]);
   const audit = await (await ctx.request.get(RW + "/api/audit?f=decisions")).text();
   assert.match(audit, /approved/); assert.match(audit, /sent back/);
