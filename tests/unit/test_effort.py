@@ -43,6 +43,8 @@ def test_default_is_never_high(monkeypatch):
     assert effort.default_id() == "low"
     monkeypatch.setenv("OC_EFFORT_DEFAULT", "Medium")
     assert effort.default_id() == "medium"
+    monkeypatch.setenv("OC_EFFORT_DEFAULT", "high")
+    assert effort.default_id() == "low"
 
 
 def test_resolve_defaults_and_levels(monkeypatch):
@@ -84,6 +86,19 @@ def test_advanced_override_picks_an_allowed_model_and_a_budget_within_the_cap():
 def test_resolve_refuses_unknown_premium_and_over_cap(args):
     with pytest.raises(ValueError):
         effort.resolve(*args, 1.0)
+
+
+def test_unset_daily_cap_is_five_dollars_and_high_stays_one(tmp_path, monkeypatch):
+    monkeypatch.delenv("OC_DAILY_CAP", raising=False)
+    from services.opsview.server import daily_cap
+    from services.router.budget import Budget
+    from services.router.router import default_router
+
+    assert daily_cap() == 5.0
+    assert Budget(tmp_path / "ledger.jsonl").daily_cap == 5.0
+    assert default_router(tmp_path / "router.jsonl").budget.daily_cap == 5.0
+    assert default_router(tmp_path / "router.jsonl").budget.task_cap == 0.10
+    assert effort.resolve("high", None, None, daily_cap()).budget == 1.0
 
 
 def test_level_models_are_the_catalog_presets_and_none_is_above_the_ceiling():

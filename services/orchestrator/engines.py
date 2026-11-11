@@ -9,8 +9,8 @@ dispatch's placement for real:
                       are not wired yet (U2 live path); the task fails
                       CLOSED with an honest reason, never a fake result
 
-Every model call goes through OpenRouter; there are no local models. A task
-recorded with an old local-* placement runs on OpenRouter too.
+Every new goal step goes through OpenRouter. A mailbox row that still says
+local-* fails closed unless OC_LOCAL_MODELS=1, in which case local_work runs.
 
 Keys come from env, never files: OPENROUTER_API_KEY. Models default cheap.
 """
@@ -90,7 +90,15 @@ class SandboxWorkerUnavailable(WorkerUnavailable):
     pass
 
 
+class LocalPlacementRefused(WorkerUnavailable):
+    """A stale local-* mailbox row, and OC_LOCAL_MODELS is off. No model call."""
+
+
 OR_CHAT = "https://openrouter.ai/api/v1/chat/completions"
+LOCAL_CHAT = {
+    "local-ollama": "http://127.0.0.1:11434/v1/chat/completions",
+    "local-llamacpp": "http://127.0.0.1:8080/v1/chat/completions",
+}
 
 _plane_instance = None
 _sleep = time.sleep  # injectable: tests never wait out the boot-retry pause
@@ -394,6 +402,19 @@ def _post(url: str, payload: dict, key: str = "", timeout: float = 60.0) -> dict
         raise RuntimeError(f"{url} -> HTTP {e.code}: {body or e.reason}") from e
 
 
+def local_models_enabled() -> bool:
+    return os.environ.get("OC_LOCAL_MODELS", "").strip() == "1"
+
+
+def local_work(task: dict, *, model: str, key: str = "", timeout: float = 90.0) -> str:
+    """One chat completion on the local endpoint named by the placement. Free: cost stays 0."""
+    url = LOCAL_CHAT.get(str(task.get("placement") or ""))
+    if url is None:
+        raise LocalPlacementRefused(f"no local endpoint for placement {task.get('placement')!r}")
+    text, _cost = _chat(url, model, task["prompt"], key=key, timeout=timeout)
+    return text
+
+
 def _chat(url: str, model: str, prompt: str, key: str = "", timeout: float = 60.0) -> tuple[str, float]:
     """OpenAI-compatible chat call -> (text, cost_usd).
 
@@ -467,7 +488,14 @@ def work_fn(
                     out = web_work(task, lambda p: _chat(OR_CHAT, or_model, p, key=key, timeout=90)[0])
                 elif target == "cloud-sandbox":
                     out = sandbox_work(task, model=or_model, api_key=key)
-                else:  # cloud-OpenRouter, and any older placement (local-* included)
+                elif str(target).startswith("local-"):
+                    if not local_models_enabled():
+                        raise LocalPlacementRefused(
+                            f"placement {target} refused: OC_LOCAL_MODELS is off",
+                            hint="This task is not sent to a local endpoint or to OpenRouter.",
+                        )
+                    out = local_work(task, model=or_model, key=key or "")
+                else:  # cloud-OpenRouter, and any other non-local target
                     out, _ = _chat(OR_CHAT, or_model, task["prompt"], key=key, timeout=90)
             except Exception as e:
                 e.usage = total_usage(used)  # paid calls made before the failure still count (the runner records it)

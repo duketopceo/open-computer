@@ -5,6 +5,7 @@ The run-page render is exercised against a registry populated on disk.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -482,3 +483,474 @@ def test_dependent_failed_step_is_skipped_with_no_duration(console, monkeypatch,
     a, b = goalruns.get_run(rid)["subtasks"]
     assert "skipped" not in a and a["started_ts"] == 12.0
     assert b["skipped"] is True and b["started_ts"] == b["finished_ts"] == 40.5
+
+
+def _hold(tmp_path, monkeypatch, clock=None, ttl=900.0):
+    """A pii-send queue on temp files. `clock` is optional so a grant can expire."""
+    from services.gate import Gate
+    from services.gate.queue import ApprovalQueue
+    from services.orchestrator.privacy import PrivacyHold
+
+    audit = tmp_path / "audit.ndjson"
+    approvals = tmp_path / "approvals.ndjson"
+    monkeypatch.setenv("OC_AUDIT", str(audit))
+    monkeypatch.setenv("OC_APPROVALS", str(approvals))
+    gate = Gate(audit, **({"clock": clock, "approval_ttl": ttl} if clock else {}))
+    return PrivacyHold(ApprovalQueue(approvals, gate), gate)
+
+
+def _counting_router():
+    from services.router.router import RouteDecision
+
+    seen: list[str] = []
+
+    class Router:
+        def route(self, prompt: str) -> RouteDecision:
+            seen.append(prompt)
+            return RouteDecision("answer", "mid", "jev", 1.0, 0.0, 1.0)
+
+    return Router(), seen
+
+
+def test_flagged_goal_holds_the_planner_until_one_approved_send(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    planner: list[str] = []
+    router, routed = _counting_router()
+
+    def engine(prompt: str) -> str:
+        planner.append(prompt)
+        return json.dumps([{"id": "a", "title": "A", "prompt": "do the work", "tier": "mid", "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", router=router, privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("write to ada@example.com", engine)
+    assert planner == [] and orch.fs.inbox_ids("worker") == [] and routed == []
+    card = privacy.queue.pending()[0]
+    assert card["payload"]["model"] == "vendor/effort" and "ada@example.com" in card["payload"]["text"]
+    assert privacy.hash_of(card["payload"]) == card["payload_hash"]
+    privacy.queue.decide(card["id"], approve=True, by="owner")
+    orch.work(lambda task: "ok")
+    assert planner == [card["payload"]["text"]]
+    orch.work(lambda task: "ok")
+    assert planner == [card["payload"]["text"]]
+    assert (tmp_path / "run" / "plan.json").exists()
+    assert rid
+
+
+def test_flagged_step_hashes_the_wrapped_prompt_and_does_not_route(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    router, routed = _counting_router()
+    hosted: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "say hi", "tier": "mid", "deps": []},
+            {"id": "b", "title": "B", "prompt": "use the data", "tier": "mid", "deps": ["a"]},
+        ])
+
+    def work(task: dict) -> str:
+        hosted.append(task["prompt"])
+        return "reach ada@example.com" if task["subtask"] == "a" else "done"
+
+    orch = Orchestrator(tmp_path / "run", router=router, privacy=privacy, effort_model="vendor/effort")
+    orch.submit("a clean goal", engine)
+    orch.work(work)
+    orch.work(work)
+    cards = [c for c in privacy.queue.pending() if c["payload"].get("step") == "b"]
+    assert cards and "ada@example.com" in cards[0]["payload"]["text"]
+    assert cards[0]["payload"]["model"] == "vendor/effort"
+    assert privacy.hash_of(cards[0]["payload"]) == cards[0]["payload_hash"]
+    assert routed == []
+    assert all("use the data" not in prompt for prompt in hosted)
+
+
+def test_skip_with_a_note_cascades_and_an_empty_note_stays_held(tmp_path, monkeypatch):
+    from services.gate.queue import QueueError
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    hosted: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "mail ada@example.com", "tier": "mid", "deps": []},
+            {"id": "b", "title": "B", "prompt": "next", "tier": "mid", "deps": ["a"]},
+        ])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("clean", engine)
+    card = privacy.queue.pending()[0]
+    with pytest.raises(QueueError):
+        privacy.queue.decide(card["id"], approve=False, by="owner", note="  ")
+    assert privacy.status(card["id"]) == "pending"
+    privacy.queue.decide(card["id"], approve=False, by="owner", note="do not send")
+    orch.work(lambda task: hosted.append(task["prompt"]) or "no")
+    kinds = {r["kind"] for r in orch.audit.rows() if r.get("event") == "worker_fail"}
+    assert "skipped" in kinds and "DependencyFailed" in kinds
+    assert hosted == []
+    assert rid
+
+
+def test_sweep_holds_and_a_restart_before_plan_json_stays_unsent(tmp_path, monkeypatch):
+    from services.durable.activities import HELD, work_sweep
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    def engine(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps([{"id": "a", "title": "A", "prompt": "x", "tier": "mid", "deps": []}])
+
+    root = tmp_path / "goal_held"
+    orch = Orchestrator(root, privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("ada@example.com", engine)
+    assert work_sweep(str(root)) == HELD
+    fresh = Orchestrator(root, privacy=privacy, effort_model="vendor/effort")
+    assert fresh.recover(rid) is True
+    assert not (root / "plan.json").exists()
+    assert privacy.status(privacy.queue.pending()[0]["id"]) == "pending"
+    assert calls == []
+
+
+def test_expired_grant_opens_a_new_card_and_does_not_send(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    now = {"t": 1_000.0}
+    privacy = _hold(tmp_path, monkeypatch, clock=lambda: now["t"], ttl=10)
+    calls: list[str] = []
+
+    def engine(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps([{"id": "a", "title": "A", "prompt": "x", "tier": "mid", "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("ada@example.com", engine)
+    card = privacy.queue.pending()[0]
+    privacy.queue.decide(card["id"], approve=True, by="owner")
+    now["t"] = 2_000.0
+    orch.work(lambda task: "no")
+    assert calls == []
+    pending = privacy.queue.pending()
+    assert len(pending) == 1 and pending[0]["id"] != card["id"]
+    assert privacy.status(card["id"]) == "approved"
+
+
+def test_device_step_skips_the_card_and_the_router(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    router, routed = _counting_router()
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([{
+            "id": "a", "title": "A", "prompt": "ada@example.com on this machine",
+            "tier": "mid", "deps": [], "device_root": "/tmp/notes",
+        }])
+
+    orch = Orchestrator(tmp_path / "run", router=router, privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("clean goal", engine)
+    assert privacy.queue.pending() == [] and routed == []
+    assert orch.dispatches[rid][0]["placement"] == "device"
+
+
+def test_sandbox_stays_unmailed_until_pii_send_even_after_egress_approval(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    ran: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([{
+            "id": "a", "title": "A", "prompt": "mail ada@example.com", "tier": "mid", "deps": [],
+            "needs_sandbox": True,
+        }])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("clean goal", engine)
+    orch.work(lambda task: ran.append(task.get("placement", "")) or "no")
+    assert ran == []
+    egress_id = privacy.queue.submit(
+        who="orchestrator",
+        what="Let the run reach example.com",
+        payload={"kind": "egress", "hosts": ["example.com"], "model": "none (network access only)"},
+        session="other",
+    )
+    privacy.queue.decide(egress_id, approve=True, by="owner")
+    orch.work(lambda task: ran.append(task.get("placement", "")) or "no")
+    assert ran == []
+    pii = next(c for c in privacy.queue.pending() if (c.get("payload") or {}).get("kind") == "pii-send")
+    privacy.queue.decide(pii["id"], approve=True, by="owner")
+    orch.work(lambda task: ran.append(str(task.get("placement"))) or "ran")
+    assert ran == ["cloud-sandbox"]
+
+
+def test_empty_categories_mail_without_a_card(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    ran: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "say hello", "tier": "mid", "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("summarise the notes", engine)
+    orch.work(lambda task: ran.append(task["prompt"]) or "ok")
+    assert privacy.queue.pending() == []
+    assert ran == ["say hello"]
+
+
+def test_mcp_can_list_the_card_but_cannot_send_it(tmp_path, monkeypatch):
+    from services.mcp.server import State, t_list_approvals, t_request_approval
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    def engine(prompt: str) -> str:
+        calls.append(prompt)
+        return "[]"
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("ada@example.com", engine)
+    listed = t_list_approvals(State(), {})
+    assert any("pii-send" in (row.get("what") or "") for row in listed["approvals"])
+    t_request_approval(State(), {"what": "something else", "payload": {"kind": "note", "text": "other"}})
+    assert calls == [] and orch.fs.inbox_ids("worker") == []
+
+
+def test_run_cap_not_the_router_task_cap_decides_whether_chat_is_mailed(tmp_path):
+    from services.cost import CostLedger
+    from services.orchestrator import Orchestrator
+    from services.router.budget import Budget
+    from services.router.router import RouteDecision, Router
+
+    class Engine:
+        def run(self, _utterance: str) -> RouteDecision:
+            return RouteDecision("answer", "mid", "stub", 1.0, 0.0, 1.0)
+
+    router = Router(Budget(tmp_path / "router.jsonl", daily_cap=5.0, task_cap=0.10), [Engine()])
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.30)
+
+    def plan(_goal: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0.20, "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", router=router, ledger=led, effort_model="vendor/effort")
+    rid = orch.submit("clean goal", plan)
+    assert orch.dispatches[rid][0]["placement"] == "cloud-OpenRouter"
+    assert orch.fs.inbox_ids("worker")
+
+
+def test_over_budget_chat_and_its_sandbox_dependency_stay_queued(tmp_path):
+    from services.cost import CostLedger, Usage
+    from services.orchestrator import Orchestrator
+    from services.orchestrator.runner import WorkResult
+
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.10)
+
+    def plan(_goal: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0.20, "deps": []},
+            {"id": "b", "title": "B", "prompt": "run", "tier": "mid", "est_cost": 0.05, "deps": ["a"],
+             "needs_sandbox": True},
+        ])
+
+    orch = Orchestrator(tmp_path / "run", ledger=led, effort_model="vendor/effort")
+    rid = orch.submit("clean goal", plan)
+    assert orch.fs.inbox_ids("worker") == []
+    assert orch.cap_pending(rid)
+    held = [r for r in orch.audit.rows() if r.get("event") == "held_cost_cap"]
+    assert held and held[0]["subtask"] == "a"
+    assert orch.results(rid)["a"]["state"] != "FAILED"
+    # The chat fits once the cap is raised, runs, and pauses the run on its own spend.
+    led.resume(rid, 0.25, by="owner")
+    orch._cap_hold.clear()
+
+    def work(task: dict):
+        if task["subtask"] == "a":
+            return WorkResult("ok", Usage("vendor/served", 3, 4, 0.25))
+        return WorkResult("box", Usage("vendor/served", 1, 1, 0.01))
+
+    orch.work(work)
+    sand = [r for r in orch.audit.rows() if r.get("event") == "held_cost_cap" and r.get("subtask") == "b"]
+    assert sand and sand[0]["placement"] == "cloud-sandbox"
+    assert orch.results(rid)["b"]["state"] != "FAILED"
+    assert not any(r.get("kind") == "NoPlacement" for r in orch.audit.rows())
+    led.resume(rid, 1.0, by="owner")
+    with pytest.raises(ValueError):
+        led.resume(rid, 1.0, by="owner")
+    orch._cap_hold.clear()
+    orch.work(work)
+    assert any(d["subtask"] == "b" and d["placement"] == "cloud-sandbox" for d in orch.dispatches[rid])
+
+
+def test_sweep_holds_while_the_run_file_cannot_cover_the_step(tmp_path, monkeypatch):
+    from services.durable.activities import HELD, work_sweep
+    from services.orchestrator import Orchestrator
+    from services.orchestrator.runcfg import create_ledger
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_caphold1"
+    root = tmp_path / rid
+    root.mkdir()
+    ledger = create_ledger(root, rid, 0.10, "owner")
+
+    def plan(_goal: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0.20, "deps": []}])
+
+    Orchestrator(root, ledger=ledger).submit("clean goal", plan, run_id=rid)
+    assert work_sweep(str(root)) == HELD
+    from oc.fsproto import adapter as fs_adapter
+
+    assert fs_adapter(root / "run").inbox_ids("worker") == []
+
+
+def test_a_zero_estimate_still_starts_while_the_run_is_under_its_cap(tmp_path):
+    from services.cost import CostLedger
+    from services.orchestrator import Orchestrator
+
+    led = CostLedger(tmp_path / "c.ndjson", default_cap=0.30)
+
+    def plan(_goal: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "hi", "tier": "mid", "est_cost": 0, "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", ledger=led)
+    rid = orch.submit("clean goal", plan)
+    assert orch.dispatches[rid][0]["placement"] == "cloud-OpenRouter"
+    assert orch.fs.inbox_ids("worker")
+
+
+def test_owner_resume_route_raises_the_cap(console):
+    from services.orchestrator.runcfg import create_ledger
+
+    rid = "goal_abc12345"
+    d = console.base / "goals" / rid
+    d.mkdir(parents=True)
+    create_ledger(d, rid, 0.30, "owner")
+    status, _, body = console.post(f"/api/runs/{rid}/resume", {"cap": "0.30"})
+    assert status == 409
+    status, _, body = console.post(f"/api/runs/{rid}/resume", {"cap": "0.80"})
+    assert status == 200 and "0.8" in body
+
+
+def test_completion_records_provider_usage_and_omits_it_when_absent(tmp_path, monkeypatch):
+    from services.cost import Usage
+    from services.orchestrator import Orchestrator
+    from services.orchestrator.runner import WorkResult
+    from services.orchestrator.runcfg import create_ledger
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_u4record"
+    root = tmp_path / rid
+    root.mkdir()
+    ledger = create_ledger(root, rid, 1.0, "owner")
+
+    def plan(_goal: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "chat", "tier": "mid", "deps": []},
+            {"id": "b", "title": "B", "prompt": "box", "tier": "mid", "deps": ["a"], "needs_sandbox": True},
+            {"id": "c", "title": "C", "prompt": "plain", "tier": "mid", "deps": ["b"]},
+        ])
+
+    def work(task: dict):
+        if task["subtask"] == "a":
+            return WorkResult("chat-out", Usage("vendor/served", 7, 3, 0.0031))
+        if task["subtask"] == "b":
+            return WorkResult("box-out", Usage("vendor/sandbox", 2, 2, 0.004))
+        return "plain-text"
+
+    orch = Orchestrator(root, ledger=ledger, effort_model="vendor/requested")
+    orch.submit("clean goal", plan, run_id=rid)
+    assert orch.work(work) and orch.work(work) and orch.work(work)
+    done = {r["task"]: r for r in orch.audit.rows() if r.get("event") == "worker_done"}
+    by_sub = {d["subtask"]: d["task"] for d in orch.dispatches[rid]}
+    assert done[by_sub["a"]]["worker"]["model"] == "vendor/served"
+    assert done[by_sub["a"]]["worker"]["cost"] == 0.0031
+    assert done[by_sub["b"]]["worker"]["model"] == "vendor/sandbox"
+    assert "worker" not in done[by_sub["c"]]
+    detail = {s["subtask"]: s for s in goalruns.get_run(rid)["subtasks"]}
+    assert detail["a"]["worker"]["model"] == "vendor/served" and detail["a"]["worker"]["cost"] == 0.0031
+    assert detail["b"]["worker"]["cost"] == 0.004
+    assert "worker" not in detail["c"]
+
+
+def _patch_planner(monkeypatch):
+    import services.durable.activities as act
+
+    calls: list[str] = []
+
+    def factory(*_a, **_k):
+        def engine(prompt: str) -> str:
+            calls.append(prompt)
+            return json.dumps([{"id": "a", "title": "A", "prompt": "do it", "tier": "mid", "deps": []}])
+
+        return engine
+
+    monkeypatch.setattr(act, "decompose_engine", factory)
+    return calls
+
+
+def test_automation_fire_gets_an_effort_plan(tmp_path, monkeypatch):
+    from services.durable.activities import submit_goal
+    from services.opsview.automations import resolved_cron_fields
+    from services.opsview.effort import BY_ID
+    from services.orchestrator.runcfg import ledger_for
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    monkeypatch.delenv("OC_EFFORT_DEFAULT", raising=False)
+    calls = _patch_planner(monkeypatch)
+    out = submit_goal("ship the notes", "automation", "medium", None, None)
+    rows = goalruns._audit_rows(Path(out["run_dir"]))
+    effort_row = next(r for r in rows if r.get("event") == "effort_set")
+    assert effort_row["effort"] == "medium" and effort_row["budget"] == 0.30
+    assert effort_row["model"] == BY_ID["medium"].model
+    assert ledger_for(out["run_dir"]).state(out["run_id"]).cap == 0.30
+    assert calls and calls[0]  # decompose received the planner prompt for the resolved model
+    assert not any(d.get("placement", "").startswith("local") for d in rows if d.get("event") == "dispatch")
+    stored = resolved_cron_fields("only a goal")
+    assert stored["effort"] == "low" and stored["budget"] == 0.10 and stored["model"] == BY_ID["low"].model
+
+
+def test_automation_fire_without_effort_uses_low_and_clamps_the_budget(tmp_path, monkeypatch):
+    from services.durable.activities import submit_goal
+    from services.orchestrator.runcfg import ledger_for
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    monkeypatch.setenv("OC_DAILY_CAP", "0.20")
+    monkeypatch.setenv("OC_EFFORT_DEFAULT", "high")
+    _patch_planner(monkeypatch)
+    bare = submit_goal("just a goal", "actor")
+    row = next(r for r in goalruns._audit_rows(Path(bare["run_dir"])) if r.get("event") == "effort_set")
+    assert row["effort"] == "low" and row["budget"] == 0.10
+    assert ledger_for(bare["run_dir"]).state(bare["run_id"]).cap == 0.10
+    over = submit_goal("bigger", "actor", "low", None, 5)
+    assert ledger_for(over["run_dir"]).state(over["run_id"]).cap == 0.20
+
+
+def test_flagged_automation_goal_holds_and_the_fire_cannot_approve(tmp_path, monkeypatch):
+    from services.durable.activities import HELD, submit_goal, work_sweep
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    monkeypatch.setenv("OC_AUDIT", str(tmp_path / "audit.ndjson"))
+    monkeypatch.setenv("OC_APPROVALS", str(tmp_path / "approvals.ndjson"))
+    calls = _patch_planner(monkeypatch)
+    out = submit_goal("mail ada@example.com", "automation")
+    assert calls == []
+    assert work_sweep(out["run_dir"]) == HELD
+    from services.orchestrator.privacy import live_privacy
+
+    assert live_privacy().queue.pending()
+    assert not hasattr(submit_goal, "approve")
+
+
+def test_mcp_has_no_resume_tool():
+    import inspect
+
+    from services.mcp import server as mcp
+
+    assert "resume" not in mcp.TOOLS
+    assert "CostLedger.resume" not in inspect.getsource(mcp)

@@ -18,6 +18,6 @@ def test_place_live_injects_approved_egress(monkeypatch):
 
 def test_pii_and_overbudget_block_instead_of_going_local():
     p = placement.place({"tier": "frontier"}, pii_flagged=True)
-    assert p.target == "blocked"
+    assert p.target == "blocked" and "hold" in p.reason
     p = placement.place({"tier": "mid", "est_cost": 0.5}, headroom=0.01)
     assert p.target == "blocked" and "raise the cap" in p.reason

@@ -35,10 +35,12 @@ def test_work_fn_returns_provider_usage_for_the_ledger(fake):
     assert (out.usage.cost, out.usage.tokens_in, out.usage.tokens_out, out.usage.model) == (0.0031, 7, 3, "vendor/served")
 
 
-def test_an_old_local_placement_runs_on_openrouter(fake):
+def test_an_old_local_placement_fails_closed_instead_of_openrouter(fake, monkeypatch):
+    monkeypatch.delenv("OC_LOCAL_MODELS", raising=False)
     fake.chat_replies.append(chat_reply("cloud text", cost=0.001, model="vendor/served"))
-    out = engines.work_fn(api_key="k")({"placement": "local-llamacpp", "prompt": "p", "run": "r", "subtask": "s"})
-    assert out.output == "cloud text" and out.usage.model == "vendor/served"
+    with pytest.raises(engines.LocalPlacementRefused):
+        engines.work_fn(api_key="k")({"placement": "local-llamacpp", "prompt": "p", "run": "r", "subtask": "s"})
+    assert fake.requests == []
 
 
 def test_sandbox_script_writer_spend_is_collected(fake, monkeypatch):

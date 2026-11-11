@@ -20,7 +20,7 @@ class BudgetHalt(Exception):
 
 
 class Budget:
-    def __init__(self, ledger_path: Path | str, daily_cap: float = 1.00, task_cap: float = 0.10):
+    def __init__(self, ledger_path: Path | str, daily_cap: float = 5.00, task_cap: float = 0.10):
         self.path = Path(ledger_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.daily_cap = daily_cap

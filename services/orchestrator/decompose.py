@@ -149,12 +149,9 @@ def _parse(raw: str) -> list[dict]:
     return tasks
 
 
-def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
-    """goal -> subtask DAG. engine(goal) returns JSON (fences tolerated).
-
-    A plan that fails validation gets one corrective retry with the validator
-    message appended; a second failure raises."""
-    prompt = (
+def planner_prompt(goal: str) -> str:
+    """The exact request decompose sends. Privacy scans this string before the engine runs."""
+    return (
         "Decompose this goal into subtasks. Return ONLY a JSON array; each "
         'item: {"id","title","prompt","deps":[ids],"tier":cheap|mid|frontier,'
         '"latency":crit|normal|bulk,"est_cost":number,"needs_sandbox":bool,'
@@ -176,6 +173,14 @@ def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
         "under 1 MB).\n"
         f"Goal: {goal}"
     )
+
+
+def decompose(goal: str, engine: Callable[[str], str]) -> list[dict]:
+    """goal -> subtask DAG. engine(goal) returns JSON (fences tolerated).
+
+    A plan that fails validation gets one corrective retry with the validator
+    message appended; a second failure raises."""
+    prompt = planner_prompt(goal)
     raw = engine(prompt)
     try:
         return _parse(raw)
