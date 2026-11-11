@@ -71,6 +71,9 @@ class GoalRunWorkflow:
 class GoalCronInput:
     goal: str
     by: str = "automation"
+    effort: str | None = None
+    model: str | None = None
+    budget: float | None = None
 
 
 @workflow.defn
@@ -85,7 +88,7 @@ class GoalCronWorkflow:
     async def run(self, inp: GoalCronInput) -> dict:
         st = await workflow.execute_activity(
             submit_goal,
-            args=[inp.goal, inp.by],
+            args=[inp.goal, inp.by, inp.effort, inp.model, inp.budget],
             # decompose is a model call — the budget, not a heartbeat
             start_to_close_timeout=timedelta(seconds=180),
             retry_policy=RetryPolicy(maximum_attempts=2),

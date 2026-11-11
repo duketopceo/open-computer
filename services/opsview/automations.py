@@ -105,6 +105,15 @@ def list_automations() -> list[dict] | None:
         return None
 
 
+def resolved_cron_fields(goal: str) -> dict:
+    """The plan stored on a new schedule. Missing effort uses the console default, never High."""
+    from services.opsview.effort import resolve
+
+    cap = float(os.environ.get("OC_DAILY_CAP", "5.0"))
+    plan = resolve(None, None, None, cap)
+    return {"goal": goal, "by": "automation", "effort": plan.effort, "model": plan.model, "budget": plan.budget}
+
+
 async def _create(goal: str, every_s: int) -> str:
     from temporalio.client import (
         Schedule,
@@ -123,7 +132,7 @@ async def _create(goal: str, every_s: int) -> str:
         Schedule(
             action=ScheduleActionStartWorkflow(
                 GoalCronWorkflow.run,
-                GoalCronInput(goal=goal, by="automation"),
+                GoalCronInput(**resolved_cron_fields(goal)),
                 id=f"cron-{sid}",
                 task_queue=TASK_QUEUE,
                 static_summary=goal[:120],

@@ -58,7 +58,9 @@ class Plan:
 def default_id() -> str:
     """`OC_EFFORT_DEFAULT` if it names a level, otherwise Low. High is never the fallback."""
     v = os.environ.get("OC_EFFORT_DEFAULT", "").strip().lower()
-    return v if v in BY_ID else FALLBACK_DEFAULT
+    if v not in BY_ID or v == "high":
+        return FALLBACK_DEFAULT
+    return v
 
 
 def models() -> list[str]:
@@ -80,8 +82,11 @@ def _budget(raw: object) -> float | None:
     return v
 
 
-def resolve(effort: object, model: object, budget: object, daily_cap: float) -> Plan:
-    """Turn a request into a Plan. Raises ValueError (a 4xx for the caller) for unknown or over-cap input."""
+def resolve(effort: object, model: object, budget: object, daily_cap: float, *, clamp: bool = False) -> Plan:
+    """Turn a request into a Plan. Raises ValueError (a 4xx for the caller) for unknown or over-cap input.
+
+    `clamp` is the automation path: a budget above the daily cap becomes the cap instead of an error.
+    """
     eid = default_id() if effort in (None, "") else effort
     lv = BY_ID.get(eid) if isinstance(eid, str) else None
     if lv is None:
@@ -93,7 +98,9 @@ def resolve(effort: object, model: object, budget: object, daily_cap: float) -> 
         picked = str(model)
     asked = _budget(budget)
     if asked is not None and asked > daily_cap:
-        raise ValueError(f"budget {asked:g} is above the daily cap {daily_cap:g}")
+        if not clamp:
+            raise ValueError(f"budget {asked:g} is above the daily cap {daily_cap:g}")
+        asked = daily_cap
     return Plan(lv.id, picked, round(asked if asked is not None else min(lv.budget, daily_cap), 6))
 
 

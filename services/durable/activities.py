@@ -25,7 +25,8 @@ from services.orchestrator import Orchestrator
 from services.orchestrator.egress import live_egress
 from services.orchestrator.engines import decompose_engine, work_fn as _engine_work_fn
 from services.orchestrator.privacy import live_privacy
-from services.orchestrator.runcfg import ledger_for, model_of
+from services.orchestrator.runcfg import create_ledger, ledger_for, model_of
+from services.opsview.effort import resolve as resolve_effort
 from services.placement import place_live
 
 
@@ -68,20 +69,42 @@ def work_sweep(run_dir: str) -> int:
     return len(done)
 
 
+def _daily_cap() -> float:
+    return float(os.environ.get("OC_DAILY_CAP", "5.0"))
+
+
 @activity.defn
-def submit_goal(goal: str, by: str) -> dict:
+def submit_goal(
+    goal: str,
+    by: str,
+    effort: str | None = None,
+    model: str | None = None,
+    budget: float | None = None,
+) -> dict:
     """Automation fire: new run dir + decompose + first dispatch wave.
 
     Mirrors goalruns.submit minus the drive — GoalCronWorkflow then runs
     GoalRunWorkflow as a child. A decompose failure propagates: the fire
     records as a failed action in the schedule's history, never silent.
+
+    Missing effort, model, and budget use the console default. A budget above
+    the daily cap is clamped. An in-flight workflow that still passes only
+    goal and actor hits the defaults.
     """
     rid = "goal_" + uuid.uuid4().hex[:8]
     goals = Path(os.environ.get("OC_GOALS_DIR", str(Path.home() / ".local/share/oc/goals")))
     run_dir = goals / rid
     run_dir.mkdir(parents=True, exist_ok=True)
-    orch = Orchestrator(run_dir, place_fn=place_live, egress=live_egress(), privacy=live_privacy())
-    orch.submit(goal, decompose_engine(), run_id=rid)
+    plan = resolve_effort(effort, model, budget, _daily_cap(), clamp=True)
+    ledger = create_ledger(run_dir, rid, plan.budget, by)
+    orch = Orchestrator(
+        run_dir, place_fn=place_live, ledger=ledger, egress=live_egress(),
+        privacy=live_privacy(), effort_model=plan.model,
+    )
+    orch.audit.append({
+        "event": "effort_set", "run": rid, "effort": plan.effort, "model": plan.model, "budget": plan.budget,
+    })
+    orch.submit(goal, decompose_engine(plan.model, effort=plan.effort), run_id=rid)
     orch.audit.append({"event": "goal_by", "run": rid, "by": by})
     return {"run_dir": str(run_dir), "run_id": rid}
 

@@ -43,6 +43,8 @@ def test_default_is_never_high(monkeypatch):
     assert effort.default_id() == "low"
     monkeypatch.setenv("OC_EFFORT_DEFAULT", "Medium")
     assert effort.default_id() == "medium"
+    monkeypatch.setenv("OC_EFFORT_DEFAULT", "high")
+    assert effort.default_id() == "low"
 
 
 def test_resolve_defaults_and_levels(monkeypatch):

@@ -5,6 +5,7 @@ The run-page render is exercised against a registry populated on disk.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -853,6 +854,75 @@ def test_completion_records_provider_usage_and_omits_it_when_absent(tmp_path, mo
     assert detail["a"]["worker"]["model"] == "vendor/served" and detail["a"]["worker"]["cost"] == 0.0031
     assert detail["b"]["worker"]["cost"] == 0.004
     assert "worker" not in detail["c"]
+
+
+def _patch_planner(monkeypatch):
+    import services.durable.activities as act
+
+    calls: list[str] = []
+
+    def factory(*_a, **_k):
+        def engine(prompt: str) -> str:
+            calls.append(prompt)
+            return json.dumps([{"id": "a", "title": "A", "prompt": "do it", "tier": "mid", "deps": []}])
+
+        return engine
+
+    monkeypatch.setattr(act, "decompose_engine", factory)
+    return calls
+
+
+def test_automation_fire_gets_an_effort_plan(tmp_path, monkeypatch):
+    from services.durable.activities import submit_goal
+    from services.opsview.automations import resolved_cron_fields
+    from services.opsview.effort import BY_ID
+    from services.orchestrator.runcfg import ledger_for
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    monkeypatch.delenv("OC_EFFORT_DEFAULT", raising=False)
+    calls = _patch_planner(monkeypatch)
+    out = submit_goal("ship the notes", "automation", "medium", None, None)
+    rows = goalruns._audit_rows(Path(out["run_dir"]))
+    effort_row = next(r for r in rows if r.get("event") == "effort_set")
+    assert effort_row["effort"] == "medium" and effort_row["budget"] == 0.30
+    assert effort_row["model"] == BY_ID["medium"].model
+    assert ledger_for(out["run_dir"]).state(out["run_id"]).cap == 0.30
+    assert calls and calls[0]  # decompose received the planner prompt for the resolved model
+    assert not any(d.get("placement", "").startswith("local") for d in rows if d.get("event") == "dispatch")
+    stored = resolved_cron_fields("only a goal")
+    assert stored["effort"] == "low" and stored["budget"] == 0.10 and stored["model"] == BY_ID["low"].model
+
+
+def test_automation_fire_without_effort_uses_low_and_clamps_the_budget(tmp_path, monkeypatch):
+    from services.durable.activities import submit_goal
+    from services.orchestrator.runcfg import ledger_for
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    monkeypatch.setenv("OC_DAILY_CAP", "0.20")
+    monkeypatch.setenv("OC_EFFORT_DEFAULT", "high")
+    _patch_planner(monkeypatch)
+    bare = submit_goal("just a goal", "actor")
+    row = next(r for r in goalruns._audit_rows(Path(bare["run_dir"])) if r.get("event") == "effort_set")
+    assert row["effort"] == "low" and row["budget"] == 0.10
+    assert ledger_for(bare["run_dir"]).state(bare["run_id"]).cap == 0.10
+    over = submit_goal("bigger", "actor", "low", None, 5)
+    assert ledger_for(over["run_dir"]).state(over["run_id"]).cap == 0.20
+
+
+def test_flagged_automation_goal_holds_and_the_fire_cannot_approve(tmp_path, monkeypatch):
+    from services.durable.activities import HELD, submit_goal, work_sweep
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    monkeypatch.setenv("OC_AUDIT", str(tmp_path / "audit.ndjson"))
+    monkeypatch.setenv("OC_APPROVALS", str(tmp_path / "approvals.ndjson"))
+    calls = _patch_planner(monkeypatch)
+    out = submit_goal("mail ada@example.com", "automation")
+    assert calls == []
+    assert work_sweep(out["run_dir"]) == HELD
+    from services.orchestrator.privacy import live_privacy
+
+    assert live_privacy().queue.pending()
+    assert not hasattr(submit_goal, "approve")
 
 
 def test_mcp_has_no_resume_tool():
