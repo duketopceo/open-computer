@@ -19,16 +19,18 @@ from oc.fsproto import adapter as fs_adapter
 from oc.obs import bind, devtrace, error_fields, get_logger
 from services.device.parked import drain_parked
 from services.gate import adapter as gate_adapter
-from services.placement import place
+from services.placement import needs_device, place
 from services.cost.ledger import PAUSED
 from services.gate.audit import AuditLog
 from services.openrouter import collect_reasoning, collect_usage, total_usage
 from services.router import adapter as router_adapter
+from services.router.model_catalog import DEFAULT_WORKER_MODEL
 
 from .collect import collect_run, task_state
-from .decompose import DEP_OUTPUT_CAP, DecomposeError, decompose
+from .decompose import DEP_OUTPUT_CAP, DecomposeError, decompose, planner_prompt
 from .dispatch import dispatch
 from .egress import EgressApproval, requested_hosts
+from .privacy import PrivacyHold
 from .runner import WorkResult, retry_delay, run_once
 from .thinking import PLAN, ThinkingLog, join_thoughts
 
@@ -57,7 +59,8 @@ class Orchestrator:
     """goal -> dispatched subtask DAG -> collected results."""
 
     def __init__(self, root: Path | str, router=None, place_fn=None, ledger=None, devices=None,
-                 egress: EgressApproval | None = None):
+                 egress: EgressApproval | None = None, privacy: PrivacyHold | None = None,
+                 effort_model: str | None = None):
         root = Path(root)
         self.root = root
         self.fs = fs_adapter(root / "run")
@@ -77,6 +80,12 @@ class Orchestrator:
         self._chat: dict[str, str] = {}  # run_id -> chat id (OpenRouter session / per-chat cost views)
         self.egress = egress  # up-front approval for hosts the plan needs (R4); None = steps just block
         self._egress_req: dict[str, dict] = {}  # run_id -> {"approval": id, "hosts": [...]}
+        self.privacy = privacy  # pii-send hold; None keeps today's scan-at-dispatch behavior
+        self.effort_model = effort_model
+        self._engines: dict[str, object] = {}  # run_id -> planner callable, so a hold can send later
+        self._pii_plan: dict[str, dict] = {}  # run_id -> plan-phase card
+        self._pii_steps: dict[str, dict[str, dict]] = {}  # run_id -> step id -> card
+        self._submit_ctx: dict[str, dict] = {}  # args needed to finish a held plan
 
     def drain_parked(self, *, now: float | None = None) -> list[dict]:
         """Drain tasks queued in `device/parked` into eligible `device/<device_id>` mailboxes."""
@@ -121,7 +130,52 @@ class Orchestrator:
         """The run's dev-trace writer, or None unless the run was submitted with dev trace on."""
         return devtrace.tracer(run_id=run_id, run_dir=self.root, actor="orchestrator")
 
+    def _effort_model(self, run_id: str) -> str:
+        if self.effort_model:
+            return self.effort_model
+        for row in reversed(self.audit.rows()):
+            if row.get("event") == "effort_set" and row.get("run") == run_id and row.get("model"):
+                return str(row["model"])
+        return DEFAULT_WORKER_MODEL
+
     def _submit(self, goal: str, engine, run_id: str, origin: str, device_id: str | None, hold=None) -> str:
+        self._engines[run_id] = engine
+        self._submit_ctx[run_id] = {"goal": goal, "origin": origin, "device_id": device_id, "hold": hold}
+        if self.privacy is not None:
+            prompt = planner_prompt(goal)
+            if self.privacy.categories(prompt):
+                model = self._effort_model(run_id)
+                aid, payload = self.privacy.request(run_id, prompt, model)
+                self._pii_plan[run_id] = {"approval": aid, "payload": payload, "model": model, "done": False}
+                self.dispatches[run_id] = []
+                self._subtasks[run_id] = {}
+                self._tid_by_sub[run_id] = {}
+                self._run_meta.setdefault(run_id, {"origin": origin, "device_id": device_id})
+                row: dict = {
+                    "event": "run_submit",
+                    "run": run_id,
+                    "goal": goal,
+                    "subtasks": 0,
+                    "origin": origin,
+                    "held": "pii-send",
+                }
+                if device_id is not None:
+                    row["device_id"] = device_id
+                if run_id in self._chat:
+                    row["chat"] = self._chat[run_id]
+                self.audit.append(row)
+                self.audit.append({
+                    "event": "pii_send_requested",
+                    "run": run_id,
+                    "approval": aid,
+                    "phase": "plan",
+                    "model": model,
+                })
+                log.info("planner held for private text", approval=aid, model=model)
+                return run_id
+        return self._decompose_and_dispatch(goal, engine, run_id, origin, device_id, hold)
+
+    def _decompose_and_dispatch(self, goal: str, engine, run_id: str, origin: str, device_id: str | None, hold=None) -> str:
         trace = self._trace(run_id)
         if trace is not None:
             first_line = (goal.strip().splitlines() or [""])[0]
@@ -191,6 +245,96 @@ class Orchestrator:
         self._request_egress(run_id, goal, subs)
         self.dispatch_ready(run_id)
         return run_id
+
+    def pii_pending(self, run_id: str) -> bool:
+        """True while a pii-send card is still waiting. A consumed or skipped card is not pending."""
+        if self.privacy is None:
+            return False
+        plan = self._pii_plan.get(run_id)
+        if plan and not plan.get("done") and self.privacy.status(plan["approval"]) == "pending":
+            return True
+        tids = self._tid_by_sub.get(run_id, {})
+        for sid, hold in self._pii_steps.get(run_id, {}).items():
+            if sid in tids:
+                continue
+            if self.privacy.status(hold["approval"]) == "pending":
+                return True
+        return False
+
+    def settle_privacy(self, run_id: str) -> bool:
+        """Consume an approved plan card once, or open a new card when the grant expired. Pending stays put."""
+        plan = self._pii_plan.get(run_id)
+        if plan is None or plan.get("done") or self.privacy is None:
+            return False
+        status = self.privacy.status(plan["approval"])
+        if status == "pending":
+            return False
+        if status == "sent_back":
+            plan["done"] = True
+            self.audit.append({
+                "event": "pii_skipped",
+                "run": run_id,
+                "approval": plan["approval"],
+                "phase": "plan",
+                "note": self.privacy.note(plan["approval"]),
+            })
+            return False
+        if status != "approved":
+            return False
+        ctx = self._submit_ctx.get(run_id, {})
+        engine = self._engines.get(run_id)
+        called = {"n": 0}
+
+        def sender(payload: dict) -> int:
+            called["n"] += 1
+            if engine is None:
+                raise RuntimeError("no planner for this run")
+            self._decompose_and_dispatch(
+                ctx.get("goal", ""),
+                engine,
+                run_id,
+                ctx.get("origin", "cloud"),
+                ctx.get("device_id"),
+                ctx.get("hold"),
+            )
+            return len(str(payload.get("text", "")))
+
+        result = self.privacy.consume(plan["payload"], plan["approval"], sender)
+        if result.reason == "expired":
+            self._reopen_plan_card(run_id, plan)
+            return False
+        if result.allowed:
+            plan["done"] = True
+        return called["n"] > 0
+
+    def _reopen_plan_card(self, run_id: str, plan: dict) -> None:
+        text = str(plan["payload"].get("text", ""))
+        model = str(plan["payload"].get("model") or self._effort_model(run_id))
+        aid, payload = self.privacy.request(run_id, text, model)
+        plan["approval"] = aid
+        plan["payload"] = payload
+        plan["done"] = False
+        self.audit.append({
+            "event": "pii_send_requested",
+            "run": run_id,
+            "approval": aid,
+            "phase": "plan",
+            "model": model,
+            "reason": "expired",
+        })
+
+    def wait_for_privacy(self, run_id: str, timeout: float = 86400.0, poll: float = 2.0,
+                         sleep=time.sleep, clock=time.monotonic) -> bool:
+        """Block while a pii-send card is pending, then settle. False on timeout with no decision."""
+        if not self.pii_pending(run_id) and run_id not in self._pii_plan and run_id not in self._pii_steps:
+            return False
+        deadline = clock() + timeout
+        while self.pii_pending(run_id):
+            if clock() >= deadline:
+                return False
+            sleep(poll)
+        self.settle_privacy(run_id)
+        return bool(self.dispatch_ready(run_id)) if run_id in self._subtasks else False
 
     def release(self, run_id: str) -> list[str]:
         """Start a run whose plan was held for review (after `recover`): raise its egress approval, dispatch."""
@@ -272,15 +416,53 @@ class Orchestrator:
             sleep(poll)
         return bool(self.dispatch_ready(run_id))
 
+    def _load_pii(self, run_id: str) -> None:
+        if self.privacy is None:
+            return
+        for r in self.audit.rows():
+            if r.get("event") != "pii_send_requested" or r.get("run") != run_id:
+                continue
+            item = self.privacy.queue.get(r["approval"])
+            if item is None:
+                continue
+            rec = {
+                "approval": r["approval"],
+                "payload": item["payload"],
+                "model": r.get("model"),
+                "consumed": False,
+                "done": False,
+            }
+            if r.get("phase") == "plan":
+                self._pii_plan[run_id] = rec
+            elif r.get("step"):
+                self._pii_steps.setdefault(run_id, {})[str(r["step"])] = rec
+        for r in self.audit.rows():
+            if r.get("event") == "run_submit" and r.get("run") == run_id:
+                self._submit_ctx[run_id] = {
+                    "goal": r.get("goal", ""),
+                    "origin": r.get("origin", "cloud"),
+                    "device_id": r.get("device_id"),
+                    "hold": None,
+                }
+
     def recover(self, run_id: str) -> bool:
         """Rebuild run state from disk so a restarted process can re-drive it.
 
         Reads plan.json (written atomically at submit) plus the dispatch
-        audit rows. Returns False when no plan exists — a pre-plan or
-        mid-decompose run is left literal on disk, never fabricated.
+        audit rows. A pii-send raised before plan.json still recovers: the
+        card stays pending and nothing is sent. Anything else with no plan
+        is left literal on disk, never fabricated.
         """
+        self._load_pii(run_id)
         plan = self.root / "plan.json"
         if not plan.exists():
+            if run_id in self._pii_plan or self._pii_steps.get(run_id):
+                self.dispatches.setdefault(run_id, [])
+                self._subtasks.setdefault(run_id, {})
+                self._tid_by_sub.setdefault(run_id, {})
+                self._run_meta.setdefault(run_id, {"origin": "cloud", "device_id": None})
+                log.info("recover held on pii-send before plan", run_id=run_id)
+                return True
             log.info("recover skipped: no plan on disk", run_id=run_id)
             return False
         subs = json.loads(plan.read_text())
@@ -388,6 +570,94 @@ class Orchestrator:
         )
         return rec
 
+    def _step_privacy(self, run_id: str, sub: dict) -> str:
+        """hold, skip, approved, or go. Device steps and empty scans do not open a card."""
+        if self.privacy is None or needs_device(sub):
+            return "go"
+        text = sub["prompt"]
+        if not self.privacy.categories(text):
+            return "go"
+        model = self._effort_model(run_id)
+        holds = self._pii_steps.setdefault(run_id, {})
+        hold = holds.get(sub["id"])
+        if hold is None:
+            aid, payload = self.privacy.request(run_id, text, model, step=sub["id"])
+            holds[sub["id"]] = {"approval": aid, "payload": payload, "consumed": False}
+            self.audit.append({
+                "event": "pii_send_requested",
+                "run": run_id,
+                "approval": aid,
+                "phase": "step",
+                "step": sub["id"],
+                "model": model,
+            })
+            return "hold"
+        if hold.get("consumed"):
+            return "hold"
+        status = self.privacy.status(hold["approval"])
+        if status == "pending":
+            return "hold"
+        if status == "sent_back":
+            return "skip"
+        if status != "approved":
+            return "hold"
+        result = self.privacy.consume(
+            hold["payload"], hold["approval"], lambda payload: len(str(payload.get("text", "")))
+        )
+        if result.reason == "expired":
+            aid, payload = self.privacy.request(run_id, text, model, step=sub["id"])
+            hold["approval"] = aid
+            hold["payload"] = payload
+            self.audit.append({
+                "event": "pii_send_requested",
+                "run": run_id,
+                "approval": aid,
+                "phase": "step",
+                "step": sub["id"],
+                "model": model,
+                "reason": "expired",
+            })
+            return "hold"
+        hold["consumed"] = True
+        if not result.allowed:
+            return "hold"
+        return "approved"
+
+    def _skip_step(self, run_id: str, sub: dict) -> dict:
+        """Owner skipped this step. Terminal failed state, kind skipped, so dependents cascade."""
+        hold = self._pii_steps.get(run_id, {}).get(sub["id"], {})
+        note = self.privacy.note(hold.get("approval", "")) if self.privacy is not None else ""
+        tid = self.fs.send(
+            "worker",
+            {"run": run_id, "subtask": sub["id"], "title": sub["title"], "prompt": sub["prompt"], "skipped": True},
+        )
+        self.fs.fail(tid)
+        reason = note or "owner skipped this step"
+        rec = {
+            "event": "dispatch",
+            "run": run_id,
+            "task": tid,
+            "subtask": sub["id"],
+            "route": "-",
+            "engine": "-",
+            "placement": "-",
+            "reason": reason,
+            "gate_required": False,
+            "pii": [],
+        }
+        self.audit.append(rec)
+        self.audit.append({
+            "event": "worker_fail",
+            "run": run_id,
+            "task": tid,
+            "subtask": sub["id"],
+            "kind": "skipped",
+            "error": reason,
+            "hint": "",
+        })
+        log.info("step skipped", subtask=sub["id"], task=tid)
+        return rec
+
     def dispatch_ready(self, run_id: str) -> list[dict]:
         """Dispatch ready subtasks; dep-fail ones whose deps can't complete.
 
@@ -412,25 +682,34 @@ class Orchestrator:
                     continue  # dispatched already, or dep not dispatched yet
                 states = [self._dep_state(tids[d]) for d in sub["deps"]]
                 if all(st == "done" for st in states):
-                    if held & set(requested_hosts(sub)):
-                        continue  # waiting for the run's egress approval — not failed, retried next sweep
                     if self.ledger is not None and self.ledger.state(run_id).state == PAUSED:
                         continue  # paused at its cap: hold the step (never fail it); resuming dispatches it
                     with_deps = self._with_dep_results(sub, tids)
                     if with_deps is None:
                         continue  # a dep's output isn't collectable yet — hold
-                    rec = dispatch(
-                        self.fs,
-                        self.router,
-                        self.gate,
-                        self.place,
-                        self.audit,
-                        run_id,
-                        with_deps,
-                        ledger=self.ledger,
-                        devices=self.devices,
-                        chat_id=self._chat.get(run_id),
-                    )
+                    action = self._step_privacy(run_id, with_deps)
+                    if action == "hold":
+                        continue  # pii-send is pending — an egress grant does not release it
+                    if held & set(requested_hosts(sub)):
+                        continue  # waiting for the run's egress approval — not failed, retried next sweep
+                    if action == "skip":
+                        rec = self._skip_step(run_id, with_deps)
+                    else:
+                        rec = dispatch(
+                            self.fs,
+                            self.router,
+                            self.gate,
+                            self.place,
+                            self.audit,
+                            run_id,
+                            with_deps,
+                            ledger=self.ledger,
+                            devices=self.devices,
+                            chat_id=self._chat.get(run_id),
+                            classify=self.privacy is None,
+                            effort_model=self._effort_model(run_id),
+                            pii_approved=action == "approved",
+                        )
                 elif any(st == "failed" for st in states):
                     rec = self._dep_fail(run_id, sub, sub["deps"][states.index("failed")])
                 else:
@@ -447,6 +726,8 @@ class Orchestrator:
     def work(self, work_fn, agent: str = "worker", ttl: float = 60) -> list[str]:
         """Dispatch what is ready (a step held while the run was paused at its cap goes out once it resumes),
         one worker sweep, then dispatch the newly-unblocked wave."""
+        for run_id in list(self.dispatches):
+            self.settle_privacy(run_id)
         for run_id in self.dispatches:
             self.dispatch_ready(run_id)
         done = run_once(self.fs, self.audit, agent, work_fn, ttl=ttl, ledger=self.ledger, thinking=self.thinking)

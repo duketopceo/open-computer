@@ -482,3 +482,241 @@ def test_dependent_failed_step_is_skipped_with_no_duration(console, monkeypatch,
     a, b = goalruns.get_run(rid)["subtasks"]
     assert "skipped" not in a and a["started_ts"] == 12.0
     assert b["skipped"] is True and b["started_ts"] == b["finished_ts"] == 40.5
+
+
+def _hold(tmp_path, monkeypatch, clock=None, ttl=900.0):
+    """A pii-send queue on temp files. `clock` is optional so a grant can expire."""
+    from services.gate import Gate
+    from services.gate.queue import ApprovalQueue
+    from services.orchestrator.privacy import PrivacyHold
+
+    audit = tmp_path / "audit.ndjson"
+    approvals = tmp_path / "approvals.ndjson"
+    monkeypatch.setenv("OC_AUDIT", str(audit))
+    monkeypatch.setenv("OC_APPROVALS", str(approvals))
+    gate = Gate(audit, **({"clock": clock, "approval_ttl": ttl} if clock else {}))
+    return PrivacyHold(ApprovalQueue(approvals, gate), gate)
+
+
+def _counting_router():
+    from services.router.router import RouteDecision
+
+    seen: list[str] = []
+
+    class Router:
+        def route(self, prompt: str) -> RouteDecision:
+            seen.append(prompt)
+            return RouteDecision("answer", "mid", "jev", 1.0, 0.0, 1.0)
+
+    return Router(), seen
+
+
+def test_flagged_goal_holds_the_planner_until_one_approved_send(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    planner: list[str] = []
+    router, routed = _counting_router()
+
+    def engine(prompt: str) -> str:
+        planner.append(prompt)
+        return json.dumps([{"id": "a", "title": "A", "prompt": "do the work", "tier": "mid", "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", router=router, privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("write to ada@example.com", engine)
+    assert planner == [] and orch.fs.inbox_ids("worker") == [] and routed == []
+    card = privacy.queue.pending()[0]
+    assert card["payload"]["model"] == "vendor/effort" and "ada@example.com" in card["payload"]["text"]
+    assert privacy.hash_of(card["payload"]) == card["payload_hash"]
+    privacy.queue.decide(card["id"], approve=True, by="owner")
+    orch.work(lambda task: "ok")
+    assert planner == [card["payload"]["text"]]
+    orch.work(lambda task: "ok")
+    assert planner == [card["payload"]["text"]]
+    assert (tmp_path / "run" / "plan.json").exists()
+    assert rid
+
+
+def test_flagged_step_hashes_the_wrapped_prompt_and_does_not_route(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    router, routed = _counting_router()
+    hosted: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "say hi", "tier": "mid", "deps": []},
+            {"id": "b", "title": "B", "prompt": "use the data", "tier": "mid", "deps": ["a"]},
+        ])
+
+    def work(task: dict) -> str:
+        hosted.append(task["prompt"])
+        return "reach ada@example.com" if task["subtask"] == "a" else "done"
+
+    orch = Orchestrator(tmp_path / "run", router=router, privacy=privacy, effort_model="vendor/effort")
+    orch.submit("a clean goal", engine)
+    orch.work(work)
+    orch.work(work)
+    cards = [c for c in privacy.queue.pending() if c["payload"].get("step") == "b"]
+    assert cards and "ada@example.com" in cards[0]["payload"]["text"]
+    assert cards[0]["payload"]["model"] == "vendor/effort"
+    assert privacy.hash_of(cards[0]["payload"]) == cards[0]["payload_hash"]
+    assert routed == []
+    assert all("use the data" not in prompt for prompt in hosted)
+
+
+def test_skip_with_a_note_cascades_and_an_empty_note_stays_held(tmp_path, monkeypatch):
+    from services.gate.queue import QueueError
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    hosted: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "mail ada@example.com", "tier": "mid", "deps": []},
+            {"id": "b", "title": "B", "prompt": "next", "tier": "mid", "deps": ["a"]},
+        ])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("clean", engine)
+    card = privacy.queue.pending()[0]
+    with pytest.raises(QueueError):
+        privacy.queue.decide(card["id"], approve=False, by="owner", note="  ")
+    assert privacy.status(card["id"]) == "pending"
+    privacy.queue.decide(card["id"], approve=False, by="owner", note="do not send")
+    orch.work(lambda task: hosted.append(task["prompt"]) or "no")
+    kinds = {r["kind"] for r in orch.audit.rows() if r.get("event") == "worker_fail"}
+    assert "skipped" in kinds and "DependencyFailed" in kinds
+    assert hosted == []
+    assert rid
+
+
+def test_sweep_holds_and_a_restart_before_plan_json_stays_unsent(tmp_path, monkeypatch):
+    from services.durable.activities import HELD, work_sweep
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    def engine(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps([{"id": "a", "title": "A", "prompt": "x", "tier": "mid", "deps": []}])
+
+    root = tmp_path / "goal_held"
+    orch = Orchestrator(root, privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("ada@example.com", engine)
+    assert work_sweep(str(root)) == HELD
+    fresh = Orchestrator(root, privacy=privacy, effort_model="vendor/effort")
+    assert fresh.recover(rid) is True
+    assert not (root / "plan.json").exists()
+    assert privacy.status(privacy.queue.pending()[0]["id"]) == "pending"
+    assert calls == []
+
+
+def test_expired_grant_opens_a_new_card_and_does_not_send(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    now = {"t": 1_000.0}
+    privacy = _hold(tmp_path, monkeypatch, clock=lambda: now["t"], ttl=10)
+    calls: list[str] = []
+
+    def engine(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps([{"id": "a", "title": "A", "prompt": "x", "tier": "mid", "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("ada@example.com", engine)
+    card = privacy.queue.pending()[0]
+    privacy.queue.decide(card["id"], approve=True, by="owner")
+    now["t"] = 2_000.0
+    orch.work(lambda task: "no")
+    assert calls == []
+    pending = privacy.queue.pending()
+    assert len(pending) == 1 and pending[0]["id"] != card["id"]
+    assert privacy.status(card["id"]) == "approved"
+
+
+def test_device_step_skips_the_card_and_the_router(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    router, routed = _counting_router()
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([{
+            "id": "a", "title": "A", "prompt": "ada@example.com on this machine",
+            "tier": "mid", "deps": [], "device_root": "/tmp/notes",
+        }])
+
+    orch = Orchestrator(tmp_path / "run", router=router, privacy=privacy, effort_model="vendor/effort")
+    rid = orch.submit("clean goal", engine)
+    assert privacy.queue.pending() == [] and routed == []
+    assert orch.dispatches[rid][0]["placement"] == "device"
+
+
+def test_sandbox_stays_unmailed_until_pii_send_even_after_egress_approval(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    ran: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([{
+            "id": "a", "title": "A", "prompt": "mail ada@example.com", "tier": "mid", "deps": [],
+            "needs_sandbox": True,
+        }])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("clean goal", engine)
+    orch.work(lambda task: ran.append(task.get("placement", "")) or "no")
+    assert ran == []
+    egress_id = privacy.queue.submit(
+        who="orchestrator",
+        what="Let the run reach example.com",
+        payload={"kind": "egress", "hosts": ["example.com"], "model": "none (network access only)"},
+        session="other",
+    )
+    privacy.queue.decide(egress_id, approve=True, by="owner")
+    orch.work(lambda task: ran.append(task.get("placement", "")) or "no")
+    assert ran == []
+    pii = next(c for c in privacy.queue.pending() if (c.get("payload") or {}).get("kind") == "pii-send")
+    privacy.queue.decide(pii["id"], approve=True, by="owner")
+    orch.work(lambda task: ran.append(str(task.get("placement"))) or "ran")
+    assert ran == ["cloud-sandbox"]
+
+
+def test_empty_categories_mail_without_a_card(tmp_path, monkeypatch):
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    ran: list[str] = []
+
+    def engine(_prompt: str) -> str:
+        return json.dumps([{"id": "a", "title": "A", "prompt": "say hello", "tier": "mid", "deps": []}])
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("summarise the notes", engine)
+    orch.work(lambda task: ran.append(task["prompt"]) or "ok")
+    assert privacy.queue.pending() == []
+    assert ran == ["say hello"]
+
+
+def test_mcp_can_list_the_card_but_cannot_send_it(tmp_path, monkeypatch):
+    from services.mcp.server import State, t_list_approvals, t_request_approval
+    from services.orchestrator import Orchestrator
+
+    privacy = _hold(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    def engine(prompt: str) -> str:
+        calls.append(prompt)
+        return "[]"
+
+    orch = Orchestrator(tmp_path / "run", privacy=privacy, effort_model="vendor/effort")
+    orch.submit("ada@example.com", engine)
+    listed = t_list_approvals(State(), {})
+    assert any("pii-send" in (row.get("what") or "") for row in listed["approvals"])
+    t_request_approval(State(), {"what": "something else", "payload": {"kind": "note", "text": "other"}})
+    assert calls == [] and orch.fs.inbox_ids("worker") == []

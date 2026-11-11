@@ -25,6 +25,7 @@ from oc.fsproto import adapter as fs_adapter
 from oc.obs import devtrace
 from services.orchestrator import Orchestrator
 from services.orchestrator.egress import live_egress, requested_hosts
+from services.orchestrator.privacy import live_privacy
 from services.orchestrator.runner import MAX_STEP_ATTEMPTS
 from services.orchestrator.runcfg import create_ledger, effort_row, ledger_for, model_of
 from services.orchestrator.thinking import PLAN, ThinkingLog, join_thoughts
@@ -108,6 +109,15 @@ def plan_state(rows: list[dict]) -> str | None:
         elif ev == "plan_cancelled":
             state = "cancelled"
     return state
+
+
+def _submit_row(rows: list[dict]) -> dict | None:
+    """The latest run_submit. A private hold writes one with zero steps; the real plan writes another."""
+    found = None
+    for r in rows:
+        if r.get("event") == "run_submit":
+            found = r
+    return found
 
 
 def _declared(rows: list[dict]) -> int:
@@ -200,7 +210,7 @@ def list_runs(*, include_archived: bool = False, limit: int | None = 30) -> list
         if archived and not include_archived:
             continue
         rows = _audit_rows(d)
-        submit = next((r for r in rows if r.get("event") == "run_submit"), None)
+        submit = _submit_row(rows)
         failed = next((r for r in rows if r.get("event") == "run_failed"), None)
         if submit is None and failed is None:
             continue
@@ -244,7 +254,7 @@ def get_run(run_id: str) -> dict | None:
     if not d.is_dir():
         return None
     rows = _audit_rows(d)
-    submit = next((r for r in rows if r.get("event") == "run_submit"), None)
+    submit = _submit_row(rows)
     failed = next((r for r in rows if r.get("event") == "run_failed"), None)
     fs = fs_adapter(d / "run")
     fails = [r for r in rows if r.get("event") == "worker_fail"]
@@ -445,7 +455,8 @@ def decide_plan(run_id: str, action: str, edits: object, wfn_for: Callable[[str]
         rows = _audit_rows(d)
         if plan_state(rows) != "planned":
             return 409, {"error": "this plan is not waiting for review"}
-        orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d), egress=live_egress())
+        orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d), egress=live_egress(),
+                            privacy=live_privacy(), effort_model=model_of(rows))
         if action == "cancel":
             orch.audit.append({"event": "plan_cancelled", "run": run_id})
             return 200, {"state": "cancelled"}
@@ -555,7 +566,8 @@ def submit(
     if live_view or devtrace.requested():  # decided once, here: the run either traces from its first event or never does
         devtrace.enable(run_dir)
     ledger = create_ledger(run_dir, rid, budget, by or "owner") if budget is not None else None
-    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger, egress=live_egress())
+    orch = Orchestrator(run_dir, place_fn=place_live, ledger=ledger, egress=live_egress(),
+                        privacy=live_privacy(), effort_model=model)
     if budget is not None:
         orch.audit.append({"event": "effort_set", "run": rid, "effort": effort, "model": model, "budget": budget})
     with _lock:
@@ -598,6 +610,9 @@ def _drive(orch: Orchestrator, rid: str, wfn: Callable[[dict], object], sleep=ti
             wait = orch.retry_delay()
             if wait > 0:  # a step is backing off after a sandbox boot failure: wait here, not in the sweep
                 sleep(wait)
+            elif orch.pii_pending(rid):
+                if not orch.wait_for_privacy(rid, timeout=egress_wait_s()):
+                    break
             elif not orch.wait_for_egress(rid, timeout=egress_wait_s()):
                 break
         orch.settle_trace(rid)
@@ -629,7 +644,8 @@ def resume(wfn, wfn_for_model: Callable[[str], Callable[[dict], object]] | None 
         try:
             if plan_state(_audit_rows(d)) in ("planned", "cancelled"):
                 continue  # a held plan waits for the owner; a restart must not start it
-            orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d), egress=live_egress())
+            orch = Orchestrator(d, place_fn=place_live, ledger=ledger_for(d), egress=live_egress(),
+                                privacy=live_privacy(), effort_model=model_of(_audit_rows(d)))
             if not orch.recover(d.name):
                 continue
             res = orch.results(d.name)

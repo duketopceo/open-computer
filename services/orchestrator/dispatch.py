@@ -12,7 +12,8 @@ from typing import Callable
 from oc.obs import devtrace, error_fields, get_logger
 from services.device.parked import pick_device_for_task, required_capability
 from services.device.protocol import seal
-from services.placement import DEVICE_NEEDS, headroom_from
+from services.placement import DEVICE_NEEDS, headroom_from, needs_device
+from services.router.router import RouteDecision
 from services.telemetry import report_failure
 
 log = get_logger("orchestrator")
@@ -73,8 +74,22 @@ def _trace_route(run_id: str, sub: dict, decision, placement) -> None:
         log.warning("dev trace route dropped", **error_fields(e))
 
 
+def _stored_decision(sub: dict, model: str | None) -> RouteDecision:
+    """Goal steps use the stored tier and the effort model. They do not ask the router to classify the prompt."""
+    return RouteDecision(
+        "answer",
+        str(sub.get("tier") or "mid"),
+        "effort",
+        None,
+        0.0,
+        0.0,
+        model_used=model,
+    )
+
+
 def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, ledger=None, devices=None,
-             chat_id: str | None = None) -> dict:
+             chat_id: str | None = None, *, classify: bool = True, effort_model: str | None = None,
+             pii_approved: bool = False) -> dict:
     """Route, place, and offer a subtask to the worker inbox.
 
     `devices` is a services.device.DeviceRegistry (or None). A step the
@@ -83,8 +98,12 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
 
     Returns the dispatch record (also written to the audit log).
     """
-    decision = router.route(sub["prompt"])
-    pii = gate.scan(sub["prompt"])
+    on_device = needs_device(sub)
+    if on_device or not classify:
+        decision = _stored_decision(sub, effort_model)
+    else:
+        decision = router.route(sub["prompt"])
+    pii = gate.scan("" if on_device else sub["prompt"])
     device = _pick_device(devices, sub) if devices is not None else None
     headroom = headroom_from(getattr(router, "budget", None), ledger, run_id)
     placement = place(
@@ -98,6 +117,7 @@ def dispatch(fs, router, gate, place: Callable, audit, run_id: str, sub: dict, l
             **{k: sub[k] for k in DEVICE_NEEDS if k in sub},
         },
         pii_flagged=bool(pii.categories),
+        approved=pii_approved,
         headroom=headroom,
         device_available=device is not None,
     )

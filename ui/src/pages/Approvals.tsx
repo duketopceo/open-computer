@@ -120,6 +120,8 @@ function Card({
   const ref = useRef<HTMLLIElement>(null);
   const risk = approvalRisk(item);
   const price = cost(item.est_cost ?? 0);
+  const piiSend = item.payload?.kind === "pii-send" || (item.what ?? "").includes("pii-send");
+  const effortModel = String(item.model || item.payload?.model || "the effort model");
 
   useEffect(() => {
     if (selected) ref.current?.scrollIntoView?.({ block: "nearest" });
@@ -128,7 +130,7 @@ function Card({
   async function decide(verb: "approve" | "send-back") {
     if (busy) return;
     if (verb === "send-back" && !note.trim()) {
-      setErr("Add a note so the agent knows what to change.");
+      setErr(piiSend ? "Add a note to skip this step." : "Add a note so the agent knows what to change.");
       return;
     }
     setBusy(verb);
@@ -181,7 +183,7 @@ function Card({
         <p className="mt-3 text-xs text-muted">
           This exact payload (sha256 <span className="mono">{item.payload_hash.slice(0, 12)}</span>
           {item.payload_bytes != null ? `, ${item.payload_bytes} bytes` : ""}) goes to{" "}
-          <span className="mono">{item.egress || "unknown"}</span> if you approve. Any change makes it a new request.
+          <span className="mono">{piiSend ? effortModel : item.egress || "unknown"}</span> if you approve. Any change makes it a new request.
         </p>
       )}
       {item.payload != null && (
@@ -198,14 +200,14 @@ function Card({
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button variant="primary" data-act="approve" aria-keyshortcuts="a" onClick={() => decide("approve")} disabled={busy !== null}>
-          {busy === "approve" ? "Approving…" : `Approve ${price}`}
+          {busy === "approve" ? "Approving…" : piiSend ? `Send to ${effortModel}` : `Approve ${price}`}
         </Button>
         <input
           data-act="note"
-          aria-label={`Note for send-back on ${item.id}`}
+          aria-label={piiSend ? `Note for skip on ${item.id}` : `Note for send-back on ${item.id}`}
           aria-keyshortcuts="r"
           className="min-w-48 flex-1 rounded-lg border border-line bg-surface-1 px-3 py-1.5 text-sm"
-          placeholder="Note for send-back (what to change)"
+          placeholder={piiSend ? "Note for skip (required)" : "Note for send-back (what to change)"}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => {
@@ -216,7 +218,7 @@ function Card({
           }}
         />
         <Button variant="subtle" onClick={() => decide("send-back")} disabled={busy !== null}>
-          {busy === "send-back" ? "Sending…" : "Send back"}
+          {busy === "send-back" ? "Sending…" : piiSend ? "Skip" : "Send back"}
         </Button>
       </div>
       {err && (
