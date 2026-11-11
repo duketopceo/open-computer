@@ -814,6 +814,47 @@ def test_owner_resume_route_raises_the_cap(console):
     assert status == 200 and "0.8" in body
 
 
+def test_completion_records_provider_usage_and_omits_it_when_absent(tmp_path, monkeypatch):
+    from services.cost import Usage
+    from services.orchestrator import Orchestrator
+    from services.orchestrator.runner import WorkResult
+    from services.orchestrator.runcfg import create_ledger
+
+    monkeypatch.setenv("OC_GOALS_DIR", str(tmp_path))
+    rid = "goal_u4record"
+    root = tmp_path / rid
+    root.mkdir()
+    ledger = create_ledger(root, rid, 1.0, "owner")
+
+    def plan(_goal: str) -> str:
+        return json.dumps([
+            {"id": "a", "title": "A", "prompt": "chat", "tier": "mid", "deps": []},
+            {"id": "b", "title": "B", "prompt": "box", "tier": "mid", "deps": ["a"], "needs_sandbox": True},
+            {"id": "c", "title": "C", "prompt": "plain", "tier": "mid", "deps": ["b"]},
+        ])
+
+    def work(task: dict):
+        if task["subtask"] == "a":
+            return WorkResult("chat-out", Usage("vendor/served", 7, 3, 0.0031))
+        if task["subtask"] == "b":
+            return WorkResult("box-out", Usage("vendor/sandbox", 2, 2, 0.004))
+        return "plain-text"
+
+    orch = Orchestrator(root, ledger=ledger, effort_model="vendor/requested")
+    orch.submit("clean goal", plan, run_id=rid)
+    assert orch.work(work) and orch.work(work) and orch.work(work)
+    done = {r["task"]: r for r in orch.audit.rows() if r.get("event") == "worker_done"}
+    by_sub = {d["subtask"]: d["task"] for d in orch.dispatches[rid]}
+    assert done[by_sub["a"]]["worker"]["model"] == "vendor/served"
+    assert done[by_sub["a"]]["worker"]["cost"] == 0.0031
+    assert done[by_sub["b"]]["worker"]["model"] == "vendor/sandbox"
+    assert "worker" not in done[by_sub["c"]]
+    detail = {s["subtask"]: s for s in goalruns.get_run(rid)["subtasks"]}
+    assert detail["a"]["worker"]["model"] == "vendor/served" and detail["a"]["worker"]["cost"] == 0.0031
+    assert detail["b"]["worker"]["cost"] == 0.004
+    assert "worker" not in detail["c"]
+
+
 def test_mcp_has_no_resume_tool():
     import inspect
 

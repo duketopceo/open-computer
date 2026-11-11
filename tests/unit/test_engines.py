@@ -489,6 +489,22 @@ def test_stale_local_row_fails_closed_when_the_flag_is_off(monkeypatch):
     assert hosted == []
 
 
+def test_local_work_string_result_does_not_invent_a_cost(monkeypatch, tmp_path):
+    from services.orchestrator.runner import run_once
+    from oc.fsproto import adapter as fs_adapter
+    from services.gate.audit import AuditLog
+
+    monkeypatch.setenv("OC_LOCAL_MODELS", "1")
+    monkeypatch.setattr(engines, "_chat", lambda url, model, prompt, **kw: ("local text", 0.0))
+    fs = fs_adapter(tmp_path / "run")
+    audit = AuditLog(tmp_path / "audit.ndjson")
+    tid = fs.send("worker", {"run": "r", "subtask": "s", "prompt": "hi", "placement": "local-ollama", "est_cost": 0})
+    run_once(fs, audit, "worker", engines.work_fn(api_key="k"))
+    done = next(r for r in audit.rows() if r.get("event") == "worker_done" and r.get("task") == tid)
+    assert "worker" not in done
+    assert fs.collect("orchestrator", tid) == "local text"
+
+
 def test_stale_local_row_runs_local_work_when_the_flag_is_on(monkeypatch):
     monkeypatch.setenv("OC_LOCAL_MODELS", "1")
     seen: list[str] = []
