@@ -43,13 +43,17 @@ def violations(placer) -> list[str]:
             out.append(f"I1 {tag} -> {p.target}")
         if p.target.startswith("local"):
             out.append(f"I0 {tag} -> {p.target}")  # no local models: every model call goes through OpenRouter
-        if (
+        over = (
             kw["headroom"] is not None
             and sub["est_cost"] > kw["headroom"]
             and sub["latency"] != "crit"
-            and cloud(p)
             and not (kw["pii_flagged"] and not kw["approved"])
-        ):
+        )
+        # Chat over the cap must not become a cloud call. A sandbox step keeps
+        # cloud-sandbox; the run holds it instead of demoting or blocking here.
+        if over and not sub["needs_sandbox"] and cloud(p):
+            out.append(f"I3 {tag} -> {p.target}")
+        if over and sub["needs_sandbox"] and p.target != "cloud-sandbox":
             out.append(f"I3 {tag} -> {p.target}")
         if (
             cloud(p)
@@ -139,16 +143,17 @@ def test_dispatch_blocks_when_the_run_ledger_cannot_cover_the_estimate(tmp_path)
 
 
 def test_no_step_ever_lands_on_a_local_model():
-    # Luke's rule: zero local models. Cheap, latency-critical and default steps go to OpenRouter;
-    # unapproved PII and over-budget steps block with the reason instead of demoting to local.
+    # Cheap, latency-critical and default steps go to OpenRouter.
+    # Unapproved private text holds. Over-budget chat blocks here; it is not a local model.
     for sub in ({"tier": "cheap"}, {"tier": "mid", "latency": "crit"}, {"tier": "local"}, {}):
-        assert place(sub).target == "cloud-OpenRouter", sub
-    p = place({"tier": "mid"}, pii_flagged=True, approved=False)
-    assert p.target == "blocked" and "approve" in p.reason
+        assert place(sub, local_up=True).target == "cloud-OpenRouter", sub
+    p = place({"tier": "mid"}, pii_flagged=True, approved=False, local_up=True)
+    assert p.target == "blocked" and "hold" in p.reason
+    assert not p.target.startswith("local") and not p.target.startswith("cloud")
     p = place({"tier": "mid"}, headroom=0.01)
     assert p.target == "cloud-OpenRouter"  # est 0.0 fits headroom
-    p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01)
-    assert p.target == "blocked" and "raise the cap" in p.reason
+    p = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=True)
+    assert p.target == "blocked" and not p.target.startswith("local")
 
 
 def test_needs_sandbox_is_a_capability_constraint_not_a_quality_pref():
@@ -156,9 +161,34 @@ def test_needs_sandbox_is_a_capability_constraint_not_a_quality_pref():
     # to local or cloud-fallback are chat endpoints that cannot run code.
     p = place({"needs_sandbox": True, "latency": "crit"})
     assert p.target == "cloud-sandbox"
-    # The spend cap still binds: over-budget blocks, never demotes to chat.
-    p = place({"needs_sandbox": True, "est_cost": 0.5}, headroom=0.01)
-    assert p.target == "blocked" and "raise the cap" in p.reason
+    # Over the cap the legal target stays the sandbox. Dispatch holds the mail.
+    p = place({"needs_sandbox": True, "est_cost": 0.5}, headroom=0.01, local_up=True)
+    assert p.target == "cloud-sandbox"
+    assert not p.target.startswith("local")
+
+
+def test_local_up_and_the_flag_never_select_a_local_target(monkeypatch):
+    monkeypatch.setenv("OC_LOCAL_MODELS", "1")
+    cheap = {"tier": "cheap", "est_cost": 0.0}
+    assert place(cheap, local_up=True).target == "cloud-OpenRouter"
+    monkeypatch.delenv("OC_LOCAL_MODELS", raising=False)
+    assert place(cheap, local_up=True).target == "cloud-OpenRouter"
+    assert place({"tier": "mid", "latency": "crit"}, local_up=True).target != "local-llamacpp"
+    over = place({"tier": "mid", "est_cost": 0.5}, headroom=0.01, local_up=True)
+    assert over.target != "local-ollama"
+
+
+def test_frontier_device_egress_and_repeat_stay_put():
+    frontier = place({"tier": "frontier"})
+    assert frontier.target == "cloud-OpenRouter" and frontier.gate_required
+    device = place({"needs_device": True, "device_root": "/tmp/x", "tier": "frontier"}, pii_flagged=True)
+    assert device.target == "device"
+    assert place({"tier": "cheap"}).target != "device"
+    blocked = place({"needs_egress": True, "egress_hosts": ["evil.example"]}, egress_approved=())
+    assert blocked.target == "blocked" and "evil.example" in blocked.reason
+    args = ({"tier": "mid", "est_cost": 0.01},)
+    kw = {"headroom": 1.0, "local_up": False}
+    assert place(*args, **kw) == place(*args, **kw)
 
 
 def test_blocked_placement_tombstones_the_subtask(tmp_path):

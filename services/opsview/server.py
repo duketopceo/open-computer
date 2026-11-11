@@ -155,7 +155,7 @@ def oc_root() -> Path:
 
 
 def daily_cap() -> float:
-    return float(os.environ.get("OC_DAILY_CAP", "1.0"))
+    return float(os.environ.get("OC_DAILY_CAP", "5.0"))
 
 
 def router_base() -> str:

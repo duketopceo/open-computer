@@ -473,3 +473,31 @@ def test_python_reply_with_warnings_on_stderr_succeeds(monkeypatch):
     _reply(monkeypatch, "```python\nprint('r')\n```")
     plane = _FakePlane(rc=0, out="r\n", err='<stdin>:3: SyntaxWarning: "\\ " is an invalid escape sequence\n')
     assert engines.sandbox_work({"prompt": "x"}, api_key="k", plane=plane) == "r\n"
+
+
+def test_stale_local_row_fails_closed_when_the_flag_is_off(monkeypatch):
+    monkeypatch.delenv("OC_LOCAL_MODELS", raising=False)
+    hosted: list[str] = []
+
+    def chat(url, model, prompt, **kw):
+        hosted.append(url)
+        return "nope", 0.0
+
+    monkeypatch.setattr(engines, "_chat", chat)
+    with pytest.raises(engines.LocalPlacementRefused):
+        engines.work_fn(api_key="k")({"placement": "local-ollama", "prompt": "secret"})
+    assert hosted == []
+
+
+def test_stale_local_row_runs_local_work_when_the_flag_is_on(monkeypatch):
+    monkeypatch.setenv("OC_LOCAL_MODELS", "1")
+    seen: list[str] = []
+
+    def chat(url, model, prompt, **kw):
+        seen.append(url)
+        return "from-local", 0.0
+
+    monkeypatch.setattr(engines, "_chat", chat)
+    out = engines.work_fn(api_key="k")({"placement": "local-ollama", "prompt": "hi"})
+    assert seen and "11434" in seen[0] and "openrouter.ai" not in seen[0]
+    assert getattr(out, "output", out) == "from-local"

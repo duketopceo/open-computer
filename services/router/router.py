@@ -139,6 +139,6 @@ def default_router(
     engines: list[Engine] = []
     if key:
         engines.extend(_http_engine(name, model, base, key) for name, model in _decide.decider_chain())
-    daily = daily_cap if daily_cap is not None else float(os.environ.get("OC_DAILY_CAP", "1.0"))
+    daily = daily_cap if daily_cap is not None else float(os.environ.get("OC_DAILY_CAP", "5.0"))
     task = task_cap if task_cap is not None else float(os.environ.get("OC_TASK_CAP", "0.10"))
     return Router(Budget(ledger_path, daily_cap=daily, task_cap=task), engines)

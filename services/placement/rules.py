@@ -5,9 +5,10 @@ subtask -> placement target. A table, not a model (per the verdict doc:
 conservative first.
 
 Every model call goes through OpenRouter, with OpenRouter's own model
-fallbacks after the effort's primary model. There is no local-model target:
-a step that cannot go to the cloud model (unapproved PII, over budget) blocks
-with the reason instead.
+fallbacks after the effort's primary model. There is no local-model target.
+Unapproved private text holds (`blocked`). A sandbox step stays
+`cloud-sandbox` even when the estimate is over the cap; chat over the cap
+still blocks. Dispatch decides whether an over-cap sandbox is mailed.
 
 Targets:
   cloud-OpenRouter   cloud model call via router — costs, needs gate when
@@ -17,8 +18,9 @@ Targets:
                      the only target that can touch a granted local root,
                      local app or local browser. Local, never cloud.
   blocked            no legal placement exists — the step tombstones FAILED
-                     with the reason (unapproved PII, over budget, egress
-                     nobody approved).
+                     with the reason (unapproved private text, chat over
+                     budget, egress nobody approved). A sandbox over the cap
+                     is not this target.
 
 Every Placement carries `reason` for the audit row — the matrix and the
 UI read the same words, never inferred.
@@ -65,6 +67,9 @@ def headroom_from(budget=None, ledger=None, run: str | None = None) -> float | N
     return min(parts) if parts else None
 
 
+HOLD_PRIVATE = "hold: private details — waiting for the owner to send or skip"
+
+
 def place(
     subtask: dict,
     *,
@@ -74,24 +79,28 @@ def place(
     budget=None,
     device_available: bool = True,
     egress_approved=(),
+    local_up: bool = False,
 ) -> Placement:
     """Where this subtask's model/execution lands. A pure function of its arguments.
 
     pii_flagged: the gate's scan of the prompt found PII.
     approved:    a human approval for exactly this payload exists. The gate re-verifies hash, expiry and
                  single use at send time, so True here only opens the *option* of a gated cloud call.
-    headroom:    dollars still spendable (see headroom_from). A cloud call the headroom cannot cover
-                 blocks. `budget` is a legacy shim: its headroom is derived here when `headroom`
+    headroom:    dollars still spendable (see headroom_from). A chat call the headroom cannot cover
+                 blocks. A sandbox step keeps cloud-sandbox; the caller holds the mail.
+                 `budget` is a legacy shim: its headroom is derived here when `headroom`
                  is not given; a corrupt ledger raises BudgetHalt from day_spend() and propagates.
+    local_up:    ignored. A listener on a local port does not change the target.
 
     Invariants (tests/unit/test_placement_table.py checks them over the whole cross product):
       I0 no placement is ever a local model: every model call is cloud-OpenRouter (or the sandbox/device/blocked).
-      I1 PII flagged and not approved -> never a cloud target.
-      I3 est_cost above headroom -> never a cloud model call.
+      I1 PII flagged and not approved -> blocked, with a hold reason, never cloud or local.
+      I3 chat est_cost above headroom -> never a cloud model call. Sandbox stays cloud-sandbox.
       I4 every cloud placement of PII-flagged content, and every frontier placement, has gate_required.
       I5 deterministic: same arguments, same Placement (reason included).
       I6 needs_device(subtask) -> target device, whatever else is set; nothing else ever lands on device.
     """
+    del local_up  # a local listener is not a placement input
     tier = subtask.get("tier", "mid")
     model_req = subtask.get("model_requirement", "")
     est_cost = float(subtask.get("est_cost", 0.0))
@@ -112,10 +121,7 @@ def place(
     # 1. PII never reaches cloud without a recorded human approval, and
     #    there is no local model to send it to: block with the reason.
     if pii_flagged and not approved:
-        return Placement(
-            "blocked",
-            "has private details and no approval — approve the step to send it to the cloud model",
-        )
+        return Placement("blocked", HOLD_PRIVATE)
 
     # 1.5 Egress: a step that needs the network can only run where human-
     #     approved egress exists (S5). A named host nobody approved — or no
@@ -142,15 +148,9 @@ def place(
         )
 
     # 2. Work that must execute lands in a sandboxed worker — capability
-    #    beats latency: a chat endpoint cannot run code. The spend cap
-    #    still binds, but with no executable fallback its failure mode is
-    #    `blocked`, never a demotion to a surface that cannot run it.
+    #    beats latency: a chat endpoint cannot run code. Headroom does not
+    #    change the target; the run holds the mail when the cap cannot cover it.
     if subtask.get("needs_sandbox"):
-        if headroom is not None and est_cost > 0 and est_cost > headroom:
-            return Placement(
-                "blocked",
-                f"over-budget (est {est_cost} > headroom {headroom:.4f}) and only a sandbox can run this step — raise the cap",
-            )
         return Placement(
             "cloud-sandbox",
             "needs_sandbox - execution-capable worker",
