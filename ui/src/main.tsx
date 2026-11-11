@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { useEffect } from "react";
 import { RouterProvider, matchRoute, useRouter } from "./lib/router";
 import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
@@ -21,6 +22,7 @@ import "./index.css";
 type Row = { path: string; page: (p: Record<string, string>) => JSX.Element };
 const ROUTES: Row[] = [
   { path: "/", page: () => <App /> },
+  { path: "/agents", page: () => <App /> },
   { path: "/devices", page: () => <Devices /> },
   { path: "/sandboxes", page: () => <Sandboxes /> },
   { path: "/sandboxes/:id", page: (p) => <SandboxDetail id={p.id} /> },
@@ -31,8 +33,15 @@ const ROUTES: Row[] = [
   { path: "/overview", page: () => <Overview /> },
   { path: "/skills", page: () => <Skills /> },
   { path: "/automations", page: () => <Automations /> },
-  { path: "/goals", page: () => <Runs /> },
+  { path: "/goals", page: () => <Redirect to="/runs" /> },
 ];
+
+/** An old name for a page that moved: replace it in history so Back does not bounce. */
+function Redirect({ to }: { to: string }) {
+  const { navigate } = useRouter();
+  useEffect(() => navigate(to, { replace: true }), [navigate, to]);
+  return null;
+}
 
 function Routes() {
   const { path } = useRouter();

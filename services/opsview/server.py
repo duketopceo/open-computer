@@ -309,6 +309,7 @@ GET_ROUTES = [
     (r"/api/automations", "g_api_automations"),
     (r"/work", "g_work_redirect"),
     (r"/overview", "g_spa_route"),
+    (r"/agents", "g_spa_route"),
     (r"/sandboxes", "g_spa_route"),
     (r"/sandboxes/(?P<id>[^/]+)", "g_spa_route"),
     (r"/devices", "g_spa_route"),

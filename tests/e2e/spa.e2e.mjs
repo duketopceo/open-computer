@@ -36,7 +36,7 @@ after(async () => { await browser?.close(); server?.kill(); });
 
 const json = (status, body) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 
-async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup } = {}) {
+async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup, at = "/" } = {}) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", colorScheme: scheme });
   await ctx.addCookies([{ name: "oc_sess", value: "test", url: base }]);
   const page = await ctx.newPage();
@@ -44,7 +44,7 @@ async function open({ w = 1440, h = 900, routes = {}, scheme = "light", setup } 
   await page.route("**/api/runs", (r) => r.fulfill(json(200, { runs: [] })));
   for (const [glob, handler] of Object.entries(routes)) await page.route(glob, handler);
   if (setup) await setup(page);
-  await page.goto(base + "/", { waitUntil: "networkidle" });
+  await page.goto(base + at, { waitUntil: "networkidle" });
   return { ctx, page };
 }
 
@@ -118,6 +118,7 @@ test("@errors expired session shows sign-in and disables the composer", async ()
 
 test("@errors a missing run offers retry instead of spinning forever", async () => {
   const { ctx, page } = await open({
+    at: "/#g_gone",
     routes: {
       "**/api/runs": (r) => r.fulfill(json(200, { runs: [{ run: "g_gone", goal: "x", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
       "**/api/runs/g_gone": (r) => r.fulfill(json(404, { error: "no such run" })),
@@ -221,37 +222,66 @@ test("@a11y spa ported pages: error, empty, confirm and open-menu states have 0 
   // mobile menu open
   ({ ctx, page } = await openAt("/devices", { w: 390 }));
   await page.getByRole("button", { name: "Menu" }).click();
-  await page.getByRole("link", { name: "Audit" }).waitFor();
+  await page.getByRole("link", { name: "Activity log" }).waitFor();
   assert.deepEqual(await axeViolations(page), [], "mobile menu open");
   await ctx.close();
 });
 
-test("@nav every SPA nav entry deep-links with one current item; unported entries are plain links", async () => {
-  const { ctx, page } = await openAt("/devices");
-  const nav = page.getByRole("navigation", { name: "Console" });
-  const entries = await nav.getByRole("link").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
-  assert.deepEqual(entries.map(([t]) => t), ["Computer", "Work", "Overview", "Goals", "Automations", "Skills", "Sandboxes", "Devices", "Runs", "Approvals", "Router", "Audit", "Workspace"]);
-  for (const href of ["/", "/devices", "/sandboxes", "/router", "/audit"]) {
+test("@nav the primary nav is New, Tasks, Needs you, Automations; developer pages show their own group; one current item everywhere", async () => {
+  const { ctx, page } = await openAt("/");
+  const entries = await page.getByRole("navigation", { name: "Console" }).getByRole("link").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
+  assert.deepEqual(entries.map(([t]) => t.replace(/,.*/, "")), ["New", "Tasks", "Needs you", "Automations"]);
+  assert.equal(await page.getByRole("navigation", { name: "Developer" }).count(), 0, "developer group is hidden by default");
+  await ctx.close();
+  for (const href of ["/", "/runs", "/approvals", "/automations", "/overview", "/agents", "/skills", "/sandboxes", "/sandboxes/sbx-7f3a91c2", "/devices", "/router", "/audit"]) {
     const { ctx: c2, page: p2 } = await openAt(href);
-    if (href !== "/") {
-      assert.equal(await p2.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').count(), 1, href);
-      assert.equal(await p2.locator("h1").count(), 1, href);
-    }
+    assert.equal(await p2.locator('nav [aria-current="page"]').count(), 1, href);
+    assert.equal(await p2.locator("h1").count(), 1, href);
+    const dev = href !== "/" && !["/runs", "/approvals", "/automations"].includes(href);
+    assert.equal(await p2.getByRole("navigation", { name: "Developer" }).count(), dev ? 1 : 0, `${href} developer group`);
     await c2.close();
   }
+});
+
+test("@nav Developer tools switch: off by default, reveals the group, persists across a reload, hides again", async () => {
+  const { ctx, page } = await openAt("/runs");
+  const sw = page.getByRole("switch", { name: "Developer tools" });
+  assert.equal(await sw.getAttribute("aria-checked"), "false");
+  await sw.click();
+  const dev = page.getByRole("navigation", { name: "Developer" });
+  assert.deepEqual(await dev.getByRole("link").allTextContents(), ["Activity summary", "Background agents", "Setup status", "Workspaces", "Computers", "Model chooser", "Activity log", "Agent workspace", "Self-check"]);
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await page.getByRole("switch", { name: "Developer tools" }).getAttribute("aria-checked"), "true");
+  await dev.waitFor();
+  await page.getByRole("switch", { name: "Developer tools" }).click();
+  assert.equal(await dev.count(), 0);
+  await ctx.close();
+});
+
+test("@nav Needs you counts what is waiting, on every page", async () => {
+  const { ctx, page } = await openAt("/runs", { routes: { "**/api/overview": (r) => r.fulfill(json(200, { pending_approvals: [{}, {}, {}], runs: [], audit: [], spend: 0.004, cap: 1, now: 1 })) } });
+  await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Needs you, 3 waiting for you" }).waitFor();
+  await page.getByText("Spent today $0.00").waitFor();
+  await ctx.close();
+});
+
+test("@nav old names land on the right page: /goals goes to Tasks, /agents is the developer agent view", async () => {
+  const { ctx, page } = await openAt("/goals");
+  await page.waitForURL(base + "/runs");
+  await page.getByRole("heading", { level: 1, name: "Runs" }).waitFor();
   await ctx.close();
 });
 
 test("@nav client-side navigation keeps the document, retitles, moves focus, and back/forward work", async () => {
   const { ctx, page } = await openAt("/sandboxes");
   await page.evaluate(() => { window.__same = true; });
-  const nav = page.getByRole("navigation", { name: "Console" });
-  await nav.getByRole("link", { name: "Devices" }).click();
+  const nav = page.getByRole("navigation", { name: "Developer" });
+  await nav.getByRole("link", { name: "Computers" }).click();
   await page.waitForURL(base + "/devices");
   await page.getByRole("heading", { level: 1, name: "Devices" }).waitFor();
   assert.equal(await page.title(), "Devices · open-computer");
   assert.equal(await page.evaluate(() => document.activeElement?.id), "main");
-  await nav.getByRole("link", { name: "Audit" }).click();
+  await nav.getByRole("link", { name: "Activity log" }).click();
   await page.waitForURL(base + "/audit");
   await page.goBack();
   await page.waitForURL(base + "/devices");
@@ -261,11 +291,11 @@ test("@nav client-side navigation keeps the document, retitles, moves focus, and
   assert.equal(await page.evaluate(() => window.__same), true, "no document reload happened");
   // a ctrl-click is left to the browser (new tab), the SPA does not intercept it
   const before = page.url();
-  await nav.getByRole("link", { name: "Router" }).click({ modifiers: ["Control"] });
+  await nav.getByRole("link", { name: "Model chooser" }).click({ modifiers: ["Control"] });
   assert.equal(page.url(), before);
-  // an unported page is a full navigation to the server-rendered console
-  await Promise.all([page.waitForURL(base + "/runs"), nav.getByRole("link", { name: "Runs" }).click()]);
-  assert.equal(await page.evaluate(() => window.__same), undefined, "Runs is a real page load");
+  // a page that is not ported yet is a full navigation to the server-rendered console
+  await Promise.all([page.waitForURL(base + "/runs/new"), nav.getByRole("link", { name: "Self-check" }).click()]);
+  assert.equal(await page.evaluate(() => window.__same), undefined, "Self-check is a real page load");
   await ctx.close();
 });
 
@@ -306,7 +336,7 @@ test("sandboxes: list, client-side detail, missing id, and honest control-plane 
   await page.getByRole("table", { name: "Sandbox sbx-7f3a91c2" }).waitFor();
   assert.ok(await page.getByText("templateID").isVisible());
   assert.equal(await page.evaluate(() => window.__same), true);
-  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').textContent(), "Sandboxes");
+  assert.equal(await page.locator('nav [aria-current="page"]').textContent(), "Workspaces");
   await ctx.close();
 
   ({ ctx, page } = await openAt("/sandboxes/does-not-exist"));
@@ -494,21 +524,22 @@ test("an expired session on a ported page shows the session-expired state", asyn
 
 test("nav: Sandboxes is current only for declared routes, and a same-URL click adds no history entry", async () => {
   let { ctx, page } = await openAt("/sandboxes/sbx-7f3a91c2");
-  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').textContent(), "Sandboxes");
+  assert.equal(await page.locator('nav [aria-current="page"]').textContent(), "Workspaces");
   await page.evaluate(() => { history.pushState(null, "", "/sandboxes/a/b"); dispatchEvent(new PopStateEvent("popstate")); });
   await page.getByRole("heading", { level: 1, name: "Not found" }).waitFor();
-  assert.equal(await page.getByRole("navigation", { name: "Console" }).locator('[aria-current="page"]').count(), 0);
+  assert.equal(await page.locator('nav [aria-current="page"]').count(), 0);
   await ctx.close();
   ({ ctx, page } = await openAt("/devices"));
   const before = await page.evaluate(() => history.length);
-  await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Devices" }).click();
+  await page.getByRole("navigation", { name: "Developer" }).getByRole("link", { name: "Computers" }).click();
   assert.equal(await page.evaluate(() => history.length), before, "clicking the current page's link pushes nothing");
   await ctx.close();
 });
 
 test("focus: the first client-side navigation from / lands on main; an audit filter submit keeps focus in the input", async () => {
   let { ctx, page } = await open();
-  await page.getByRole("navigation", { name: "Operator" }).getByRole("link", { name: "Devices" }).click();
+  await page.getByRole("switch", { name: "Developer tools" }).click();
+  await page.getByRole("navigation", { name: "Developer" }).getByRole("link", { name: "Computers" }).click();
   await page.getByRole("heading", { level: 1, name: "Devices" }).waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.id), "main");
   await ctx.close();
@@ -607,13 +638,17 @@ function agentApi(o = {}) {
   return o;
 }
 
-const goAgents = async (page) => page.getByRole("button", { name: /^Agent jobs/ }).click();
+const goAgents = async (page) => {
+  await page.getByRole("switch", { name: "Developer tools" }).click();
+  await page.getByRole("navigation", { name: "Developer" }).getByRole("link", { name: "Background agents" }).click();
+};
 const card = (page, kind) => page.getByRole("listitem", { name: new RegExp(`Approval needed: ${kind}`, "i") });
 
 test("@agents list shows statuses, queued as not running, pending badges and the payload card", async () => {
   const api = agentApi();
-  const { ctx, page } = await open({ setup: api.setup });
-  await page.getByRole("button", { name: /^Agent jobs\s*2/ }).waitFor(); // sidebar pending count
+  const none = { pending_approvals: [], runs: [], audit: [], spend: 0, cap: 1, now: 1 };
+  const { ctx, page } = await open({ setup: api.setup, routes: { "**/api/overview": (r) => r.fulfill(json(200, none)) } });
+  await page.getByRole("link", { name: "Needs you, 2 waiting for you" }).waitFor(); // sidebar pending count
   await goAgents(page);
   await page.getByText("queued · not running").waitFor();
   await page.getByText("finished", { exact: true }).waitFor();
@@ -938,6 +973,7 @@ test("@flow effort: a run shows its effort, model and spend, and a budget pause 
     [{ id: "low", model: "google/gemini-2.5-flash", budget: 0.1, spent: 0.1, paused: true }, true],
   ]) {
     const { ctx, page } = await open({
+      at: "/#g_e2e01",
       routes: {
         "**/api/runs": (r) => r.fulfill(json(200, { runs: [{ run: "g_e2e01", goal: "say hi", origin: "console", device_id: null, subtasks: 1, states: {}, ts: 1 }] })),
         "**/api/runs/g_e2e01": (r) => r.fulfill(json(200, withEffort(effort))),

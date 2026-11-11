@@ -13,12 +13,12 @@ import {
   type AgentJobSummary,
   type RunDetail,
   type RunSummary,
-  type Session,
 } from "@/lib/api";
 import { AgentJobs } from "@/components/AgentJobs";
 import { Composer } from "@/components/Composer";
 import { RunView } from "@/components/RunView";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/AppShell";
+import { useRouter } from "@/lib/router";
 import { Button } from "@/components/primitives";
 
 const STARTERS = [
@@ -31,7 +31,6 @@ const STARTERS = [
 type Link = "ok" | "offline" | "auth";
 
 export default function App() {
-  const [sess, setSess] = useState<Session | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [run, setRun] = useState<RunDetail | null>(null);
@@ -42,7 +41,8 @@ export default function App() {
   const [draft, setDraft] = useState<string | undefined>();
   const [error, setError] = useState("");
   const [link, setLink] = useState<Link>("ok");
-  const [view, setView] = useState<"runs" | "agents">("runs");
+  const { path } = useRouter();
+  const view = path === "/agents" ? "agents" : "runs";
   const [jobs, setJobs] = useState<AgentJobSummary[] | null>(null);
   const [jobsError, setJobsError] = useState("");
 
@@ -110,14 +110,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    session()
-      .then(setSess)
-      .catch(noteFailure);
-    refreshRuns()
-      .then((r) => {
-        if (r.length && selectedRef.current === null) setSelected(r[0].run);
-      })
-      .catch((e) => {
+    session().catch(noteFailure);
+    // "New" is an empty box: a task opens only from a link (#id) or the Recent list.
+    refreshRuns().catch((e) => {
         noteFailure(e);
         setError(errorMessage(e, "Could not load runs."));
       });
@@ -209,25 +204,26 @@ export default function App() {
     setDraft(undefined);
   }
 
-  return (
-    <div className="flex h-full">
-      <Sidebar
-        runs={runs}
-        selected={selected}
-        identity={sess?.identity ?? ""}
-        view={view}
-        onAgents={() => setView("agents")}
-        pending={(jobs ?? []).reduce((n, j) => n + (j.pending || 0), 0)}
-        onSelect={(id) => {
-          if (submitting) return;
-          setView("runs");
-          setConfirm(null);
-          setError("");
-          setSelected(id || null);
-        }}
-      />
+  function pickRun(id: string) {
+    if (submitting) return;
+    setConfirm(null);
+    setError("");
+    setSelected(id);
+  }
 
-      <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
+  function newTask() {
+    if (submitting) return;
+    setConfirm(null);
+    setError("");
+    setSelected(null);
+  }
+
+  return (
+    <AppShell
+      title={view === "agents" ? "Background agents" : "New"}
+      mainClassName="relative flex flex-col"
+      home={{ runs, selectedRun: view === "runs" ? selected : null, onNew: newTask, onPickRun: pickRun }}
+    >
         {link !== "ok" && <LinkBanner link={link} />}
         {view === "agents" ? (
           <AgentJobs
@@ -278,7 +274,7 @@ export default function App() {
             </div>
           ) : (
             <div className="flex flex-col items-center">
-              <h1 className="font-display text-3xl text-ink">What should the computer do?</h1>
+              <h1 className="font-display text-2xl text-ink md:text-3xl">What should the computer do?</h1>
               <p className="mt-2 mb-8 max-w-md text-center text-sm text-muted">
                 Describe an outcome. It decomposes, routes, places and runs each step — here you
                 watch the machinery, not just the answer.
@@ -300,8 +296,7 @@ export default function App() {
           )}
         </div>
         )}
-      </main>
-    </div>
+    </AppShell>
   );
 }
 
