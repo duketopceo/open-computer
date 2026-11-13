@@ -59,3 +59,37 @@ def test_regional_retry_matches_a_complete_hostname_only():
     assert _mod._regional_base("https://openrouter.ai/api/v1", _region_403("router.ai")) is None
     # already on the global host: do not "retry" onto the same host
     assert _mod._regional_base("https://openrouter.ai/api/v1", _region_403("openrouter.ai")) is None
+
+
+def test_redirects_are_not_followed_so_the_key_stays_on_host(monkeypatch):
+    import http.server
+    import threading
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-" + "r" * 40)
+    hits: list[str] = []
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            hits.append(self.path)
+            if self.path == "/start":
+                self.send_response(302)
+                self.send_header("Location", "/elsewhere")
+                self.end_headers()
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        status, _ = _mod._get(f"http://127.0.0.1:{srv.server_port}/start", timeout=5)
+    finally:
+        srv.shutdown()
+    assert status == 302
+    assert hits == ["/start"]

@@ -57,10 +57,23 @@ def _headers() -> dict[str, str]:
     }
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so the bearer key is never forwarded to another host.
+
+    A 3xx then surfaces as an HTTPError and `_get` returns its status code.
+    """
+
+    def redirect_request(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _get(url: str, timeout: float = 30.0) -> tuple[int, object]:
     req = urllib.request.Request(url, headers=_headers())
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _OPENER.open(req, timeout=timeout) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", "replace")
