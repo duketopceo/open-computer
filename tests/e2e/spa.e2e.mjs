@@ -1107,7 +1107,7 @@ function goalApi() {
 const goalBox = (page) => page.getByRole("textbox", { name: "Message" });
 const runBtn = (page) => page.getByRole("button", { name: "Send", exact: true });
 
-test("@flow effort: server default is selected, Advanced is closed, and the one-line caption names the budget", async () => {
+test("@flow effort: server default is selected, Advanced is closed, and the composer has no caption", async () => {
   const api = goalApi();
   const { ctx, page } = await open({ routes: api.routes });
   await page.getByRole("radio", { name: "Low" }).waitFor({ state: "attached" });
@@ -1115,11 +1115,17 @@ test("@flow effort: server default is selected, Advanced is closed, and the one-
   assert.equal(await page.getByRole("radio").count(), 3);
   assert.equal(await page.getByRole("button", { name: "Advanced" }).getAttribute("aria-expanded"), "false");
   assert.equal(await page.getByLabel("Model").count(), 0);
-  await page.getByText("up to $0.10 per run").waitFor();
-  assert.equal(await page.getByText("vendor/low-b, vendor/low-c").count(), 0, "the model chain stays inside Advanced");
+  assert.equal(await page.getByText("up to $0.10 per run").count(), 0);
+  assert.equal(await page.getByText("vendor/low-b, vendor/low-c").count(), 0, "the model chain is not on the card");
+  const edge = await page.getByTestId("composer-edge").innerText();
+  assert.ok(!/up to|per run|unavailable/i.test(edge), `composer still has a sentence: ${JSON.stringify(edge)}`);
   await page.getByRole("button", { name: "Advanced" }).click();
-  assert.ok(await page.getByText(/Uses google\/gemini-2.5-flash/).isVisible());
-  assert.ok(await page.getByText("vendor/low-b, vendor/low-c").isVisible());
+  await page.getByLabel("Model").waitFor();
+  assert.equal(await page.getByText(/Uses google\/gemini-2.5-flash/).count(), 0);
+  assert.equal(await page.getByText("vendor/low-b, vendor/low-c").count(), 0);
+  const title = await page.getByLabel("Model").getAttribute("title");
+  assert.match(title || "", /google\/gemini-2.5-flash/);
+  assert.match(title || "", /vendor\/low-b, vendor\/low-c/);
   await ctx.close();
 });
 
@@ -1128,7 +1134,7 @@ test("@flow effort: High is sent with the first message and there is no confirm 
   const { ctx, page } = await open({ routes: api.routes });
   await goalBox(page).fill("say hi");
   await page.locator("label", { hasText: "High" }).click(); // the visible label, as a user clicks it
-  await page.getByText("up to $1.00 per run").waitFor();
+  assert.ok(await page.getByRole("radio", { name: "High" }).isChecked());
   await runBtn(page).click();
   await page.getByText("Done: it said hi.").waitFor(); // straight into the thread
   assert.deepEqual(api.posts, [{ text: "say hi", effort: "high" }]); // no model or budget unless Advanced was used
@@ -1170,11 +1176,16 @@ test("@flow effort: Advanced holds a model and a budget; both are sent, and an o
   await ctx.close();
 });
 
-test("@errors effort: if the effort list cannot load, Run still works with the server default and says so", async () => {
+test("@errors effort: if the effort list cannot load, Run still works with the server default and does not show a sentence", async () => {
   const api = goalApi();
   const { ctx, page } = await open({ routes: { ...api.routes, "**/api/effort": (r) => r.fulfill(json(500, { error: "boom" })) } });
-  await page.getByText("Effort levels unavailable").waitFor();
+  await goalBox(page).waitFor();
   assert.equal(await page.getByRole("radio").count(), 0);
+  const hidden = page.getByRole("status").filter({ hasText: "Effort levels unavailable" });
+  assert.equal(await hidden.count(), 1);
+  assert.ok(await hidden.evaluate((el) => el.classList.contains("sr-only")), "effort-unavailable status must be sr-only");
+  const edge = await page.getByTestId("composer-edge").innerText();
+  assert.ok(!/unavailable|server default/i.test(edge), `composer still has a sentence: ${JSON.stringify(edge)}`);
   await goalBox(page).fill("say hi");
   await runBtn(page).click();
   await page.getByText("Done: it said hi.").waitFor();
@@ -1319,7 +1330,7 @@ for (const w of [1440, 390]) {
 }
 
 // ---- Silver Lining tokens (U19): one token file, dark and light, system by default.
-const CANVAS = { dark: "rgb(10, 11, 16)", light: "rgb(246, 246, 249)" }; // Iris, services/opsview/static/oc-palette.css
+const CANVAS = { dark: "rgb(9, 9, 9)", light: "rgb(245, 245, 245)" }; // Silver Lining neutrals; accent is graphite in oc-palette.css
 const canvasOf = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
 test("@theme system is the default and follows an emulated scheme change without reload", async () => {

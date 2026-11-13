@@ -81,7 +81,7 @@ export function ThreadView({
             busy={busy}
             working={thread.working}
             disabled={disabled || thread.working}
-            placeholder={thread.working ? "Working on it…" : "Reply"}
+            placeholder="Reply"
             rows={2}
             autoFocus
           />

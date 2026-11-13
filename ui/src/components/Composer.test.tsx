@@ -65,4 +65,22 @@ describe("Composer", () => {
     rerender(<Composer onSend={() => {}} working />);
     expect(screen.getByTestId("composer-edge")).toHaveClass("fx-working");
   });
+
+  it("has no explanatory sentences in the composer card", async () => {
+    render(<Composer onSend={() => {}} showEffort />);
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Low" })).toBeInTheDocument());
+    const edge = screen.getByTestId("composer-edge");
+    expect(edge.textContent).not.toMatch(/up to|per run|unavailable|Checking dictation|Listening —|Transcribing|Working on it/i);
+    expect(screen.getByRole("textbox", { name: "Message" })).toHaveAttribute("placeholder", "Message");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the effort-unavailable status for assistive tech only", async () => {
+    getEffort.mockRejectedValue(new Error("boom"));
+    render(<Composer onSend={() => {}} showEffort />);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(/Effort levels unavailable/));
+    expect(screen.getByRole("status")).toHaveClass("sr-only");
+    expect(screen.getByTestId("composer-edge").textContent).not.toMatch(/unavailable/i);
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
 });

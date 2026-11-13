@@ -251,14 +251,7 @@ export function Composer({
             {showEffort && catalog ? (
               <EffortPicker catalog={catalog} value={picked} onChange={setChoice} disabled={disabled || busy} lead={mic} />
             ) : (
-              <div className="flex items-center gap-2">
-                {mic}
-                {showEffort && effort.error && (
-                  <p className="text-xs text-muted" role="status">
-                    Effort levels unavailable; the server default applies.
-                  </p>
-                )}
-              </div>
+              <div className="flex items-center gap-2">{mic}</div>
             )}
           </div>
           <Button variant="primary" className="ml-auto" disabled={!canRun} aria-busy={busy} onClick={run}>
@@ -267,15 +260,20 @@ export function Composer({
           </Button>
         </div>
       </div>
+      {showEffort && effort.error && (
+        <span className="sr-only" role="status">
+          Effort levels unavailable; the server default applies.
+        </span>
+      )}
       {rec !== "idle" && (
-        <p className="mt-2 text-center text-xs text-muted" role="status">
+        <p className="sr-only" role="status" aria-live="polite">
           {rec === "probing"
-            ? "Checking dictation…"
+            ? "Checking dictation"
             : rec === "starting"
-              ? "Waiting for the microphone…"
+              ? "Starting microphone"
               : rec === "recording"
-                ? "Listening — click the mic to finish (2 min max)."
-                : "Transcribing…"}
+                ? "Listening"
+                : "Transcribing"}
         </p>
       )}
       {err && (

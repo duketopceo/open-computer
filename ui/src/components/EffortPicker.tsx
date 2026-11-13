@@ -78,11 +78,6 @@ export function EffortPicker({
             ))}
           </div>
         </fieldset>
-        <span className={cn("mono text-xs", budgetBad ? "text-urgent" : "text-muted")} aria-live="polite">
-          {budgetBad
-            ? `budget must be above $0 and up to ${usd(catalog.max_budget)}`
-            : `up to ${usd(Number(value.budget.trim()) > 0 ? Number(value.budget) : level.budget)} per run`}
-        </span>
         <button
           type="button"
           aria-expanded={open}
@@ -95,7 +90,11 @@ export function EffortPicker({
           {advanced && !open && <span className="mono text-accent"> · changed</span>}
         </button>
       </div>
-
+      {budgetBad && !open && (
+        <p className="mono text-xs text-urgent" role="alert">
+          Budget must be above $0 and up to {usd(catalog.max_budget)}.
+        </p>
+      )}
 
       {open && (
         <div id={`${uid}-adv`} className="grid gap-3 rounded-xl border border-line bg-canvas p-3 sm:grid-cols-2">
@@ -108,6 +107,7 @@ export function EffortPicker({
               value={value.model}
               disabled={disabled}
               onChange={(e) => onChange({ ...value, model: e.target.value })}
+              title={[level.blurb, value.model || level.model, !value.model && level.fallbacks?.length ? `then ${level.fallbacks.join(", ")}` : ""].filter(Boolean).join(" ")}
               className="mono mt-0.5 h-9 w-full rounded-lg border border-line bg-surface-1 px-2 text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <option value="">Automatic ({level.model})</option>
@@ -117,15 +117,6 @@ export function EffortPicker({
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-muted">
-              {level.blurb} Uses <span className="mono">{value.model || level.model}</span>
-              {!value.model && level.fallbacks?.length ? (
-                <>
-                  , then <span className="mono">{level.fallbacks.join(", ")}</span>
-                </>
-              ) : null}
-              .
-            </p>
           </div>
           <div>
             <label htmlFor={`${uid}-budget`} className="block text-xs text-muted">
@@ -139,14 +130,14 @@ export function EffortPicker({
               onChange={(e) => onChange({ ...value, budget: e.target.value })}
               placeholder={level.budget.toFixed(2)}
               aria-invalid={budgetBad}
-              aria-describedby={`${uid}-budget-help`}
+              aria-describedby={budgetBad ? `${uid}-budget-help` : undefined}
               className="mono mt-0.5 h-9 w-full rounded-lg border border-line bg-surface-1 px-3 text-ink placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
-            <p id={`${uid}-budget-help`} className={cn("mt-1 text-xs", budgetBad ? "text-urgent" : "text-muted")} role={budgetBad ? "alert" : undefined}>
-              {budgetBad
-                ? `Enter an amount above 0 and up to ${usd(catalog.max_budget)}.`
-                : `The run pauses at this amount. Most you can set: ${usd(catalog.max_budget)} (the daily cap).`}
-            </p>
+            {budgetBad && (
+              <p id={`${uid}-budget-help`} className="mt-1 text-xs text-urgent" role="alert">
+                Budget must be above $0 and up to {usd(catalog.max_budget)}.
+              </p>
+            )}
           </div>
         </div>
       )}

@@ -16,6 +16,6 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     // effectsCss.test.ts and palette.test.ts read their CSS as raw text; other CSS stays stubbed out.
-    css: { include: [/index\.css/, /oc-palette\.css/] },
+    css: { include: [/index\.css/, /oc-palette\.css/, /silver-lining\.css/] },
   },
 });
