@@ -6,7 +6,8 @@ affect the call. Prompt/completion text is stored only with OC_OBS_CAPTURE_CONTE
 
 Every chat call carries the model's catalog fallback chain as OpenRouter's native `models` array
 (services/router/model_catalog.py `call_params`); the row records the chain asked (`models_requested`), the model
-that served (`model_served`, from the response) and `fell_back` when that is not the first choice.
+that served (`model_served`, from the response) and `fell_back` when that is not the first choice. If the whole
+request still fails with a region, no-endpoint, 429 or 5xx error, `chat` retries with the remaining tail.
 
 Transport: chat completions go through OpenRouter's official Python SDK (`openrouter`, pinned in pyproject); the
 SDK owns auth, attribution headers, timeouts and HTTP error typing. A response-capture hook keeps the raw body,
@@ -323,9 +324,11 @@ def post(
     body_fields: bool = True,
     store: CallStore | None = None,
     sdk: bool = False,
+    models_requested: list[str] | None = None,
 ) -> tuple[dict, dict]:
     """POST JSON to OpenRouter with attribution; returns (response, call_row). Always records a row.
-    `sdk=True` sends through the official SDK (chat completions); otherwise urllib (`/alpha/decisions`)."""
+    `sdk=True` sends through the official SDK (chat completions); otherwise urllib (`/alpha/decisions`).
+    `models_requested` is what the call log records as the asked chain (defaults to `payload["models"]`)."""
     ctx = context.current()
     lane = lanes.current()
     key = lanes.resolve(key, lane)  # the lane's own key when it has one (OPENROUTER_API_KEY_<LANE>)
@@ -334,7 +337,8 @@ def post(
     call_id = uuid.uuid4().hex[:16]
     base = {
         "event": "call", "call_id": call_id, "kind": kind, "lane": lane, "model_requested": model or payload.get("model"),
-        **({"models_requested": list(payload["models"])} if isinstance(payload.get("models"), list) else {}),
+        **({"models_requested": list(models_requested if models_requested is not None else payload["models"])}
+           if isinstance(models_requested if models_requested is not None else payload.get("models"), list) else {}),
         "url_host": urllib.parse.urlsplit(url).netloc,
         "prompt_chars": len(json.dumps(payload.get("messages", payload.get("state", "")), default=str)),
         "prompt_sha256": hashlib.sha256(
@@ -398,6 +402,44 @@ def post(
     return resp, row
 
 
+_FAILOVER_HTTP = frozenset({404, 429})
+
+
+def is_failover_error(err: OpenRouterError) -> bool:
+    """True when a failed request should be retried on the next model in the catalog chain.
+
+    OpenRouter's native `models` array already tries the chain inside one request. The client walks
+    the remaining tail when that whole request still fails: a 404, a 400 whose body says there are
+    no endpoints (including a data-region miss), a 429, or a 5xx. Other 400s are not retried, because
+    they are usually a bad request the next model would also reject.
+    """
+    if err.status is not None and (err.status in _FAILOVER_HTTP or 500 <= err.status < 600):
+        return True
+    if err.status == 400:
+        msg = str(err).lower()
+        return "no endpoints" in msg or "data region" in msg
+    return False
+
+
+def _attempt_bodies(model: str, body: dict) -> list[tuple[list[str], dict]]:
+    """`(remaining_chain, request_body)` pairs: the full chain first, then each tail."""
+    raw = body.get("models")
+    has_models = isinstance(raw, list) and bool(raw)
+    chain = list(raw) if has_models else [model]
+    attempts: list[tuple[list[str], dict]] = []
+    for i in range(len(chain)):
+        remaining = chain[i:]
+        attempt = {k: v for k, v in body.items() if k not in ("model", "models")}
+        if len(remaining) > 1:
+            attempt["models"] = remaining
+        else:
+            attempt["model"] = remaining[0]
+            if has_models and len(chain) == 1:
+                attempt["models"] = remaining  # explicit single-item `models`: keep both fields
+        attempts.append((remaining, attempt))
+    return attempts
+
+
 def chat(
     model: str,
     prompt: str | None = None,
@@ -412,28 +454,60 @@ def chat(
 ) -> ChatResult:
     """One chat completion. Raises OpenRouterError (after recording the failed call).
 
-    A catalog model is sent as its fallback chain (`models`, no `model`: OpenRouter tries them in order) and,
-    on Medium/High `effort` for a reasoning model, with `reasoning`. Explicit `params` win over both."""
+    A catalog model is sent as its fallback chain (`models`, no `model`: OpenRouter tries them in
+    order) and, on Medium/High `effort` for a reasoning model, with `reasoning`. Explicit `params`
+    win over both. If the whole request still fails with a region, no-endpoint, 429 or 5xx error,
+    the client retries with the remaining tail of the chain and records which model served.
+    """
     from services.router.model_catalog import call_params  # local: the router package imports this client
 
     msgs = messages if messages is not None else [{"role": "user", "content": prompt or ""}]
     extra = {**call_params(model, effort if effort is not None else _effort.get()), **params}
     body = {"model": model, "messages": msgs, **extra}
-    if isinstance(body.get("models"), list) and len(body["models"]) > 1:
-        body.pop("model")  # the `models` array alone states the order
-    resp, row = post(f"{base_url()}/chat/completions", body,
-                     key=key, timeout=timeout, kind=kind, model=model, store=store, sdk=True)
-    try:
-        text = resp["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as e:
-        raise OpenRouterError(f"unexpected chat response shape (no choices[0].message.content): {e}",
-                              error_class="bad_response") from e
-    text = text if isinstance(text, str) else ""
-    u = None
-    if row["tokens_in"] or row["tokens_out"] or row["cost_source"] == "provider":
-        u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"], row["provider"],
-                  row["tokens_reasoning"])
-    return ChatResult(text=text, usage=u, cost=row["cost"], generation_id=row["generation_id"],
-                      model_served=row["model_served"], provider=row["provider"], finish_reason=row["finish_reason"],
-                      latency_ms=row["latency_ms"], cost_source=row["cost_source"], call_id=row["call_id"],
-                      raw_usage=row.get("_raw_usage", {}))
+    raw = body.get("models")
+    chain = list(raw) if isinstance(raw, list) and raw else [model]
+    record_chain = chain if len(chain) > 1 else None
+    last_err: OpenRouterError | None = None
+    for remaining, attempt in _attempt_bodies(model, body):
+        try:
+            resp, row = post(
+                f"{base_url()}/chat/completions",
+                attempt,
+                key=key,
+                timeout=timeout,
+                kind=kind,
+                model=model,
+                store=store,
+                sdk=True,
+                models_requested=record_chain,
+            )
+        except OpenRouterError as e:
+            last_err = e
+            nxt = remaining[1] if len(remaining) > 1 else None
+            if nxt is None or not is_failover_error(e):
+                raise
+            log.warning(
+                "openrouter call failed, trying next fallback",
+                requested=model,
+                failed=remaining[0],
+                next=nxt,
+                error_class=e.error_class,
+                http_status=e.status,
+            )
+            continue
+        try:
+            text = resp["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise OpenRouterError(f"unexpected chat response shape (no choices[0].message.content): {e}",
+                                  error_class="bad_response") from e
+        text = text if isinstance(text, str) else ""
+        u = None
+        if row["tokens_in"] or row["tokens_out"] or row["cost_source"] == "provider":
+            u = Usage(row["model_served"] or model, row["tokens_in"], row["tokens_out"], row["cost"], row["provider"],
+                      row["tokens_reasoning"])
+        return ChatResult(text=text, usage=u, cost=row["cost"], generation_id=row["generation_id"],
+                          model_served=row["model_served"], provider=row["provider"], finish_reason=row["finish_reason"],
+                          latency_ms=row["latency_ms"], cost_source=row["cost_source"], call_id=row["call_id"],
+                          raw_usage=row.get("_raw_usage", {}))
+    assert last_err is not None
+    raise last_err

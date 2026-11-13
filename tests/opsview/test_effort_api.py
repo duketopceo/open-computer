@@ -43,7 +43,7 @@ def test_effort_catalog_is_json_and_matches_the_module(console, monkeypatch):
     assert d["default"] == "low" and d["models"] == effort.models()
     assert [lv["id"] for lv in d["levels"]] == ["low", "medium", "high"]
     assert d["levels"][1]["model"] == effort.BY_ID["medium"].model
-    assert d["levels"][1]["fallbacks"] == ["deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"]
+    assert d["levels"][1]["fallbacks"] == ["deepseek/deepseek-v4.1-flash", "google/gemma-4-31b-it"]
     shown = [m for lv in d["levels"] for m in [lv["model"], *lv["fallbacks"]]]
     assert len(shown) == len(set(shown)) == 9  # three per level, none shared
 

@@ -20,7 +20,7 @@ from test_model_catalog import RAW, entry, variant
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "openrouter" / "chat_fallback_served.json"
 PARTICLE = "particle-ai/particle-1"
 V41 = "deepseek/deepseek-v4.1-flash"
-MIMO = "xiaomi/mimo-v2.6-flash"
+MIMO = "google/gemma-4-31b-it"
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def fake(monkeypatch):
 def test_particle_1_is_the_default_orchestrator_and_the_medium_preset():
     cat = mc.load()
     assert cat.default_orchestrator == PARTICLE
-    assert cat.presets == {"low": "google/gemma-4-26b-a4b-it", "medium": PARTICLE, "high": "moonshotai/kimi-k2.7-code"}
+    assert cat.presets == {"low": "google/gemma-4-26b-a4b-it", "medium": PARTICLE, "high": "z-ai/glm-5.3"}
     p = cat.get(PARTICLE)
     assert (p.input_price, p.output_price, p.context, p.tools, p.reasoning) == (0.05, 0.50, 1048576, True, True)
     assert cat.get("deepseek/deepseek-v4-pro") is not None  # still offered as an option
@@ -45,9 +45,9 @@ def test_every_shipped_chain_is_valid_and_every_cloud_model_has_one():
     assert cat.chain(PARTICLE) == [PARTICLE, V41, MIMO]
     assert cat.chain("google/gemma-4-26b-a4b-it") == ["google/gemma-4-26b-a4b-it", "nvidia/nemotron-3.5-lightning",
                                                       "deepseek/deepseek-v4-flash"]
-    assert cat.chain("moonshotai/kimi-k2.7-code") == ["moonshotai/kimi-k2.7-code", "xiaomi/mimo-v2.6-pro",
-                                                      "deepseek/deepseek-v4-pro"]
-    assert cat.chain("z-ai/glm-5.3-flash") == ["z-ai/glm-5.3-flash", "minimax/minimax-m3.1-flash", "tencent/hy3"]
+    assert cat.chain("z-ai/glm-5.3") == ["z-ai/glm-5.3", "xiaomi/mimo-v2.6-pro", "deepseek/deepseek-v4-pro"]
+    assert cat.chain("z-ai/glm-5.3-flash") == ["z-ai/glm-5.3-flash", "minimax/minimax-m3.1-flash",
+                                              "inclusionai/ling-3.0-flash"]
     for e in cat.entries:
         assert e.fallbacks, e.id
         for f in e.fallbacks:
@@ -74,10 +74,10 @@ def test_bad_chains_refuse_to_load(edit, msg):
 
 def test_a_fallback_without_tools_is_refused_for_a_tools_model():
     def edit(d):
-        entry(d, "tencent/hy3")["tools"] = False
+        entry(d, "inclusionai/ling-3.0-flash")["tools"] = False
         for m in d["models"]:  # only the worker leans on it
             if m["id"] != "z-ai/glm-5.3-flash":
-                m["fallbacks"] = [f for f in m.get("fallbacks", []) if f != "tencent/hy3"]
+                m["fallbacks"] = [f for f in m.get("fallbacks", []) if f != "inclusionai/ling-3.0-flash"]
 
     with pytest.raises(mc.CatalogError, match="no tool calling"):
         mc.parse(variant(e=edit))
@@ -88,7 +88,7 @@ def test_call_params_chain_and_reasoning_by_effort():
     assert mc.call_params(PARTICLE, "medium")["reasoning"] == {"effort": "medium"}
     assert mc.call_params(PARTICLE, "high")["reasoning"] == {"effort": "high"}
     assert mc.call_params(PARTICLE)["reasoning"] == {"effort": "medium"}  # unknown effort: its lowest preset level
-    assert mc.call_params("moonshotai/kimi-k2.7-code")["reasoning"] == {"effort": "high"}  # High's own preset
+    assert mc.call_params("z-ai/glm-5.3")["reasoning"] == {"effort": "high"}  # High's own preset
     assert "reasoning" not in mc.call_params("google/gemma-4-26b-a4b-it")  # Low's preset: Low asks none
     assert "reasoning" not in mc.call_params("x-ai/grok-4.7", "high")  # not flagged: left as it was
     assert mc.call_params("typesafe/jev-1.13", "high") == {}  # outside the catalog: untouched
@@ -184,4 +184,4 @@ def test_router_walks_the_decider_chain_past_a_404(fake, monkeypatch, tmp_path):
 
 
 def test_raw_catalog_note_names_the_price_source():
-    assert "2026-11-05" in RAW["_note"] and "particle-ai/particle-1" in RAW["_note"]
+    assert "2026-11-13" in RAW["_note"] and "particle-ai/particle-1" in RAW["_note"]

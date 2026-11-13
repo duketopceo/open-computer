@@ -134,6 +134,22 @@ def test_shipped_grok_47_is_flagged_because_its_published_price_is_above_the_cei
     assert "x-ai/grok-4.7" not in {m for ms in TIER_MODELS.values() for m in ms}
 
 
+def test_hydrogen_and_carbon_are_flagged_opt_ins_and_never_defaults():
+    """Gemini 4 Hydrogen and Carbon are above-ceiling picker options; Argon is not in the catalog."""
+    cat = mc.CATALOG
+    for mid, inp, out in (
+        ("google/gemini-4-hydrogen", 1.65, 8.25),
+        ("google/gemini-4-carbon", 2.2, 11.0),
+    ):
+        e = cat.get(mid)
+        assert e and e.above_ceiling and e.over_ceiling() and e.tools and e.reasoning
+        assert (e.input_price, e.output_price) == pytest.approx((inp, out))
+        assert mid not in {m for ms in TIER_MODELS.values() for m in ms}
+        assert mid not in {cat.default_orchestrator, cat.default_worker, *cat.presets.values()}
+        assert mid not in {f for e in cat.entries for f in e.fallbacks if not e.above_ceiling}
+    assert cat.get("google/gemini-4-argon") is None
+
+
 def test_no_local_models_even_with_the_old_flag(monkeypatch):
     monkeypatch.setenv("OC_LOCAL_MODELS", "1")
     assert mc.payload()["local"] == []
@@ -151,7 +167,7 @@ def test_engines_use_the_catalog_worker_default_not_a_hard_coded_id():
 
 # --- effort levels: three models each, no overlap ---------------------------------------------------
 OR_MODELS = {m["id"]: m for m in json.loads((mc.PATH.parents[2] / "tests" / "fixtures" / "openrouter" /
-                                             "models_2026-11-05.json").read_text())["data"]}
+                                             "models_2026-11-13.json").read_text())["data"]}
 # Weights not on Hugging Face; kept as the owner's chosen Medium preset and orchestrator default (PR #123).
 NOT_OPEN_WEIGHT_OK = {"particle-ai/particle-1"}
 
@@ -214,5 +230,5 @@ def test_overlapping_or_short_levels_refuse_to_load(edit, match):
 def test_models_payload_lists_each_levels_three_models():
     levels = mc.payload()["levels"]
     assert set(levels) == set(mc.LEVELS)
-    assert levels["medium"] == ["particle-ai/particle-1", "deepseek/deepseek-v4.1-flash", "xiaomi/mimo-v2.6-flash"]
+    assert levels["medium"] == ["particle-ai/particle-1", "deepseek/deepseek-v4.1-flash", "google/gemma-4-31b-it"]
     assert all(len(ms) == 3 for ms in levels.values())

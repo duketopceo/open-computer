@@ -54,18 +54,22 @@ under load, so the router is a thin chain over the hosted decider with Jev as fa
 
 **Models by effort** ([`services/router/model_catalog.json`](./services/router/model_catalog.json)): each effort
 level has three open-weight, tool-calling models of its own, a primary and two OpenRouter fallbacks tried in order
-inside the same request. No model serves two levels, and the catalog loader refuses a file that breaks that.
-Prices are OpenRouter's published USD per Mtok (input/output) on 2026-11-05. Medium and High ask for reasoning.
+inside the same request. If the whole request still fails (no endpoint in this data region, a rate limit, or a
+5xx), the client retries the remaining tail and records which model served. No model serves two levels, and the
+catalog loader refuses a file that breaks that. Prices are OpenRouter's published USD per Mtok (input/output) on
+2026-11-13. Medium and High ask for reasoning.
 
 | Effort | Primary | Fallback 1 | Fallback 2 |
 | --- | --- | --- | --- |
-| Low | `google/gemma-4-26b-a4b-it` ($0.077/$0.26) | `nvidia/nemotron-3.5-lightning` ($0.07/$0.20) | `deepseek/deepseek-v4-flash` ($0.091/$0.18) |
-| Medium | `particle-ai/particle-1` ($0.05/$0.50) | `deepseek/deepseek-v4.1-flash` ($0.045/$0.50) | `xiaomi/mimo-v2.6-flash` ($0.14/$0.28) |
-| High | `moonshotai/kimi-k2.7-code` ($0.60/$3.50) | `xiaomi/mimo-v2.6-pro` ($0.435/$0.87) | `deepseek/deepseek-v4-pro` ($1.60/$3.20) |
+| Low | `google/gemma-4-26b-a4b-it` ($0.07/$0.34) | `nvidia/nemotron-3.5-lightning` ($0.06/$0.16) | `deepseek/deepseek-v4-flash` ($0.09/$0.18) |
+| Medium | `particle-ai/particle-1` ($0.05/$0.50) | `deepseek/deepseek-v4.1-flash` ($0.04/$0.60) | `google/gemma-4-31b-it` ($0.20/$0.40) |
+| High | `z-ai/glm-5.3` ($0.084/$3.60) | `xiaomi/mimo-v2.6-pro` ($0.387/$0.783) | `deepseek/deepseek-v4-pro` ($1.30/$2.60) |
 
-The orchestrator default is the Medium primary. Workers default to `z-ai/glm-5.3-flash` ($0.15/$0.50) with their
-own chain, `minimax/minimax-m3.1-flash` then `tencent/hy3`, which shares no model with a level. The price ceiling
-(about $1.60/$4.80, see the [ROADMAP](./ROADMAP.md) spend rule) is unchanged.
+The orchestrator default is the Medium primary. Workers default to `z-ai/glm-5.3-flash` ($0.042/$0.184) with their
+own chain, `minimax/minimax-m3.1-flash` then `inclusionai/ling-3.0-flash`, which shares no model with a level.
+Above-ceiling opt-ins (never a default or a fallback): `google/gemini-4-hydrogen` ($1.65/$8.25),
+`google/gemini-4-carbon` ($2.20/$11.00), and `x-ai/grok-4.7` ($2.20/$6.60). The price ceiling (about $1.60/$4.80,
+see the [ROADMAP](./ROADMAP.md) spend rule) is unchanged.
 
 ## Observability and cost data
 

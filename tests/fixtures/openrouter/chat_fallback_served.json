@@ -1,8 +1,8 @@
 {
-  "_note": "Recorded shape of an OpenRouter chat completion sent with models=[particle-ai/particle-1, deepseek/deepseek-v4.1-flash, xiaomi/mimo-v2.6-flash] where the first two were unavailable: `model` names the fallback that served, and `usage.cost` is billed at that model's price (412 x $0.14 + 58 x $0.28 per Mtok, MiMo V2.6 Flash's published price on 2026-11-05). Ids and text are scrubbed.",
+  "_note": "Recorded shape of an OpenRouter chat completion sent with models=[particle-ai/particle-1, deepseek/deepseek-v4.1-flash, google/gemma-4-31b-it] where the first two were unavailable: `model` names the fallback that served, and `usage.cost` is billed at that model's price. Ids and text are scrubbed.",
   "id": "gen-1762300000-fallbackfixture",
   "provider": "Xiaomi",
-  "model": "xiaomi/mimo-v2.6-flash",
+  "model": "google/gemma-4-31b-it",
   "object": "chat.completion",
   "created": 1762300000,
   "choices": [
@@ -15,7 +15,14 @@
         "content": "echo done",
         "refusal": null,
         "reasoning": "The task asks for one shell line, so print the result.",
-        "reasoning_details": [{"type": "reasoning.text", "text": "The task asks for one shell line, so print the result.", "format": "unknown", "index": 0}]
+        "reasoning_details": [
+          {
+            "type": "reasoning.text",
+            "text": "The task asks for one shell line, so print the result.",
+            "format": "unknown",
+            "index": 0
+          }
+        ]
       }
     }
   ],
@@ -23,10 +30,16 @@
     "prompt_tokens": 412,
     "completion_tokens": 58,
     "total_tokens": 470,
-    "cost": 0.00007392,
+    "cost": 7.392e-05,
     "is_byok": false,
-    "prompt_tokens_details": {"cached_tokens": 0},
-    "cost_details": {"upstream_inference_cost": null},
-    "completion_tokens_details": {"reasoning_tokens": 41}
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": null
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 41
+    }
   }
 }
