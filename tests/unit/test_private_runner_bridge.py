@@ -74,7 +74,7 @@ def test_private_runner_receives_only_short_lived_credentials(config, monkeypatc
     assert "docker container inspect" in remote[0][0][-1]
     args, payload, environment, options = remote[1]
     assert payload["registration_token"] == "registration-secret-fixture"
-    assert payload["private_key"] == "ssh-secret-fixture"
+    assert payload["private_key"] == "ssh-secret-fixture\n"
     assert payload["known_hosts"] == "deploy.example.com ssh-ed25519 host-key fixture\n"
     assert "github-secret-fixture" not in json.dumps(payload)
     assert "github-secret-fixture" not in " ".join(args)
@@ -93,6 +93,36 @@ def test_private_runner_receives_only_short_lived_credentials(config, monkeypatc
     assert "/run/oc:rw,exec,nosuid,nodev,size=3g,mode=1777" in args[-1]
     assert "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777" in args[-1]
     assert options["check"] is True
+
+
+@pytest.mark.parametrize("trailing_newline", [True, False])
+def test_runner_payload_preserves_parseable_private_key(config, monkeypatch, tmp_path, trailing_newline):
+    key = tmp_path / "fixture_key"
+    real_run = subprocess.run
+    real_run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+    config["OC_RUNNER_PRIVATE_KEY"] = key.read_text().rstrip("\n") + ("\n" if trailing_newline else "")
+    payloads = []
+
+    def run(args, *, input=None, **kwargs):
+        if input:
+            payloads.append(json.loads(input))
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(bridge.subprocess, "run", run)
+    monkeypatch.setattr(
+        bridge, "github_request",
+        lambda path, token, **kwargs: (
+            {"private": True, "visibility": "private", "full_name": "example/private-control"}
+            if not kwargs else {"token": "fixture"}
+        ),
+    )
+    bridge.start(config, entrypoint="fixture")
+    result = real_run(
+        ["ssh-keygen", "-y", "-f", "/dev/stdin"], input=payloads[0]["private_key"],
+        text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[:2] == key.with_suffix(".pub").read_text().split()[:2]
 
 
 def test_unreachable_mac_does_not_issue_registration_token(config, monkeypatch):

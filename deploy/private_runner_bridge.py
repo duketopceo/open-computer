@@ -83,7 +83,7 @@ def start(config: Mapping[str, str], *, entrypoint: str) -> None:
     payload = json.dumps({
         "url": f"https://github.com/{repository}",
         "registration_token": registration_token,
-        "private_key": config["OC_RUNNER_PRIVATE_KEY"],
+        "private_key": config["OC_RUNNER_PRIVATE_KEY"].rstrip("\n") + "\n",
         "public_key": public_key + "\n",
         "known_hosts": f"{deploy_host} {host_key}\n",
     })
