@@ -1,86 +1,38 @@
-/* Open Computer palette, "Iris" (DESIGN.md, Colour scheme 2026-11-09). Loaded after silver-lining.css and overrides
-   only the neutrals and the accent; status colours, overlays and the high-contrast themes stay Silver Lining's.
-   One accent (iris violet) for "live or needs you" and the one primary action; cool slate neutrals for everything else.
+/* Open Computer palette (DESIGN.md, Colour scheme 2026-11-12). Loaded after silver-lining.css and overrides
+   only the accent and glint; neutrals, status colours, overlays and the high-contrast themes stay Silver Lining's.
+   One accent (graphite, no hue) for "live or needs you" and the one primary action.
    Pairs are checked by ui/src/lib/palette.test.ts (text 4.5:1). */
 
 :root,
 :root[data-theme="dark"],
 html.dark,
 html.dark[data-theme] {
-  --sl-canvas: #0a0b10;
-  --sl-surface-1: #0f1017;
-  --sl-surface-2: #15161f;
-  --sl-surface-3: #1c1e28;
-  --sl-surface-4: #232532;
-  --sl-lining-faint: #232531;
-  --sl-lining: #424459;
-  --sl-lining-strong: #777a92;
-  --sl-lining-bright: #d2d3de;
-  --sl-control: #777a92;
-  --sl-ink: #e6e6ec;
-  --sl-ink-muted: #c9cad6;
-  --sl-ink-subtle: #a3a4b3;
-  --sl-ink-tertiary: #9596a8;
-  --sl-ink-disabled: #74758a;
-  --sl-accent: #8f8cf7;
-  --sl-accent-hover: #a9a6ff;
-  --sl-accent-pressed: #7672e8;
-  --sl-accent-soft: rgba(143,140,247,0.16);
-  --sl-on-accent: #0a0b10;
-  --sl-glint: #8f8cf7;
-  --sl-glint-silver: #d2d3de;
+  --sl-accent: #f0f0f0;
+  --sl-accent-hover: #ffffff;
+  --sl-accent-pressed: #c8c8c8;
+  --sl-accent-soft: rgba(240, 240, 240, 0.16);
+  --sl-on-accent: #090909;
+  --sl-glint: #f0f0f0;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    --sl-canvas: #f6f6f9;
-    --sl-surface-1: #ffffff;
-    --sl-surface-2: #eeeef3;
-    --sl-surface-3: #e7e7ef;
-    --sl-surface-4: #dfe0e9;
-    --sl-lining-faint: #d9dae4;
-    --sl-lining: #aeb0c0;
-    --sl-lining-strong: #72748a;
-    --sl-lining-bright: #2d2e3a;
-    --sl-control: #72748a;
-    --sl-ink: #17171f;
-    --sl-ink-muted: #33343f;
-    --sl-ink-subtle: #52536a;
-    --sl-ink-tertiary: #5b5c70;
-    --sl-ink-disabled: #7a7b8c;
-    --sl-accent: #4f46d8;
-    --sl-accent-hover: #443cc4;
-    --sl-accent-pressed: #3a33ad;
-    --sl-accent-soft: rgba(79,70,216,0.12);
-    --sl-on-accent: #ffffff;
-    --sl-glint: #4f46d8;
-    --sl-glint-silver: #2d2e3a;
+    --sl-accent: #1a1a1a;
+    --sl-accent-hover: #000000;
+    --sl-accent-pressed: #333333;
+    --sl-accent-soft: rgba(26, 26, 26, 0.12);
+    --sl-on-accent: #f5f5f5;
+    --sl-glint: #1a1a1a;
   }
 }
 
 :root[data-theme="light"],
 html.light,
 html.light[data-theme] {
-  --sl-canvas: #f6f6f9;
-  --sl-surface-1: #ffffff;
-  --sl-surface-2: #eeeef3;
-  --sl-surface-3: #e7e7ef;
-  --sl-surface-4: #dfe0e9;
-  --sl-lining-faint: #d9dae4;
-  --sl-lining: #aeb0c0;
-  --sl-lining-strong: #72748a;
-  --sl-lining-bright: #2d2e3a;
-  --sl-control: #72748a;
-  --sl-ink: #17171f;
-  --sl-ink-muted: #33343f;
-  --sl-ink-subtle: #52536a;
-  --sl-ink-tertiary: #5b5c70;
-  --sl-ink-disabled: #7a7b8c;
-  --sl-accent: #4f46d8;
-  --sl-accent-hover: #443cc4;
-  --sl-accent-pressed: #3a33ad;
-  --sl-accent-soft: rgba(79,70,216,0.12);
-  --sl-on-accent: #ffffff;
-  --sl-glint: #4f46d8;
-  --sl-glint-silver: #2d2e3a;
+  --sl-accent: #1a1a1a;
+  --sl-accent-hover: #000000;
+  --sl-accent-pressed: #333333;
+  --sl-accent-soft: rgba(26, 26, 26, 0.12);
+  --sl-on-accent: #f5f5f5;
+  --sl-glint: #1a1a1a;
 }
