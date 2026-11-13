@@ -61,3 +61,21 @@ def test_endpoints_evidence_wins_over_the_models_list():
 
 def test_no_endpoints_payload_and_no_models_list_flags_nothing():
     assert flags(catalog_ids=["m/x"]) == []
+
+
+def test_an_unrecognized_endpoints_payload_is_flagged_even_if_the_model_is_listed():
+    """{} / null / a dict with no endpoints list must not count as reachable."""
+    mid = "z-ai/glm-5.3"
+    for raw in ({}, None, {"data": {"id": mid}}, "not-a-payload"):
+        found = flags(catalog_ids=[mid], model_ids={mid}, endpoints={mid: raw})
+        assert [f.public() for f in found] == [{"id": mid, "reason": "invalid endpoints response"}], raw
+
+
+def test_a_malformed_endpoints_payload_does_not_skip_the_flag_when_siblings_are_fine():
+    mid, ok = "gone/model", "z-ai/glm-5.3"
+    found = flags(
+        catalog_ids=[mid, ok],
+        model_ids={mid, ok},
+        endpoints={mid: {}, ok: _endpoints("Wafer")},
+    )
+    assert [f.public() for f in found] == [{"id": mid, "reason": "invalid endpoints response"}]

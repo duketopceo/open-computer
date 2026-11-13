@@ -3,8 +3,10 @@
     OC_OPENROUTER_BASE_URL=https://us.openrouter.ai/api/v1 uv run python scripts/check_catalog_region.py
 
 Uses OPENROUTER_API_KEY or OC_OPENROUTER_API_KEY. Prints flagged ids (one per line) and exits 1 if
-any catalog model has no endpoint. Never prints the key. Attribution headers are sent: the US host
-rejects requests without them. A 403 that names a permitted regional hostname is retried there.
+any catalog model has no endpoint. Never prints the key (structured and unstructured error text are
+both redacted). Attribution headers are sent: the US host rejects requests without them. A 403 that
+names an exact allowed OpenRouter host (`us.openrouter.ai`, `eu.openrouter.ai`, or `openrouter.ai`)
+is retried there; any other hostname is ignored.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -29,6 +32,8 @@ _REGION_HOST = re.compile(
     r"permits requests only on these OpenRouter hostnames:\s*([a-z0-9.-]+)",
     re.IGNORECASE,
 )
+# Official OpenRouter API hosts only. A 403 body must not choose an arbitrary credential destination.
+ALLOWED_REGIONAL_HOSTS = frozenset({"us.openrouter.ai", "eu.openrouter.ai", "openrouter.ai"})
 
 
 def _key() -> str:
@@ -70,17 +75,24 @@ def _get(url: str, timeout: float = 30.0) -> tuple[int, object]:
 
 def _error_message(body: object) -> str:
     if isinstance(body, dict) and isinstance(body.get("error"), dict):
-        return str(body["error"].get("message") or "")
+        return _redact(str(body["error"].get("message") or ""))
     return _redact(str(body)[:400])
 
 
 def _regional_base(current: str, body: object) -> str | None:
-    """The regional API base a 403 told us to use, or None if this is not that error."""
+    """The regional API base a 403 told us to use, or None if this is not that error.
+
+    Only official OpenRouter hosts are accepted, matched as a complete hostname, so a 403 cannot
+    redirect the bearer key to an arbitrary destination.
+    """
     m = _REGION_HOST.search(_error_message(body))
     if not m:
         return None
-    host = m.group(1).rstrip(".")
-    if host in current:
+    host = m.group(1).rstrip(".").lower()
+    if host not in ALLOWED_REGIONAL_HOSTS:
+        return None
+    current_host = (urllib.parse.urlparse(current).hostname or "").lower()
+    if host == current_host:
         return None
     return f"https://{host}/api/v1"
 

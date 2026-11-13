@@ -30,10 +30,12 @@ def flags(
     regional host). `endpoints` maps a model id to its GET /models/{id}/endpoints payload, or to an
     HTTP status int when that call failed.
 
-    A model is flagged when its endpoints list is empty, when the endpoints call returned 404 (or
-    another 4xx/5xx), or, if no endpoints payload was given for it, when it is absent from
-    `model_ids`. Endpoints evidence wins over the models list: a model listed in `/models` is still
-    flagged if `/endpoints` is empty.
+    A model is flagged when its endpoints list is empty, when the endpoints payload is missing or
+    unrecognized, when the endpoints call returned 404 (or another 4xx/5xx), or, if no endpoints
+    payload was given for it, when it is absent from `model_ids`. Endpoints evidence wins over the
+    models list: a model listed in `/models` is still flagged if `/endpoints` is empty. An
+    unrecognized payload is a flag, not a pass: the caller must not report success without endpoint
+    evidence.
     """
     out: list[Flag] = []
     endpoints = endpoints or {}
@@ -56,7 +58,9 @@ def _from_endpoints(mid: str, raw: object) -> Flag | None:
             return Flag(mid, f"endpoints returned {raw}")
         return None
     eps = _endpoint_list(raw)
-    if eps is not None and len(eps) == 0:
+    if eps is None:
+        return Flag(mid, "invalid endpoints response")
+    if len(eps) == 0:
         return Flag(mid, "no endpoints")
     return None
 
