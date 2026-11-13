@@ -402,7 +402,7 @@ def post(
     return resp, row
 
 
-_FAILOVER_HTTP = frozenset({429, 500, 502, 503, 504})
+_FAILOVER_HTTP = frozenset({404, 429})
 
 
 def is_failover_error(err: OpenRouterError) -> bool:
@@ -413,7 +413,7 @@ def is_failover_error(err: OpenRouterError) -> bool:
     no endpoints (including a data-region miss), a 429, or a 5xx. Other 400s are not retried, because
     they are usually a bad request the next model would also reject.
     """
-    if err.status in _FAILOVER_HTTP or err.status == 404:
+    if err.status is not None and (err.status in _FAILOVER_HTTP or 500 <= err.status < 600):
         return True
     if err.status == 400:
         msg = str(err).lower()

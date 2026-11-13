@@ -38,6 +38,8 @@ def _no_endpoints(status: int) -> tuple[int, dict]:
         (OpenRouterError("rate limited", status=429), True),
         (OpenRouterError("upstream", status=500), True),
         (OpenRouterError("bad gateway", status=502), True),
+        (OpenRouterError("overloaded", status=529), True),
+        (OpenRouterError("not a 5xx", status=600), False),
         (OpenRouterError("HTTP 400: invalid request schema", status=400), False),
         (OpenRouterError("timeout", status=None, error_class="timeout"), False),
         (OpenRouterError("payment", status=402), False),
