@@ -199,8 +199,10 @@ def test_blocked_placement_is_a_placement_warning_with_the_reason(tmp_path, fake
     fake.chat_replies.append(chat_reply(PLAN))
     orch = Orchestrator(tmp_path / "o", place_fn=lambda *a, **k: Placement("blocked", "no legal home right now"))
     orch.submit("g", engines.decompose_engine(api_key="k"))
-    (row, *_) = logs("placement", "placement blocked")
-    assert row["level"] == "WARNING" and row["reason"] == "no legal home right now"
+    rows = logs("placement", "placement blocked")
+    # Match on this run's reason, not the first "placement blocked" row: a leftover log from
+    # another test (for example an egress denial) can arrive first on a shared stderr.
+    assert any(r["level"] == "WARNING" and r["reason"] == "no legal home right now" for r in rows), rows
 
 
 def test_placement_inputs_appear_only_at_debug(tmp_path, fake, logs, monkeypatch):
