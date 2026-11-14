@@ -8,42 +8,37 @@ import { useFetch } from "@/lib/useFetch";
 export default function Skills() {
   const { data, error, loading, reload } = useFetch(getSkills, []);
   const skills = data?.skills ?? [];
+  const loadError = data?.error;
   return (
-    <PageShell title="Skills" sub="Capability surface — live health, never aspiration.">
+    <PageShell title="Skills" sub="The catalog on disk — what a run can declare, and whether this build can honour it.">
       <div className="mb-4 flex items-center gap-3">
         <Button variant="subtle" onClick={reload} disabled={loading}>
           Refresh
         </Button>
       </div>
       <DataState loading={loading} error={error} hasData={!!data} onRetry={reload} />
+      {loadError && (
+        <p className="mb-4 text-xs text-muted" role="status">
+          The catalog did not load: {loadError}
+        </p>
+      )}
       {data &&
         (skills.length === 0 ? (
-          <Empty title="Nothing registered">Capabilities report here as services come up.</Empty>
+          <Empty title="No skills yet">A directory under the catalog with a SKILL.md appears here.</Empty>
         ) : (
-          <Table caption="Skills" head={["Name", "State", "Detail"]}>
-            {skills.map((s, i) => {
-              const name = String(s.name ?? s.id ?? `skill-${i}`);
-              const state = String(s.state ?? s.status ?? "unknown");
-              return (
-                <tr key={name}>
-                  <Td mono>{name}</Td>
-                  <Td>
-                    <StatusWord word={state} />
-                  </Td>
-                  <Td className="text-xs text-muted">{detail(s)}</Td>
-                </tr>
-              );
-            })}
+          <Table caption="Skills" head={["Name", "Needs", "Status", "Description"]}>
+            {skills.map((s) => (
+              <tr key={s.name}>
+                <Td mono>{s.name}</Td>
+                <Td mono>{s.pulls_tools.join(", ") || "—"}</Td>
+                <Td>
+                  <StatusWord word={s.status} />
+                </Td>
+                <Td className="text-xs text-muted">{s.detail ?? s.description}</Td>
+              </tr>
+            ))}
           </Table>
         ))}
     </PageShell>
   );
-}
-
-function detail(s: Record<string, unknown>): string {
-  for (const k of ["detail", "note", "error", "summary", "version"]) {
-    const v = s[k];
-    if (typeof v === "string" && v) return v.slice(0, 90);
-  }
-  return "";
 }

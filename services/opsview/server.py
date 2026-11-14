@@ -45,6 +45,8 @@ from services.opsview.webauthn_page import enroll_page, login_page
 from services.orchestrator import chat as chat_turns
 from services import compact as oc_compact
 from services import memory as oc_memory
+from services import skills as oc_skills
+from services.skills import resolve as oc_skill_resolve
 from services import accounts
 from services.connectors import composio as composio_connectors
 from services import runtime_map as oc_runtime
@@ -392,6 +394,7 @@ GET_ROUTES = [
     (r"/api/approvals", "g_api_approvals"),
     (r"/api/overview", "g_api_overview"),
     (r"/api/skills", "g_api_skills"),
+    (r"/api/health", "g_api_health"),
     (r"/api/automations", "g_api_automations"),
     (r"/api/memory", "g_api_memory"),
     (r"/api/runtime", "g_api_runtime"),
@@ -1141,13 +1144,6 @@ class Handler(BaseHTTPRequestHandler):
         items = ApprovalQueue(approvals_path()).items()
         self._page("approvals", views.page_approvals(items, time.time()), sub="Oldest first")
 
-    def g_skills(self, qs):
-        self._page(
-            "skills",
-            views.page_skills(capabilities.collect()),
-            sub="Capability surface — live health, never aspiration",
-        )
-
     def g_automations(self, qs):
         self._page(
             "automations",
@@ -1156,6 +1152,29 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def g_api_skills(self, qs):
+        """The catalog on disk. A skill whose declared capability this build lacks is reported, not hidden.
+
+        A catalog that fails to load yields `skills: []` plus the loader's message in `error`: one bad SKILL.md
+        must not take the page down, because the page is how an owner finds out it is bad.
+        """
+        try:
+            loaded = oc_skills.load_all()
+        except oc_skills.SkillError as e:
+            self._json(200, {"skills": [], "error": str(e)})
+            return
+        caps = oc_skill_resolve.available()
+
+        def row(s):
+            missing = [t for t in s.pulls_tools if t not in caps]
+            pub = s.public()
+            pub["status"] = "degraded" if missing else "ready"
+            pub["detail"] = f"needs {', '.join(missing)}, unavailable in this build" if missing else s.description
+            return pub
+
+        self._json(200, {"skills": [row(s) for s in loaded]})
+
+    def g_api_health(self, qs):
+        """The live health probe. It used to answer `/api/skills`, which made that page a health dashboard."""
         self._json(200, {"skills": capabilities.collect()})
 
     def g_api_automations(self, qs):

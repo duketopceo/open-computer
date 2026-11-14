@@ -102,6 +102,7 @@ export const ROUTES: Route[] = [
   }),
   get(/^\/api\/overview$/, (_r, s) => fx.overview(s.now, s.approvals, s.audit)),
   get(/^\/api\/skills$/, () => fx.skills()),
+  get(/^\/api\/health$/, () => fx.health()),
   get(/^\/api\/automations$/, (_r, s) => ({ enabled: true, automations: s.automations })),
   post(/^\/automations$/, (r, s) => {
     s.automations.unshift({ id: s.nextAutomationId(), goal: String(r.body.goal ?? ""), every_minutes: Number(r.body.every_minutes ?? 60), paused: false, state: "idle" });

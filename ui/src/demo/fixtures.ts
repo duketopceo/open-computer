@@ -284,9 +284,38 @@ export const router = (now: number): RouterPayload => ({
 
 export const skills = (): { skills: Record<string, unknown>[] } => ({
   skills: [
-    { name: "sandbox.exec", state: "online", detail: "Run a command in a disposable sandbox" },
-    { name: "files.read", state: "online", detail: "Read granted folders on a device" },
-    { name: "web.fetch", state: "offline", detail: "Off until a host is allowed for the step" },
+    {
+      name: "cross-repo-read",
+      description: "Read a second local checkout without copying it into the run's workspace.",
+      pulls_tools: ["sandbox"],
+      path: "services/skills/catalog/cross-repo-read/SKILL.md",
+      status: "ready",
+    },
+    {
+      name: "web-lookup",
+      description: "Answer a fact question from one web lookup instead of guessing.",
+      pulls_tools: ["web"],
+      path: "services/skills/catalog/web-lookup/SKILL.md",
+      status: "ready",
+    },
+    {
+      name: "recall-notes",
+      description: "Look up an earlier decision in long-term memory.",
+      pulls_tools: ["memory"],
+      path: "services/skills/catalog/recall-notes/SKILL.md",
+      status: "degraded",
+      detail: "needs memory, unavailable in this build",
+    },
+  ],
+});
+
+export const health = (): { skills: Record<string, unknown>[] } => ({
+  skills: [
+    { name: "OpenRouter", kind: "engine", status: "ready", detail: "demo key present" },
+    { name: "llama.cpp", kind: "engine", status: "down", detail: ":8080 refused" },
+    { name: "Ollama", kind: "engine", status: "not configured", detail: "no base url" },
+    { name: "Sandbox", kind: "exec", status: "ready", detail: "cube reachable" },
+    { name: "gate", kind: "safety", status: "active", detail: "approvals queued for the owner" },
   ],
 });
 

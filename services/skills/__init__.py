@@ -46,9 +46,13 @@ class Skill:
         }
 
 
-def load_all(root: Path | str = CATALOG) -> list[Skill]:
-    """Every skill under `root`, or one `SkillError` naming all the problems. A missing root is an empty list."""
-    root = Path(root)
+def load_all(root: Path | str | None = None) -> list[Skill]:
+    """Every skill under `root`, or one `SkillError` naming all the problems. A missing root is an empty list.
+
+    `root` defaults to the shipped catalog and is resolved at call time, so a caller (a test, a per-deployment
+    tree) can point loading at a different directory without the default having been frozen at import.
+    """
+    root = Path(CATALOG if root is None else root)
     if not root.is_dir():
         return []
     verbs = inventory.mcp_verbs()
