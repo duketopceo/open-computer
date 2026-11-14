@@ -290,6 +290,7 @@ export const skills = (): { skills: Record<string, unknown>[] } => ({
       pulls_tools: ["sandbox"],
       path: "services/skills/catalog/cross-repo-read/SKILL.md",
       status: "ready",
+      missing: [],
     },
     {
       name: "web-lookup",
@@ -297,6 +298,7 @@ export const skills = (): { skills: Record<string, unknown>[] } => ({
       pulls_tools: ["web"],
       path: "services/skills/catalog/web-lookup/SKILL.md",
       status: "ready",
+      missing: [],
     },
     {
       name: "recall-notes",
@@ -304,7 +306,7 @@ export const skills = (): { skills: Record<string, unknown>[] } => ({
       pulls_tools: ["memory"],
       path: "services/skills/catalog/recall-notes/SKILL.md",
       status: "degraded",
-      detail: "needs memory, unavailable in this build",
+      missing: ["memory"],
     },
   ],
 });

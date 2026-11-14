@@ -17,31 +17,35 @@ def normalize(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def parse_frontmatter(text: str) -> dict[str, str]:
-    """The leading `---` block as a flat map. Empty when the file has no frontmatter."""
-    lines = normalize(text).split("\n")
+def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """The leading `---` block as a flat map, and everything after its closing `---` normalized to LF.
+
+    One function rather than two so the block's end is decided once: a parser and a body extractor that scanned
+    separately could disagree about where the frontmatter stops, and the disagreement would be silent.
+    """
+    text = normalize(text)
+    lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
-        return {}
+        return {}, text
     meta: dict[str, str] = {}
-    for ln in lines[1:]:
+    for i, ln in enumerate(lines[1:], start=1):
         if ln.strip() == "---":
-            return meta
+            return meta, "\n".join(lines[i + 1 :])
         key, sep, value = ln.partition(":")
         if not sep:
             continue
         meta[key.strip()] = value.strip().strip('"').strip("'")
-    return {}  # an unterminated block is no frontmatter
+    return {}, text  # an unterminated block is no frontmatter
+
+
+def parse_frontmatter(text: str) -> dict[str, str]:
+    """The leading `---` block as a flat map. Empty when the file has no frontmatter."""
+    return split_frontmatter(text)[0]
 
 
 def body_of(text: str) -> str:
     """Everything after the closing `---` of the frontmatter, normalized to LF."""
-    lines = normalize(text).split("\n")
-    if not lines or lines[0].strip() != "---":
-        return normalize(text)
-    for i, ln in enumerate(lines[1:], start=1):
-        if ln.strip() == "---":
-            return "\n".join(lines[i + 1 :])
-    return normalize(text)
+    return split_frontmatter(text)[1]
 
 
 def split_tools(raw: str) -> tuple[str, ...]:

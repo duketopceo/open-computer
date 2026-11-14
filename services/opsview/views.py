@@ -873,7 +873,7 @@ def work_active(runs: list[dict], run: dict | None) -> bool:
     return False
 
 
-# ------------------------------------------------------------- skills + automations
+# ------------------------------------------------------------------- automations
 
 
 def _auto_row(a: dict, csrf: str, now: float) -> str:

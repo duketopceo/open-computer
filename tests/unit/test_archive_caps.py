@@ -1,7 +1,9 @@
 """Listing an archive's entries is bounded, so a crafted archive cannot make the console allocate without limit.
 
-Nothing in this tree extracts an entry; the exposure is `z.infolist()` building every name before anything can
-reject the archive. These tests fix each bound at its worst case, not on average.
+Nothing in this tree extracts an entry; the exposure is the central directory. `zipfile.ZipFile.__init__` reads
+the whole directory into `self.filelist` at open, so a per-entry check applied to `infolist()` runs after the
+allocation it is meant to prevent. The entry count is therefore read from the end-of-central-directory record
+before the archive is opened. These tests fix each bound at its worst case, not on average.
 """
 
 from __future__ import annotations
@@ -45,6 +47,36 @@ def test_an_archive_with_too_many_entries_is_refused_naming_the_cap(tmp_path):
     assert str(caps.MAX_ENTRIES) in str(exc.value)
 
 
+def test_the_entry_count_is_read_from_the_header_before_zipfile_opens(tmp_path, monkeypatch):
+    """The point of the header read: refuse a huge directory without paying for `ZipFile()` to build it.
+
+    Patching `zipfile.ZipFile` to fail makes this a proof about ordering rather than timing. Without the header
+    read the walk would still reach `ZipFile` and raise this sentinel instead of a bound error.
+    """
+    p = make_zip(tmp_path / "many.zip", n=caps.MAX_ENTRIES + 1, name_len=2)
+    assert caps.count_entries(p) == caps.MAX_ENTRIES + 1
+
+    def explode(*a, **k):
+        raise AssertionError("ZipFile was opened for an archive the header count already refused")
+
+    monkeypatch.setattr(caps.zipfile, "ZipFile", explode)
+    with pytest.raises(caps.ArchiveTooLarge) as exc:
+        caps.entries(p)
+    assert str(caps.MAX_ENTRIES) in str(exc.value)
+
+
+def test_a_small_archive_under_a_huge_number_of_entries_is_refused_and_allocates_nothing(tmp_path):
+    """The measured attack: >100,000 empty entries fit in 10 MB, and `ZipFile()` allocates ~60 MB to open them."""
+    p = tmp_path / "creep.zip"
+    with zipfile.ZipFile(p, "w", zipfile.ZIP_STORED) as z:
+        for i in range(110_000):
+            z.writestr(f"f{i}", b"")
+    assert p.stat().st_size <= caps.MAX_INPUT, "the fixture must be under the size bound, or the wrong bound fires"
+    with pytest.raises(caps.ArchiveTooLarge) as exc:
+        caps.entries(p)
+    assert f"{caps.MAX_ENTRIES}-entry limit" in str(exc.value)
+
+
 def test_an_oversized_listing_is_refused_mid_iteration_not_after_building_it(tmp_path):
     """The names alone blow the listing cap while the archive stays small, so the count bound does not save us."""
     per_name = 2000
@@ -67,7 +99,9 @@ def test_a_non_zip_file_is_a_named_error_not_a_traceback(tmp_path):
     p.write_bytes(b"this is not a zip file at all")
     with pytest.raises(caps.ArchiveTooLarge) as exc:
         caps.entries(p)
-    assert "can't be listed" in str(exc.value)
+    # The route prefixes "This archive can't be listed", so the bound's own text must not repeat that sentence.
+    assert "readable zip" in str(exc.value)
+    assert "can't be listed" not in str(exc.value)
 
 
 def test_a_truncated_zip_is_a_named_error(tmp_path):
@@ -103,6 +137,7 @@ def test_the_route_reports_the_bound_rather_than_a_500(tmp_path, monkeypatch):
     assert sent["code"] == 422
     assert str(caps.MAX_INPUT) in sent["payload"]["error"]
     assert "Download it instead" in sent["payload"]["error"]
+    assert sent["payload"]["error"].count("can't be listed") == 1, "the sentence is prefixed once, not twice"
 
 
 def test_no_extractor_is_present_in_the_module():

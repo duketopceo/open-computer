@@ -152,7 +152,7 @@ def test_the_dockerfile_installs_from_the_hashed_file_and_the_carve_out():
     assert 'uv pip install --python /opt/venv/bin/python "temporalio==1.35.0"' not in text, (
         "temporalio is installed outside the lock again"
     )
-    assert "requirements.txt" in text.split("RUN", 1)[0] or "COPY pyproject.toml uv.lock requirements.txt" in text
+    assert "COPY pyproject.toml requirements.txt ./" in text, "the py stage does not copy the hashed file in"
 
 
 def test_the_dockerfile_documents_the_regeneration_command():

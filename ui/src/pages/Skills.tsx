@@ -30,11 +30,15 @@ export default function Skills() {
             {skills.map((s) => (
               <tr key={s.name}>
                 <Td mono>{s.name}</Td>
-                <Td mono>{s.pulls_tools.join(", ") || "—"}</Td>
+                <Td mono>
+                  {s.pulls_tools.length === 0
+                    ? "—"
+                    : s.pulls_tools.map((t) => (s.missing.includes(t) ? `${t} (missing)` : t)).join(", ")}
+                </Td>
                 <Td>
                   <StatusWord word={s.status} />
                 </Td>
-                <Td className="text-xs text-muted">{s.detail ?? s.description}</Td>
+                <Td className="text-xs text-muted">{s.description}</Td>
               </tr>
             ))}
           </Table>

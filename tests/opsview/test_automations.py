@@ -1,22 +1,11 @@
 """/automations (F4): the schedules surface is honest when Temporal is away — never guesses.
 
-The live-health probe moved off `/api/skills` (which now reports the skill catalog on disk) onto `/api/health`;
-these assertions moved with it so the probe keeps its coverage under a name that says health.
+The live-health probe's own assertions live in `test_skills_endpoint.py`, which owns `/api/health`.
 """
 
 import json
 
 from services.opsview import capabilities
-
-
-def test_health_reports_live_capabilities(console):
-    code, _, body = console.get("/api/health")
-    skills = json.loads(body)["skills"]
-    hay = json.dumps(skills).lower()
-    for word in ("OpenRouter", "llama", "Ollama", "Sandbox", "gate"):
-        assert word.lower() in hay, word
-    for st in ("ready", "down", "not configured", "active"):
-        assert any(s.get("status") == st for s in skills) or st in hay, st
 
 
 def test_capabilities_report_live_not_static():

@@ -35,10 +35,7 @@ from pathlib import Path
 
 from . import CATALOG, Skill, SkillError, inventory, load_all
 
-# Which subtask flag shows the plan will exercise a token. Absent means the token is not usage-tracked.
-USE_FLAGS: dict[str, str] = dict(inventory.PLACEMENT_FLAGS)
-
-_MCP = "mcp"
+_MCP = inventory.MCP_PREFIX
 
 
 @dataclass(frozen=True)
@@ -103,10 +100,7 @@ def usage_of(subtasks) -> tuple[str, ...]:
     """The tokens this plan's steps will actually exercise, from the flags each step carries."""
     if not subtasks:
         return ()
-    used = {tok for tok, flag in USE_FLAGS.items() if any(s.get(flag) for s in subtasks)}
-    if any(s.get("needs_apps") for s in subtasks):
-        used.add("apps")
-    return tuple(sorted(used))
+    return tuple(sorted(tok for tok, flag in inventory.PLACEMENT_FLAGS.items() if any(s.get(flag) for s in subtasks)))
 
 
 def resolve_for_run(
@@ -124,7 +118,7 @@ def resolve_for_run(
     caps = available() if caps is None else caps
     selected = tuple(s for s in skills if applies(s, origin))
     missing = tuple(
-        (s.name, token) for s in selected for token in s.pulls_tools if not inventory.known_token(token, caps)
+        (s.name, token) for s in selected for token in s.pulls_tools if token not in caps
     )
     return Resolved(skills=selected, missing=missing, usage=usage_of(subtasks))
 

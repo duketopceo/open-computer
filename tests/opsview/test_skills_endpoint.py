@@ -48,7 +48,8 @@ def test_a_skill_whose_capability_is_missing_reports_degraded(console, tmp_path,
     code, _, body = console.get("/api/skills")
     (row,) = json.loads(body)["skills"]
     assert row["status"] == "degraded"
-    assert "memory" in row["detail"]
+    assert row["missing"] == ["memory"]
+    assert row["description"] == "Needs recall.", "the description is not overwritten by the status word"
 
 
 def test_an_unavailable_skill_does_not_break_the_endpoint(console, tmp_path, monkeypatch):

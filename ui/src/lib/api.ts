@@ -685,13 +685,14 @@ export interface Skill {
   applies_to?: string[];
   path: string;
   status: "ready" | "degraded";
-  detail?: string;
+  /** Declared tokens this build cannot provide. Empty when `status` is `ready`. */
+  missing: string[];
 }
 
 /** The skill catalog on disk. A skill whose declared capability this build lacks reports `degraded`. */
 export interface SkillsPayload { skills: Skill[]; error?: string }
 
-/** The live health probe (Temporal, llama, Ollama, Sandbox, gate). It used to answer `/api/skills`. */
+/** Live engine, worker and safety health, probed per request. Not the skill catalog. */
 export interface HealthPayload { skills: Record<string, unknown>[] }
 export interface Automation {
   id: string;

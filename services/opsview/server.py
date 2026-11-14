@@ -1156,6 +1156,9 @@ class Handler(BaseHTTPRequestHandler):
 
         A catalog that fails to load yields `skills: []` plus the loader's message in `error`: one bad SKILL.md
         must not take the page down, because the page is how an owner finds out it is bad.
+
+        `available()` is the same build check the run path uses, but `resolve_for_run` is not: it also selects on
+        `applies_to`, and the catalog page shows every skill in the tree whether or not it applies to a cloud run.
         """
         try:
             loaded = oc_skills.load_all()
@@ -1165,16 +1168,15 @@ class Handler(BaseHTTPRequestHandler):
         caps = oc_skill_resolve.available()
 
         def row(s):
-            missing = [t for t in s.pulls_tools if t not in caps]
             pub = s.public()
-            pub["status"] = "degraded" if missing else "ready"
-            pub["detail"] = f"needs {', '.join(missing)}, unavailable in this build" if missing else s.description
+            pub["missing"] = [t for t in s.pulls_tools if t not in caps]
+            pub["status"] = "degraded" if pub["missing"] else "ready"
             return pub
 
         self._json(200, {"skills": [row(s) for s in loaded]})
 
     def g_api_health(self, qs):
-        """The live health probe. It used to answer `/api/skills`, which made that page a health dashboard."""
+        """Live engine, worker and safety health, probed per request. Not the skill catalog."""
         self._json(200, {"skills": capabilities.collect()})
 
     def g_api_automations(self, qs):

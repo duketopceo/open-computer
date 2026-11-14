@@ -63,7 +63,7 @@ def load_all(root: Path | str | None = None) -> list[Skill]:
         if not md.is_file():
             continue
         try:
-            if md.stat().st_size > inventory.MAX_BODY + 4096:
+            if md.stat().st_size > inventory.MAX_BODY + inventory.FRONTMATTER_SLACK:
                 problems.append(f"{md}: over the {inventory.MAX_BODY}-byte body limit")
                 continue
             raw = md.read_bytes()
@@ -71,11 +71,10 @@ def load_all(root: Path | str | None = None) -> list[Skill]:
             problems.append(f"{md}: could not be read ({e})")
             continue
         text = raw.decode("utf-8", "replace")
-        meta = schema.parse_frontmatter(text)
+        meta, body = schema.split_frontmatter(text)
         if not meta:
             problems.append(f"{md}: no frontmatter block")
             continue
-        body = schema.body_of(text)
         problems.extend(schema.problems(meta, md, body, verbs))
         found.append(
             Skill(

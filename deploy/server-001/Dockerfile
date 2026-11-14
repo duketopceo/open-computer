@@ -26,9 +26,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && apt-get clean
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV UV_COMPILE_BYTECODE=1
 WORKDIR /app
-COPY pyproject.toml uv.lock requirements.txt ./
+# `uv.lock` is deliberately absent: this stage installs from the exported, hash-pinned file, not from the lock.
+COPY pyproject.toml requirements.txt ./
 COPY deploy/server-001/requirements-vcs.txt ./
 # Two steps, because pip cannot hash a version-control source at all: it refuses with
 # "Can't verify hashes for these requirements because we don't have a way to hash
