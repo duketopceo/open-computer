@@ -22,6 +22,9 @@ ENVIRONMENT = "production"
 REQUIRED_JOBS = frozenset({
     "python (ruff, pytest not live)",
     "console e2e (playwright + axe)",
+    # The image's install runs before any sandbox exists, so an unverified registry artifact would execute with
+    # host privilege. A green deploy requires that the file the image installs still verifies.
+    "provisioning (hash-verified install)",
     "production approval",
 })
 HOME = Path.home()

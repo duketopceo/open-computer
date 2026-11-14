@@ -32,6 +32,28 @@ jobs:
       - name: pytest (conformance, fsproto, opsview, unit)
         run: uv run --locked pytest -m "not live" -p no:cacheprovider
 
+  # The image install runs before any sandbox exists, so a modified registry artifact would execute with host
+  # privilege. This job proves the exact file the image installs still verifies. It does not replace `uv sync`
+  # in the jobs above: requirements.txt is the runtime export and deliberately excludes pytest and ruff.
+  provisioning:
+    name: provisioning (hash-verified install)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Pinned to the same uv as the Dockerfile so the exported file is byte-stable.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: requirements.txt matches uv.lock
+        run: uv run --with pytest pytest tests/unit/test_provisioning_pins.py -m "not slow"
+      - name: every registry package verifies under --require-hashes
+        run: |
+          python -m venv /tmp/prov
+          /tmp/prov/bin/python -m pip install -q --require-hashes -r requirements.txt
+          /tmp/prov/bin/python -m pip install -q --no-deps -r deploy/server-001/requirements-vcs.txt
+          /tmp/prov/bin/python -c "import temporalio, e2b; print('runtime deps import')"
+
   console-e2e:
     name: console e2e (playwright + axe)
     runs-on: ubuntu-latest
@@ -69,7 +91,7 @@ jobs:
   production-approval:
     name: production approval
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [python, console-e2e]
+    needs: [python, console-e2e, provisioning]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5

@@ -1,0 +1,13 @@
+# Requirements --require-hashes cannot verify: version-control sources.
+#
+# pip refuses these outright with 'Can't verify hashes for these requirements
+# because we don't have a way to hash version control repositories'. They are
+# installed in a separate step, and the commit pin below IS the integrity
+# guarantee for them: the ref is a full 40-character SHA, so a moved tag or a
+# rewritten branch cannot change what installs.
+#
+# Regenerate this file and ../../requirements.txt together with `uv export`; see the
+# Dockerfile header for the exact command.
+
+jev-compact @ git+https://github.com/duketopceo/jev-compact@fe1cde259805320e78643835c9c31f9f0943c736
+    # via open-computer
