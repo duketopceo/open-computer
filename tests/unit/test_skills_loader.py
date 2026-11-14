@@ -169,4 +169,6 @@ def test_the_shipped_catalog_loads_and_lives_inside_the_image_copy():
     assert CATALOG.is_relative_to(Path(__file__).resolve().parents[2] / "services")
     for s in skills:
         assert s.name == s.path.parent.name
-        assert s.pulls_tools, s.name  # every shipped seed declares what it needs, so the page is not decorative
+    # At least one seed declares a capability, so the page is not decorative and the vocabulary is exercised.
+    # Not every seed has to: a skill needing nothing (local paths on a device origin) is a valid skill.
+    assert any(s.pulls_tools for s in skills), "no shipped seed declares a capability"

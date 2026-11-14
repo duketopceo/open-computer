@@ -82,10 +82,31 @@ def test_a_skill_without_applies_to_applies_to_every_run(tmp_path):
 
 def test_available_reports_what_this_build_provides():
     caps = R.available(memory_enabled=False, verbs=("list_runs",))
-    assert {"sandbox", "egress"} <= caps
+    assert "egress" in caps, "the placement gate always exists, so an egress step always has an approval site"
     assert "memory" not in caps
     assert "mcp:list_runs" in caps
     assert "mcp:get_run" not in caps
+
+
+def test_sandbox_needs_both_an_sdk_and_a_control_plane_url(monkeypatch):
+    """The shipped image carried `e2b` while nothing selected SPACE, so SDK presence alone was a false claim.
+
+    Both `sandboxes_available()` implementations return False without a URL, so this reports the same thing they
+    would, without an HTTP request per run.
+    """
+    monkeypatch.setenv("OC_EXECPLANE_BACKEND", "space")
+    monkeypatch.setenv("SPACE_API_URL", "http://127.0.0.1:18080")
+    with_sdk = R.sandbox_available()
+    assert with_sdk is R._importable("e2b"), "SPACE answers exactly what the SDK's presence says"
+
+    monkeypatch.delenv("SPACE_API_URL")
+    assert not R.sandbox_available(), "an unset control-plane URL makes a sandbox unbootable, whatever is installed"
+
+
+def test_sandbox_is_false_for_an_unknown_backend(monkeypatch):
+    monkeypatch.setenv("OC_EXECPLANE_BACKEND", "k3s")
+    monkeypatch.setenv("SPACE_API_URL", "http://127.0.0.1:18080")
+    assert not R.sandbox_available(), "an unknown backend must not be reported as providing a sandbox"
 
 
 def test_memory_availability_follows_configuration():
@@ -112,9 +133,23 @@ def test_the_resolved_record_is_json_shaped():
 
 
 def test_the_shipped_catalog_resolves_against_the_real_build():
-    r = R.resolve_run()
+    """The seeds must be honourable by a plain checkout: no optional backend SDK, no model keys.
+
+    This is the test that pins the seed set as a promise. If a seed declares a capability only a configured
+    deployment has, every run is refused everywhere else — which is how `sandbox` behaved before it was scoped.
+    """
+    r = R.resolve_run(caps=R.available())
     assert r.ok, r.reason()
-    assert len(r.skills) >= 2
+    assert len(r.skills) >= 1, "the shipped catalog must apply to an ordinary cloud run"
+
+
+def test_a_seed_scoped_to_a_device_origin_is_not_selected_for_a_cloud_run():
+    """`applies_to` is the mechanism, proven on the shipped catalog rather than on a fixture."""
+    cloud = {s.name for s in R.resolve_run(caps=R.available()).skills}
+    device = {s.name for s in R.resolve_run(origin="device", caps=R.available()).skills}
+    assert "cross-repo-read" not in cloud, "local-checkout reading is not a cloud run's job"
+    assert "cross-repo-read" in device, "a device run is where a local checkout can be read"
+    assert "web-lookup" in cloud, "an unscoped skill applies to every origin"
 
 
 def test_every_shipped_skill_token_is_in_the_vocabulary():

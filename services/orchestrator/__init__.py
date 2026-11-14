@@ -238,16 +238,16 @@ class Orchestrator:
             log.debug("plan", subtasks=[{"id": s["id"], "deps": s["deps"], "tier": s["tier"],
                                          "latency": s["latency"], "est_cost": s["est_cost"]} for s in subs])
         self.audit.append(submit_row)
-        tmp = self.root / "plan.json.tmp"
-        tmp.write_text(json.dumps(subs))
-        os.replace(tmp, self.root / "plan.json")
-        if trace is not None:
-            for s in subs:
-                trace.step(s["id"], s["title"], "pending")
+        # The skill check precedes plan.json. Written after it, a refused run left a plan on disk that
+        # `recover` adopted and `goalruns.resume` re-drove, so a restart could start a run this process
+        # refused. Nothing is written before the catalog answers.
         resolved = resolve_run(origin=origin, subtasks=subs)
         self.skills.append(run_id, resolved.public())
         if not resolved.ok:
             reason = resolved.reason()
+            # `plan_cancelled` is how the console knows this run holds no plan: `plan_state` would otherwise
+            # be None, which reads as a run that never held one rather than a run that was refused.
+            self.audit.append({"event": "plan_cancelled", "run": run_id, "why": "skill-unavailable"})
             self.audit.append({"event": "run_failed", "run": run_id, "goal": goal, "origin": origin,
                                "kind": "SkillUnavailable", "error": reason, "stage": "skills"})
             log.error("run refused: a declared skill cannot be honoured", run=run_id, reason=reason)
@@ -255,6 +255,12 @@ class Orchestrator:
                 trace.error("err_skills", "SkillUnavailable", reason)
                 trace.run("failed", reason="error")
             return run_id
+        tmp = self.root / "plan.json.tmp"
+        tmp.write_text(json.dumps(subs))
+        os.replace(tmp, self.root / "plan.json")
+        if trace is not None:
+            for s in subs:
+                trace.step(s["id"], s["title"], "pending")
         if hold is not None and hold(subs):
             self.audit.append({"event": "plan_pending", "run": run_id, "estimate": plan_estimate(subs)})
             return run_id

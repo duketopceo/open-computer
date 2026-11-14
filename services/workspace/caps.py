@@ -10,6 +10,13 @@ already materialized: a 10 MB archive holding 120,000 empty entries allocates ~6
 per-entry check can fire. The end-of-central-directory record states the entry count in a fixed-width field, so it
 can be read from the last few bytes without parsing anything.
 
+That field is written by whoever built the archive, so it cannot be trusted on its own. Measured: a 110,000-entry
+archive with the count patched to 1 still costs ~60 MB inside `ZipFile()`, because `zipfile` walks the central
+directory regardless of what the record claims. The declared count is therefore only a cheap early exit; the bound
+that actually holds is the per-entry walk, and the guarantee is that the walk refuses before the list it is
+building grows past `MAX_ENTRIES`. Bounded memory here means bounded by the archive's own recorded directory
+structure, which the size cap already limits to 10 MB of bytes.
+
 This module is deliberately not a decompression guard. A decompression bound would protect a code path that does
 not exist, and adding an extractor dependency to justify it would widen the supply chain to guard nothing. If an
 extractor is ever added, it inherits these constants.
@@ -47,11 +54,17 @@ def check_size(path: Path) -> int:
 
 
 def count_entries(path: Path) -> int | None:
-    """The entry count from the end-of-central-directory record, or None when there is no readable record.
+    """The entry count the archive's end-of-central-directory record declares, or None when there is no record.
 
-    None means "not a zip this module can bound from the header alone"; the caller then lets `zipfile` decide, which
-    reports a `BadZipFile` for a non-archive. ZIP64 archives report 0xFFFF entries here and are refused: a workspace
-    artifact with 65,535 entries is already past every bound below.
+    Attacker-controlled: this is a hint that lets the common case exit before opening, never a guarantee. The
+    walk in `entries()` is what bounds the archive, because `zipfile` builds its list from the central directory
+    itself, not from this field.
+
+    None means "not a zip this module can read a record from"; the caller lets `zipfile` decide, which reports a
+    `BadZipFile` for a non-archive. A valid record whose comment contains the `PK\\x05\\x06` signature cannot be
+    told apart from a forged one by scanning, so the last occurrence is used, and a wrong read is harmless: a
+    count under the limit falls through to the walk, and one over it refuses an archive that a stricter reader
+    (CPython 3.13.4+, which validates the record's length) would also reject.
     """
     size = path.stat().st_size
     tail_len = min(size, _EOCD_MIN + _COMMENT_MAX)

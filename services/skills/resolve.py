@@ -8,12 +8,17 @@ dispatches, instead of discovering the gap mid-flight.
 What "cannot provide" means, precisely. A token is available when its enforcement site exists in this build and
 this configuration:
 
-  sandbox  the execplane can make a sandbox at all
-  egress   the gate exists, so an egress step has somewhere to be approved
+  sandbox  the selected execplane backend's SDK is installed and its control-plane URL is configured
+  egress   services/placement/rules.py is importable, so an egress step blocks on an approval
   web      services/orchestrator/tools/web.py is importable
   apps     services/connectors/apps_tools.py is importable
   memory   OC_MEMORY=kurultai, so a MemoryClient exists
   mcp:<verb>  the verb is a key of the MCP TOOLS dict
+
+`sandbox` is the one token whose site can be missing from an otherwise complete checkout, because the SDK is an
+optional extra. It is checked as a build fact rather than a live probe: reachability is a per-step failure that
+`sandbox_work` already handles fail-closed, and refusing every run during a control-plane outage would be a
+different bug than the one this module fixes.
 
 Availability is a statement about the build, never about whether this particular plan happens to use the
 capability. A run that has no web step is not refused for carrying a web skill; it simply will not reach that
@@ -30,6 +35,7 @@ rather than being guessed at.
 from __future__ import annotations
 
 import importlib.util
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,12 +80,40 @@ def _importable(module: str) -> bool:
         return False
 
 
+def sandbox_available() -> bool:
+    """True when this build carries the SDK the selected execplane backend needs to boot a sandbox.
+
+    This is deliberately not a reachability probe. `sandbox_work` already fails closed per step when the control
+    plane is unreachable (`SandboxWorkerUnavailable`, which requeues), and those failures belong to the step that
+    asked for a VM — not to every run in flight. Probing here would refuse an unrelated run for the duration of an
+    outage, which is the "gating on availability instead of the declaration" mistake this module exists to avoid.
+
+    What is left is the build question the declaration can be held to: the SDK the selected backend boots with, and
+    the control-plane URL that makes it usable. Both `sandboxes_available()` implementations return False when the
+    URL is unset, so an SDK without one is not a working capability — that is the state the shipped image was in,
+    carrying `e2b` while nothing selected the SPACE backend. An unknown backend answers False rather than guessing,
+    matching `execplane.adapter`.
+    """
+    backend = (os.environ.get("OC_EXECPLANE_BACKEND") or "cube").strip()
+    sdk, url_var = {
+        "cube": ("cubesandbox", "CUBE_API_URL"),
+        "space": ("e2b", "SPACE_API_URL"),
+    }.get(backend, (None, None))
+    if sdk is None or not (os.environ.get(url_var) or "").strip():
+        return False
+    return _importable(sdk)
+
+
 def available(memory_enabled: bool | None = None, verbs: tuple[str, ...] = ()) -> frozenset[str]:
     """The capability tokens this build can honour. `memory` and `mcp:<verb>` depend on configuration and registry."""
     from services.memory import MemoryConfig
 
     enabled = (MemoryConfig.from_env() is not None) if memory_enabled is None else memory_enabled
-    out = {"sandbox", "egress"}
+    out: set[str] = set()
+    if sandbox_available():
+        out.add("sandbox")
+    if _importable("services.placement.rules"):
+        out.add("egress")
     if _importable("services.orchestrator.tools.web"):
         out.add("web")
     if _importable("services.connectors.apps_tools"):

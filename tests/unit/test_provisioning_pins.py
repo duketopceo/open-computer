@@ -110,13 +110,73 @@ def test_requirements_txt_matches_the_lock():
         )
 
 
+def _blocks(lines: list[str]) -> list[list[str]]:
+    """Split the export into one list per requirement.
+
+    A requirement is a package line (or a bare VCS line) followed by its continuation lines, which `uv export`
+    indents. `requirements.txt` contains no blank lines at all (verified: 0 in the committed file), so splitting on
+    a blank line would run every block to EOF and let any later hash satisfy any package — the original defect here.
+    """
+    out: list[list[str]] = []
+    for ln in lines:
+        if ln.startswith((" ", "\t", "#")):
+            if out:
+                out[-1].append(ln)
+            continue
+        out.append([ln])
+    return out
+
+
+def _unhasped(path: Path) -> list[str]:
+    """Every `name==version` whose own block carries no sha256 hash. The check both tests below share."""
+    blocks = [b for b in _blocks(path.read_text().splitlines()) if not b[0].lstrip().startswith("#")]
+    pinned = [b for b in blocks if "==" in b[0] and "@" not in b[0]]
+    # The runtime export is ~56 packages and ~654 hash lines; a much smaller number means the split went wrong,
+    # not that the file is fine.
+    assert len(pinned) >= 50, f"expected the full runtime export, found {len(pinned)} pinned packages"
+    return [b[0].strip() for b in pinned if not any("hash=sha256:" in ln for ln in b)]
+
+
 def test_every_registry_package_carries_a_hash():
-    text = REQUIREMENTS.read_text()
-    pinned = [ln for ln in text.splitlines() if "==" in ln and not ln.lstrip().startswith("#")]
-    assert pinned, "requirements.txt has no pinned packages"
-    for ln in pinned:
-        block_has_hash = "hash=sha256" in text.split(ln, 1)[1].split("\n\n", 1)[0]
-        assert block_has_hash, f"no hash for: {ln}"
+    """Each `name==version` line must be followed by at least one hash *in its own block*."""
+    unhasped = _unhasped(REQUIREMENTS)
+    assert not unhasped, f"packages with no hash: {unhasped[:5]}"
+
+
+def test_the_hash_check_can_fail(tmp_path):
+    """Proves the check above is not vacuous: stripping one package's hashes fails it, whatever follows.
+
+    This is the defect the previous version had. It sliced each block with `split(ln, 1)[1].split("\\n\\n", 1)[0]`,
+    and because the file has no blank lines that slice ran to EOF, so a package whose hashes were deleted still
+    passed on the strength of the next package's hashes. Verified against the real file: this doctor removes the
+    hashes from the first pinned package and the shared check names it.
+    """
+    lines = REQUIREMENTS.read_text().splitlines()
+    target = next(i for i, ln in enumerate(lines) if "==" in ln and not ln.startswith("#"))
+    victim = lines[target].split()[0]  # the package whose block loses its hashes
+    doctored: list[str] = []
+    for i, ln in enumerate(lines):
+        if i == target:
+            doctored.append(ln.split(" \\")[0])  # keep the package line, drop its hash continuations
+            continue
+        if i > target and ln.startswith((" ", "\t")):
+            continue  # its continuation block
+        doctored.append(ln)
+    fake = tmp_path / "requirements.txt"
+    fake.write_text("\n".join(doctored) + "\n")
+    unhasped = _unhasped(fake)
+    assert unhasped and victim in unhasped[0], f"the doctored package must be the one reported, got {unhasped[:3]}"
+
+
+def test_the_image_selects_the_backend_whose_sdk_it_installs():
+    """The image installs the `space` extra (e2b). Nothing set OC_EXECPLANE_BACKEND, so the default `cube` asked
+    for an SDK the image never had — a capability the build could not honour, which is what `sandbox` reported."""
+    compose = (ROOT / "deploy" / "server-001" / "docker-compose.oc.yml").read_text()
+    dockerfile = DOCKERFILE.read_text()
+    assert "e2b==" in (ROOT / "requirements.txt").read_text(), "the image must install the SPACE SDK"
+    assert "OC_EXECPLANE_BACKEND" in compose, "the compose file must select the backend the image can run"
+    assert "${OC_EXECPLANE_BACKEND:-space}" in compose, "SPACE is installed, so it is the default that works"
+    assert "cubesandbox" not in dockerfile, "the cube SDK is not a pip dependency, so the image cannot run cube"
 
 
 def test_the_vcs_dependency_is_not_in_the_hashed_file():
