@@ -1,6 +1,6 @@
 # Roadmap
 
-One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-097` (there is no OC-056). Phases P0-P6 and
+One numbering: **OC-nnn**. The backlog is `OC-001`..`OC-100` (there is no OC-056). Phases P0-P6 and
 the exit criteria below are the plan; this file is the status board and is updated by the PR that
 changes a unit's state. Anything contradicting `main` here is a bug in this file.
 
@@ -85,7 +85,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-029 | P1 | Live suite on self-hosted runner (marker live) | open |
 | OC-030 | P2 | Execplane lifecycle: exec timeout, teardown, pause/resume, snapshot/clone/rollback | open |
 | OC-031 | P2 | Cold-boot measurement and aarch64/Asahi verdict | open |
-| OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | partial: placeholders in guest, host-side `substitute()`, R3 non-vacuous (#19); no real worker uses it yet |
+| OC-032 | P2 | Credential boundary v1: no secrets enter sandboxes | partial: placeholders in guest, host-side `substitute()`, R3 non-vacuous (#19); **no caller passes `secrets=`, so the substitution branch has never run.** Boundary state, line references and what would make it load-bearing: [docs/CREDENTIALS.md](docs/CREDENTIALS.md) |
 | OC-033 | P2 | Credential boundary v2: substitution at egress proxy | open |
 | OC-034 | P2 | Bind approved policy to sandbox creation + audit every apply | open |
 | OC-035 | P2 | Worker cost ledger + hard per-task cap | partial: ledger, per-run cap that pauses (never cancels), resume, orchestrator wiring (#24); event emission is a plain-dict hook until the UI event-stream helper lands; no real worker reports usage yet |
@@ -154,6 +154,9 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-096 | P3 | Live run timeline (dev mode): per-step model, router, cost, waits, commands and errors from the run event stream; virtualized; JSONL export; dev-trace switch with a content-capture warning | this PR |
 | OC-092 | P3 | Cloudflare-hosted console frontend: Worker serves `ui/dist` and proxies `/api/*` (incl. SSE) to the tunnel, offline screen, Access policy | plan: docs/plans/2026-11-01-001-feat-cloudflare-hosted-frontend-plan.md (awaiting owner OK) |
 | OC-097 | P3 | UI baseline and public demo: flat canvas (shader retired), original icon set, type scale, focus, keyboard, states, 390/1440; fixtures-only demo build behind Cloudflare Access (runbook, not deployed) | plan: docs/plans/2026-11-10-0109-feat-ui-baseline-public-demo-plan.md; PR open (draft). Production backend: owner decision pending |
+| OC-098 | P2 | Skill catalog: loader, declared capability vocabulary, run-side resolution | partial: `services/skills/` (one directory per skill with a `SKILL.md`), a vocabulary that names each capability's enforcement site, `/api/skills` reporting the catalog with a `degraded` status, a refusal before a run's first dispatch when the build cannot provide a declared token, and `skills.ndjson` recording what each run resolved; two seed skills. **Gap:** a resolved body is not injected into the worker prompt, so nothing the catalog resolves changes what the model reads yet. Plan: `docs/plans/2026-11-13-2336-feat-oc-skill-catalog-and-provisioning-plan.md` |
+| OC-099 | P2 | Provisioning integrity: the image installs only hash-verified packages | shipped: a generated `requirements.txt` (654 `--hash=sha256:` lines over the runtime extras) installed under `--require-hashes`, plus a separate `deploy/server-001/requirements-vcs.txt` for `jev-compact`, whose integrity guarantee is its full commit pin because pip cannot hash a git source. `temporalio` is a `durable` extra, so the optional-import contract in `services/opsview/goalruns.py` survives. Freshness, pin and a real round-trip install are tested; CI has a `provisioning` job registered in `deploy/approved_deploy.py` `REQUIRED_JOBS` |
+| OC-100 | P2 | Workspace archive listing bounds | shipped: input size, entry count and accumulated listing are capped in `services/workspace/caps.py`; an over-bound archive is a 422 rather than an unbounded read. Deliberately not a decompression guard: nothing in this tree extracts an entry |
 
 ## Landed since 2026-10-14
 

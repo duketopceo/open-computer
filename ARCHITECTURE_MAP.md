@@ -23,7 +23,8 @@ NVIDIA OpenShell, on the luke-agents harness.
 | Local knowledge index | **pplx-embed-v2-late-0.6b/9b** (MIT, shared embedding space: index with 9B, query with 0.6B) or kurultai (his) | adopt or keep kurultai |
 | Durable task queue / scheduler | Temporal (AGENT_STACK.md; adapter in Khan) | wire it up |
 | Benchmarks to measure against | DRACO, WANDR, PII-TRACE, browsesafe-bench (all open); Local Knowledge Work Bench promised-open, not yet released | adopt |
-| Credentials outside sandbox | OpenShell credential substitution + OmaSeal keyring (Khan already secret-first) | partial |
+| Credentials outside sandbox | OpenShell credential substitution + OmaSeal keyring (Khan already secret-first) | **not enforced.** Placeholders and host-side `substitute()` exist (`services/execplane/client.py`), but no caller passes `secrets=`, so the branch has never run. State and line references: [docs/CREDENTIALS.md](docs/CREDENTIALS.md) |
+| Skill catalog (agent-visible capabilities) | `services/skills/`: one directory per skill with a `SKILL.md`, a declared capability vocabulary, and a run-side resolver that runs before the first dispatch | partial: loader, vocabulary, `/api/skills`, refusal and `skills.ndjson` shipped; a resolved body is not yet injected into the worker prompt. Peer to `services/connectors/`, not a submodule of the orchestrator |
 
 Layering note: CubeVM and OpenShell are complementary, not competing.
 CubeVM = hardware isolation (L3 microVM). OpenShell = policy enforcement
@@ -56,7 +57,9 @@ for SPACE-equivalent posture.
 
 ## Status of this map
 
-The Status column reflects `main` as of 2026-10-11. Live status per unit is in `ROADMAP.md`; per-feature gaps verified against code are in `docs/FEATURES.md`.
+The Status column reflects `main` as of 2026-10-11, except the credential and skill rows, which were verified
+against code on 2026-11-13. Live status per unit is in `ROADMAP.md`; per-feature gaps verified against code are in
+`docs/FEATURES.md`.
 
 ## Open questions
 

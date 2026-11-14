@@ -49,8 +49,10 @@ Status key: **shipped+tested** (code and a passing check that would fail if the 
 | 28 | Khan adapter / Temporal durability | none | missing | |
 | 29 | Browser / computer-use worker | none | missing | |
 | 30 | jev-compact, knowledge index, numbat/bumblebee wiring, DRACO/WANDR eval | none | missing | All "Later" in both roadmaps. |
-| 31 | CI | none | missing | No `.github/`. Repo is public (MIT), so standard GitHub-hosted runners are free ([GitHub docs](https://docs.github.com/en/billing/concepts/product-billing/github-actions)). |
-| 32 | Packaging (`pyproject.toml`, lockfile, pinned Python) | none | missing | Tests run via `uv run --with pytest`; conftest does `sys.path.insert`. |
+| 31 | CI | `.github/workflows/ci.yml` | shipped+tested | Five jobs: `python` (ruff + pytest), `provisioning` (hash-verified install), `console e2e` (Playwright + axe), `production-approval`, `deploy`. The gate job names are pinned in `deploy/approved_deploy.py` (`REQUIRED_JOBS`), so adding a job without registering it there makes it a gate the deploy controller does not require. |
+| 32 | Packaging (`pyproject.toml`, lockfile, pinned Python) | `pyproject.toml`, `uv.lock`, `requirements.txt`, `deploy/server-001/requirements-vcs.txt` | partial | Locked with `uv`. The image installs from a generated `requirements.txt` under `pip --require-hashes` (654 hashes over every registry package) plus a separate VCS file for `jev-compact`, whose commit pin is its integrity guarantee because pip cannot hash a git source at all. `temporalio` is a `durable` extra rather than a required dependency, because the code treats its import as optional. |
+| 33 | Skill catalog: loader, declared capability vocabulary, run-side resolution | `services/skills/` | shipped+tested | A directory per skill with a `SKILL.md`; an invalid declaration raises one `SkillError` naming every bad file and token, and a run is refused before its first dispatch when a skill declares a capability this build cannot provide. `skills.ndjson` records what each run resolved. **Gap:** a resolved skill's body is not injected into the worker's prompt yet, so the catalog is enforced and visible but does not yet change what the model reads. |
+| 34 | Archive listing bounds | `services/workspace/caps.py` | shipped+tested | Input size, entry count and accumulated listing are bounded; a crafted archive is a 422. Not a decompression guard: nothing in this tree extracts an entry, so a bound there would protect a code path that does not exist. |
 
 ### 2a. Weak checks (they pass when the code could be wrong)
 
