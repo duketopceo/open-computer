@@ -2,11 +2,11 @@
 
 **Verdict: `space-host` (<tailnet-ip>, tailnet) is the SPACE host. No Hetzner spend.**
 
-> **Update 2026-11-14:** the original `space-host` alias is gone from `~/.ssh/config` and no such tailnet peer
-> resolves. SPACE now runs on **`cluster4`** (`100.70.75.96`), and the omaseal key is `space/ecw-cluster4`
-> (not `space/ecw-key`). Verified from the dev box: `/healthz` → 200 on `cluster4:8080`, data plane on `:8092`,
-> `/dev/kvm` and `/dev/net/tun` present, Kind cluster `space-local` up. Through an SSH tunnel mirroring the
-> production ports (`-L 18080:127.0.0.1:8080 -L 18092:127.0.0.1:8092`):
+> **Update 2026-11-14:** SPACE moved hosts. The verdict below describes the original host; the numbers that matter
+> for a re-verification are unchanged. Before trusting a deployment, check that `/healthz` answers 200 on the API
+> port, the data plane answers on its own port, `/dev/kvm` and `/dev/net/tun` exist, and the Kind cluster is up.
+> An SSH tunnel mirroring the production ports
+> (`-L 18080:127.0.0.1:8080 -L 18092:127.0.0.1:8092`) was verified end to end:
 > `SpaceAdapter.sandboxes_available()` → **True**, a real microVM booted in **3.18 s**, `python3 -c "print(2**10)"`
 > → `1024`, egress to `example.com` **denied** (as designed), and `close()` destroyed it.
 
@@ -84,7 +84,9 @@ user unit (`deploy/oc-space-tunnel.service` is the repo copy):
 Backend selection is explicit: `OC_EXECPLANE_BACKEND=space` in
 `~/bin/oc-worker` → `engines._plane()` → `execplane.adapter(root,
 backend="space")`. Unset falls back to cube. `SPACE_API_KEY` is injected
-by `omaseal run -e SPACE_API_KEY=space/ecw-cluster4` — never on disk.
+by `omaseal run -e SPACE_API_KEY=<service>/<account>` — never on disk.
+(The key moved to a new omaseal account when SPACE changed hosts; read the current name from
+`omaseal list space` rather than trusting a doc.)
 `e2b==2.21.1` is an optional `space` extra in `pyproject.toml` (uv.lock
 regenerated, not hand-edited). `docker-compose.oc.yml` now sets
 `OC_EXECPLANE_BACKEND: ${OC_EXECPLANE_BACKEND:-space}`: the image installs
