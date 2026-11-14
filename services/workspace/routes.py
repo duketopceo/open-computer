@@ -13,7 +13,6 @@ import os
 import re
 import tempfile
 import time
-import zipfile
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -21,6 +20,7 @@ from oc.events import entities, fold
 from services.gate.queue import QueueError
 
 from .replay import FIXTURES, Workspace
+from . import caps
 
 STATIC = Path(__file__).resolve().parent / "static"
 STATIC_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
@@ -297,10 +297,11 @@ def g_listing(h, qs, goal, ref):
     if not art or not f or art["kind"] != "archive":
         return h._json(404, {"error": "No such archive."})
     try:
-        with zipfile.ZipFile(f) as z:
-            entries = [{"path": i.filename, "size": i.file_size, "dir": i.is_dir()} for i in z.infolist()]
-    except zipfile.BadZipFile:
-        return h._json(422, {"error": "This archive can't be listed. Download it instead."})
+        entries = caps.entries(f)
+    except caps.ArchiveTooLarge as e:
+        # 422 keeps the existing "Download it instead" contract; a crafted archive is the requester's problem, not a
+        # server fault, so it must not surface as a 500.
+        return h._json(422, {"error": f"This archive can't be listed: {e}. Download it instead."})
     h._json(200, {"entries": entries, "total": len(entries), "bytes": f.stat().st_size})
 
 

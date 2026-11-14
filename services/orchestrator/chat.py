@@ -98,10 +98,15 @@ def run_note(run_id: str, goal: str, view: dict | None) -> str:
 def run_status(view: dict) -> str:
     """done | failed | working | waiting for approval | paused (budget)"""
     subs = view.get("subtasks") or []
-    if view.get("error") and not subs:
+    # A run that failed before dispatch carries no steps. Asking about the plan first would answer "working"
+    # (0 declared, 0 rendered, `all()` over an empty list), and `wait_for_run` would poll until its 24h timeout
+    # for a run that already ended — which is what a skill refusal used to do.
+    if view.get("error"):
         return "failed"
     if (view.get("plan") or {}).get("state") == "planned":
         return "waiting for approval"
+    # A cancelled plan is not always a failed run: a refused run marks its plan cancelled, and whether it
+    # failed is decided by the `error` check above, not by the cancellation.
     if (view.get("plan") or {}).get("state") == "cancelled":
         return "failed"
     if (view.get("effort") or {}).get("paused"):

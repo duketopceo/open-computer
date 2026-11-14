@@ -11,6 +11,11 @@ x-oc: &oc
   image: oc-server-001:${OC_IMAGE_TAG:-local}
   restart: unless-stopped
   env_file: ${OC_ENV_FILE:?set OC_ENV_FILE (redeploy.sh does)}
+  # The image installs the `space` extra (e2b) and cannot install `cubesandbox` (not a pip dependency), so SPACE is
+  # the backend it can actually run. The default must agree with what is installed, or `sandbox` is a capability
+  # the build reports and cannot honour. `SPACE_API_URL` and `SPACE_API_KEY` still come from the env file.
+  environment:
+    OC_EXECPLANE_BACKEND: ${OC_EXECPLANE_BACKEND:-space}
   volumes:
     - oc-data:/home/oc/.local/share/oc
   logging:

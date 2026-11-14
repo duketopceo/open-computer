@@ -32,6 +32,25 @@ jobs:
       - name: pytest (conformance, fsproto, opsview, unit)
         run: uv run --locked pytest -m "not live" -p no:cacheprovider
 
+  # The image install runs before any sandbox exists, so a modified registry artifact would execute with host
+  # privilege. The tests below install the exact committed file with real pip into a throwaway venv (proving a
+  # removed hash fails) and prove the file still matches uv.lock. Both live in
+  # tests/unit/test_provisioning_pins.py rather than as a second copy of the commands here.
+  # This does not replace `uv sync` in the job above: requirements.txt is the runtime export and deliberately
+  # excludes pytest and ruff.
+  provisioning:
+    name: provisioning (hash-verified install)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Pinned to the same uv as the Dockerfile so `uv export` is byte-stable for the freshness check.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: requirements.txt matches uv.lock, and every hash verifies
+        run: uv run --with pytest pytest tests/unit/test_provisioning_pins.py -p no:cacheprovider
+
   console-e2e:
     name: console e2e (playwright + axe)
     runs-on: ubuntu-latest
@@ -69,7 +88,7 @@ jobs:
   production-approval:
     name: production approval
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [python, console-e2e]
+    needs: [python, console-e2e, provisioning]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5

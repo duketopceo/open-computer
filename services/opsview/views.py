@@ -873,26 +873,7 @@ def work_active(runs: list[dict], run: dict | None) -> bool:
     return False
 
 
-# ------------------------------------------------------------- skills + automations
-
-
-def page_skills(caps: list[dict]) -> str:
-    """Capability registry — every row is a real code path with live health."""
-    rows = "".join(
-        f'<tr><td>{e(c["name"])}</td><td class="muted">{e(c["kind"])}</td>'
-        f'<td>{status(c["status"])}</td><td class="muted">{e(c["detail"])}</td></tr>'
-        for c in caps
-    )
-    return (
-        '<section aria-labelledby="cap"><h2 id="cap">What a run can invoke</h2>'
-        '<p class="muted note">The capability surface — each row is a real engine, worker or '
-        "safety check. Health is probed live; a down engine is reported, not hidden. "
-        "Placement picks among these per subtask.</p>"
-        '<table class="dense"><caption class="sr">Capabilities and live health</caption><thead><tr>'
-        '<th scope="col">Capability</th><th scope="col">Kind</th><th scope="col">Status</th>'
-        '<th scope="col">Detail</th></tr></thead>'
-        f"<tbody>{rows}</tbody></table></section>"
-    )
+# ------------------------------------------------------------------- automations
 
 
 def _auto_row(a: dict, csrf: str, now: float) -> str:

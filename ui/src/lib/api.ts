@@ -678,7 +678,22 @@ export const getOverview = () => json<OverviewPayload>("/api/overview");
 
 // ---- Skills + Automations ----
 
-export interface Skill { [k: string]: unknown }
+export interface Skill {
+  name: string;
+  description: string;
+  pulls_tools: string[];
+  applies_to?: string[];
+  path: string;
+  status: "ready" | "degraded";
+  /** Declared tokens this build cannot provide. Empty when `status` is `ready`. */
+  missing: string[];
+}
+
+/** The skill catalog on disk. A skill whose declared capability this build lacks reports `degraded`. */
+export interface SkillsPayload { skills: Skill[]; error?: string }
+
+/** Live engine, worker and safety health, probed per request. Not the skill catalog. */
+export interface HealthPayload { skills: Record<string, unknown>[] }
 export interface Automation {
   id: string;
   goal: string;
@@ -689,7 +704,8 @@ export interface Automation {
   state?: string;
 }
 
-export const getSkills = () => json<{ skills: Skill[] }>("/api/skills");
+export const getSkills = () => json<SkillsPayload>("/api/skills");
+export const getHealth = () => json<HealthPayload>("/api/health");
 export const getAutomations = () =>
   json<{ enabled: boolean; automations: Automation[] }>("/api/automations");
 export const autoAction = (id: string, verb: "pause" | "trigger" | "delete") =>

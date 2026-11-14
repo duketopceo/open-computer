@@ -1,19 +1,11 @@
-"""/skills + /automations (F4): capability registry renders live health;
-the schedules surface is honest when Temporal is away — never guesses."""
+"""/automations (F4): the schedules surface is honest when Temporal is away — never guesses.
+
+The live-health probe's own assertions live in `test_skills_endpoint.py`, which owns `/api/health`.
+"""
 
 import json
 
 from services.opsview import capabilities
-
-
-def test_skills_page_lists_real_capabilities(console):
-    code, _, body = console.get("/api/skills")
-    skills = json.loads(body)["skills"]
-    hay = json.dumps(skills).lower()
-    for word in ("OpenRouter", "llama", "Ollama", "Sandbox", "gate"):
-        assert word.lower() in hay, word
-    for st in ("ready", "down", "not configured", "active"):
-        assert any(s.get("status") == st for s in skills) or st in hay, st
 
 
 def test_capabilities_report_live_not_static():

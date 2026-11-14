@@ -19,6 +19,12 @@ dependencies = [
 space = [
   "e2b==2.21.1",
 ]
+# Durable schedules (Temporal). The image installs this extra so the worker and
+# the relay are hash-verified with everything else; the code still treats the
+# import as optional (services/opsview/goalruns.py), so a checkout without it runs.
+durable = [
+  "temporalio==1.35.0",
+]
 
 [dependency-groups]
 dev = [
@@ -31,6 +37,7 @@ testpaths = ["tests/conformance", "tests/fsproto", "tests/opsview", "tests/unit"
 addopts = "-ra"
 markers = [
   "live: boots real CubeSandbox microVMs; excluded from CI (`-m 'not live'`), run by hand",
+  "slow: runs a real package install into a throwaway venv (~6s); included in the default run",
 ]
 
 [tool.ruff]

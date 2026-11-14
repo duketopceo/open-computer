@@ -52,6 +52,7 @@ def evidence():
         "jobs": {"jobs": [
             {"name": "python (ruff, pytest not live)", "conclusion": "success"},
             {"name": "console e2e (playwright + axe)", "conclusion": "success"},
+            {"name": "provisioning (hash-verified install)", "conclusion": "success"},
             {"name": "production approval", "conclusion": "success"},
         ]},
         "environment": {"protection_rules": [{
