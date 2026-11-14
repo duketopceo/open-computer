@@ -33,6 +33,7 @@ class Skill:
     pulls_tools: tuple[str, ...]
     path: Path
     body: str
+    applies_to: tuple[str, ...] = ()
 
     def public(self) -> dict:
         """What the console shows. The body is not sent: it can be 64 KB and the page lists skills."""
@@ -40,6 +41,7 @@ class Skill:
             "name": self.name,
             "description": self.description,
             "pulls_tools": list(self.pulls_tools),
+            "applies_to": list(self.applies_to),
             "path": str(self.path),
         }
 
@@ -78,6 +80,7 @@ def load_all(root: Path | str = CATALOG) -> list[Skill]:
                 pulls_tools=schema.split_tools(meta.get("pulls_tools", "")),
                 path=md,
                 body=body,
+                applies_to=schema.split_tools(meta.get("applies_to", "")),
             )
         )
     if problems:

@@ -25,6 +25,7 @@ from services.gate.audit import AuditLog
 from services.openrouter import collect_reasoning, collect_usage, total_usage
 from services.router import adapter as router_adapter
 from services.router.model_catalog import DEFAULT_WORKER_MODEL
+from services.skills.resolve import resolve_run
 
 from .collect import collect_run, task_state
 from .decompose import DEP_OUTPUT_CAP, DecomposeError, decompose, planner_prompt
@@ -32,6 +33,7 @@ from .dispatch import dispatch
 from .egress import EgressApproval, requested_hosts
 from .privacy import PrivacyHold
 from .runner import WorkResult, retry_delay, run_once
+from .skills import SkillsLog
 from .thinking import PLAN, ThinkingLog, join_thoughts
 
 log = get_logger("orchestrator")
@@ -44,6 +46,7 @@ __all__ = [
     "decompose",
     "dispatch",
     "drain_parked",
+    "resolve_run",
     "WorkResult",
     "run_once",
     "task_state",
@@ -67,6 +70,7 @@ class Orchestrator:
         self.gate = gate_adapter(root / "gate")
         self.audit = AuditLog(root / "orchestrator.ndjson")
         self.thinking = ThinkingLog(root / "thinking.ndjson")
+        self.skills = SkillsLog(root / "skills.ndjson")
         self.router = router or router_adapter(root)
         self.place = place_fn or place
         self.ledger = ledger  # services.cost.CostLedger | None
@@ -240,6 +244,17 @@ class Orchestrator:
         if trace is not None:
             for s in subs:
                 trace.step(s["id"], s["title"], "pending")
+        resolved = resolve_run(origin=origin, subtasks=subs)
+        self.skills.append(run_id, resolved.public())
+        if not resolved.ok:
+            reason = resolved.reason()
+            self.audit.append({"event": "run_failed", "run": run_id, "goal": goal, "origin": origin,
+                               "kind": "SkillUnavailable", "error": reason, "stage": "skills"})
+            log.error("run refused: a declared skill cannot be honoured", run=run_id, reason=reason)
+            if trace is not None:
+                trace.error("err_skills", "SkillUnavailable", reason)
+                trace.run("failed", reason="error")
+            return run_id
         if hold is not None and hold(subs):
             self.audit.append({"event": "plan_pending", "run": run_id, "estimate": plan_estimate(subs)})
             return run_id

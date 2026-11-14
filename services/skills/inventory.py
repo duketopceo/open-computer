@@ -57,3 +57,8 @@ def known(token: str, verbs: tuple[str, ...] = ()) -> bool:
         return True
     prefix, sep, verb = token.partition(":")
     return bool(sep) and prefix == MCP_PREFIX and verb in verbs
+
+
+def known_token(token: str, caps: frozenset[str]) -> bool:
+    """Whether `token` is both in the vocabulary and provided by this build (`caps`, from `resolve.available`)."""
+    return token in caps
