@@ -46,6 +46,17 @@ async function hashRecord(prev: string, body: Omit<AuditRecord, "prev_hash" | "h
   return sha256Hex(prev + stableStringify(body));
 }
 
+/** Builds the next chained record from the previous one. Storage implementations call this inside their serialized append. */
+export async function nextAuditRecord(
+  last: AuditRecord | null,
+  input: { ts: string; taskId: string | null; kind: string; data: Record<string, unknown> },
+): Promise<AuditRecord> {
+  const seq = last ? last.seq + 1 : 0;
+  const prev = last ? last.hash : GENESIS_HASH;
+  const body = { seq, ts: input.ts, task_id: input.taskId, kind: input.kind, data: input.data };
+  return { ...body, prev_hash: prev, hash: await hashRecord(prev, body) };
+}
+
 export interface AuditLogOptions {
   storage: AuditStorage;
   redactor?: Redactor;
@@ -70,34 +81,41 @@ export class AuditLog {
   append(kind: string, taskId: string | null, data: Record<string, unknown>): Promise<AuditRecord> {
     const cleaned = this.redactor.redact(data);
     const ts = new Date(this.now()).toISOString();
-    return this.storage.appendNext(async (last) => {
-      const seq = last ? last.seq + 1 : 0;
-      const prev = last ? last.hash : GENESIS_HASH;
-      const body = { seq, ts, task_id: taskId, kind, data: cleaned };
-      return { ...body, prev_hash: prev, hash: await hashRecord(prev, body) };
-    });
+    return this.storage.appendNext((last) => nextAuditRecord(last, { ts, taskId, kind, data: cleaned }));
   }
 
   /** Records what an event says about an action, approval or model call; delta streams and bulk text are not kept. */
   async recordEvent(event: AgentEvent): Promise<AuditRecord | null> {
-    const { task_id, seq: _seq, ts: _ts, ...rest } = event;
-    switch (event.type) {
-      case "message.delta":
-      case "reasoning.delta":
-      case "tool_call.args.delta":
-      case "tool_call.started":
-        return null;
-      case "message.done": {
-        const { text, ...meta } = rest as { text: string };
-        return this.append("event:message.done", task_id, this.captureContent ? { ...meta, text } : { ...meta, chars: text.length });
-      }
-      case "tool_call.result": {
-        const { output, ...meta } = rest as { output: string };
-        return this.append("event:tool_call.result", task_id, this.captureContent ? { ...meta, output } : { ...meta, chars: output.length });
-      }
-      default:
-        return this.append(`event:${event.type}`, task_id, rest as Record<string, unknown>);
+    const entry = auditEntryForEvent(event, this.captureContent);
+    return entry ? this.append(entry.kind, entry.taskId, entry.data) : null;
+  }
+}
+
+export interface AuditEntry {
+  kind: string;
+  taskId: string;
+  data: Record<string, unknown>;
+}
+
+/** What the audit log keeps for an event, or null for events it does not keep. Shared by every storage backend. */
+export function auditEntryForEvent(event: AgentEvent, captureContent = false): AuditEntry | null {
+  const { task_id, seq: _seq, ts: _ts, ...rest } = event;
+  switch (event.type) {
+    case "message.delta":
+    case "reasoning.delta":
+    case "tool_call.args.delta":
+    case "tool_call.started":
+      return null;
+    case "message.done": {
+      const { text, ...meta } = rest as { text: string };
+      return { kind: "event:message.done", taskId: task_id, data: captureContent ? { ...meta, text } : { ...meta, chars: text.length } };
     }
+    case "tool_call.result": {
+      const { output, ...meta } = rest as { output: string };
+      return { kind: "event:tool_call.result", taskId: task_id, data: captureContent ? { ...meta, output } : { ...meta, chars: output.length } };
+    }
+    default:
+      return { kind: `event:${event.type}`, taskId: task_id, data: rest as Record<string, unknown> };
   }
 }
 

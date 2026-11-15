@@ -32,6 +32,10 @@ function score(query: string[], entry: HistoryEntry): number {
 export async function recallHistory(store: MemoryStore, query: string, limit: number): Promise<RecalledItem[]> {
   const q = terms(query);
   if (q.length === 0 || limit <= 0) return [];
+  if (store.searchHistory) {
+    const ranked = await store.searchHistory(query, limit);
+    return ranked.map((e, i) => ({ id: e.id, title: e.title, source: `task:${e.taskId}`, text: e.summary, score: ranked.length - i }));
+  }
   const entries = await store.listHistory(500);
   return entries
     .map((e, order) => ({ e, s: score(q, e), order }))

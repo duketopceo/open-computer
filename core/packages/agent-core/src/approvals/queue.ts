@@ -34,6 +34,26 @@ export type DecideResult =
   | { ok: true; record: ApprovalRecord }
   | { ok: false; reason: "unknown" | "hash_mismatch" | "already_decided" | "expired" };
 
+export type Verdict =
+  | { ok: true; next: "approved" | "denied" }
+  | { ok: false; reason: "hash_mismatch" | "already_decided" | "expired" };
+
+/**
+ * The decision rules in one pure function, shared by the in-memory queue and the durable one in the cloud
+ * core: expiry first, then single use, then the hash the human was shown.
+ */
+export function evaluateDecision(
+  record: Pick<ApprovalRecord, "state" | "hash" | "expiresAt">,
+  decision: { hash: string; approved: boolean; actor: "human" },
+  now: number,
+): Verdict {
+  if (record.state === "expired") return { ok: false, reason: "expired" };
+  if (record.state !== "requested") return { ok: false, reason: "already_decided" };
+  if (now >= record.expiresAt) return { ok: false, reason: "expired" };
+  if (decision.hash !== record.hash) return { ok: false, reason: "hash_mismatch" };
+  return { ok: true, next: decision.approved ? "approved" : "denied" };
+}
+
 export interface ApprovalQueueOptions {
   ttlMs?: number;
   now?: () => number;
@@ -114,15 +134,10 @@ export class ApprovalQueue {
   decide(id: string, decision: { hash: string; approved: boolean; actor: "human" }): DecideResult {
     const record = this.records.get(id);
     if (!record) return { ok: false, reason: "unknown" };
-    if (record.state === "expired") return { ok: false, reason: "expired" };
-    if (record.state !== "requested") return { ok: false, reason: "already_decided" };
-    if (this.now() >= record.expiresAt) {
-      this.settle(id, "expired");
-      return { ok: false, reason: "expired" };
-    }
-    if (decision.hash !== record.hash) return { ok: false, reason: "hash_mismatch" };
-    this.settle(id, decision.approved ? "approved" : "denied");
-    return { ok: true, record: { ...record } };
+    const verdict = evaluateDecision(record, decision, this.now());
+    if (verdict.ok) this.settle(id, verdict.next);
+    else if (verdict.reason === "expired") this.settle(id, "expired");
+    return verdict.ok ? { ok: true, record: { ...record } } : verdict;
   }
 
   pending(): ApprovalRecord[] {

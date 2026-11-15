@@ -17,6 +17,8 @@ export interface MemoryStore {
   addHistory(entry: HistoryEntry): Promise<void>;
   /** Every history entry, newest first. Ranking happens in `recall.ts`, so stores stay simple. */
   listHistory(limit: number): Promise<HistoryEntry[]>;
+  /** Optional store-side ranked keyword search (for example SQLite FTS). Best match first. */
+  searchHistory?(query: string, limit: number): Promise<HistoryEntry[]>;
 }
 
 export class MemoryMemoryStore implements MemoryStore {
