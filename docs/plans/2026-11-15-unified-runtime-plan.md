@@ -138,7 +138,7 @@ Our own design; the lesson taken from studying a local agent runtime is structur
 
 | | Cloud tier (default) | Local tier (opt-in) |
 |---|---|---|
-| Models | OpenRouter, effort presets, fallbacks | same provider interface; `openai-compatible` base URL (Ollama on `127.0.0.1:11434`, llama.cpp server with Vulkan, vLLM on a Spark-class box, a remote box) |
+| Models | OpenRouter, effort presets, fallbacks | same provider interface; `openai-compatible` base URL (Ollama on its default loopback port, llama.cpp server with Vulkan, vLLM on a Spark-class box, a remote box) |
 | Tools run in | microVM (CubeSandbox, or SPACE), deny-all egress plus approved hosts | bubblewrap + Landlock + cgroup on a per-task workspace folder; reads outside the workspace refused with a clear result; network off unless approved; or the existing device plane for another machine |
 | Who holds secrets | the host; the guest never does | the host; the sandbox gets none |
 | Approval defaults | ask for egress hosts, push/deploy, spend 80% | additionally ask for writes outside the workspace and any network |
@@ -148,7 +148,7 @@ Our own design; the lesson taken from studying a local agent runtime is structur
 
 | Machine | Probe | Model serving | Tools |
 |---|---|---|---|
-| This M1 Max / Asahi box (64 GB, Honeykrisp Vulkan, ANE) | unified memory from `/proc/meminfo`, Vulkan device list | Ollama on `:11434` (CPU on Asahi today) or llama.cpp Vulkan through `openai-compatible`; ANE only for speech models (separate from chat) | bwrap tier |
+| An Apple-silicon Linux laptop (Asahi; unified memory, Vulkan GPU, neural engine) | unified memory from `/proc/meminfo`, Vulkan device list | Ollama on its default port (CPU only on Asahi today) or llama.cpp Vulkan through `openai-compatible`; ANE only for speech models (separate from chat) | bwrap tier |
 | DGX Spark class (GB10, large unified memory, NVIDIA) | NVML / `nvidia-smi` if present, sysfs total VRAM | vLLM or llama.cpp server through `openai-compatible`; large open-weight models become eligible | bwrap tier; Docker only if the owner chose a Docker engine |
 | Any laptop, no GPU | memory only | cloud models | cloud tier |
 
@@ -207,7 +207,7 @@ One page with a left section list (top tabs on phones), one URL per section (`/s
 | 9. Integrations and MCP | connectors (Composio), MCP servers (add stdio/HTTP, tools discovered, per-tool policy), web provider (Sonar default with one key, BrowserOS, Scrapling), skills catalog and user skills folder | connectors, skills, web tools |
 | 10. Developer and SDK | API base URL, API tokens (create, scope, revoke; shown once), event stream inspector, trace switch (asks first), runtime map, "Put this online" (Cloudflare Tunnel + Access, from next-wave U6), version and update check | opsview dev routes |
 
-**Secret store.** One `SecretStore` interface with backends in order: omaseal (this owner's keyring), the OS keyring (libsecret on Linux, the existing login keychain item on macOS; never a new keychain), an environment variable (read-only, shown as "set by environment"), and a 0600 file fallback only for headless hosts, flagged in the UI. Keys are never in argv, logs or API responses; `/api/*` returns presence and a Test result only.
+**Secret store.** One `SecretStore` interface with backends in order: a host keyring helper, the OS keyring (libsecret on Linux, the existing login keychain item on macOS; never a new keychain), an environment variable (read-only, shown as "set by environment"), and a 0600 file fallback only for headless hosts, flagged in the UI. Keys are never in argv, logs or API responses; `/api/*` returns presence and a Test result only.
 
 ## 6. SDK
 
@@ -329,7 +329,7 @@ Persistence rule: the live SSE carries deltas; the stored log keeps coalesced de
 
 ## 9. UX north star: Ori Grok-like, our own design
 
-Method and limits: read only the documentation and changelog that sit on this machine under the Grok Build home that `ori` wraps (user guide, theming, permissions, plan mode, sandbox, tools, shortcuts). No prompt was sent, no session, history or credential file was opened, and `ori` itself was not run. Traits are described in my words; nothing is copied, and the visual identity here is ours (black and white, no purple; their default theme uses a magenta accent, which we do not adopt).
+Method and limits: read only the documentation and changelog distributed with that terminal agent (user guide, theming, permissions, plan mode, sandbox, tools, shortcuts). No prompt was sent, no session, history or credential file was opened, and `ori` itself was not run. Traits are described in my words; nothing is copied, and the visual identity here is ours (black and white, no purple; their default theme uses a magenta accent, which we do not adopt).
 
 | Trait observed | What it does | Our adoption (web UI) |
 |---|---|---|
@@ -382,7 +382,7 @@ Owner-run, not CI: the **capability probe** (section 8) once P1-3 lands, with a 
 - Loop tests: tool failure becomes an observation; N failures stop; step, cost and time caps; fail-closed when the sandbox is unavailable; depth-1 subagent absence.
 - Safety matrix rows from `docs/determinism.md` stay and gain unified-path variants: unapproved egress blocked, self-approval rejected, approval hash mismatch refused, secrets never in guest.
 - UI: vitest per component; axe in e2e for light, dark, `prefers-contrast: more`; hue lint; budgets (main chunk under 130 kB gzip) unchanged.
-- Local tier: bwrap tests run only where `bwrap` exists and skip loudly (not silently) elsewhere; one manual live checklist for the Asahi box and for a Spark; live rows stay out of CI.
+- Local tier: bwrap tests run only where `bwrap` exists and skip loudly (not silently) elsewhere; one manual live checklist for an Apple-silicon Linux laptop and for a Spark; live rows stay out of CI.
 - Contract tests: event schema validation on every emitter path; OpenAPI diffed in CI once it exists (phase 3).
 
 ## 12. Risks
@@ -411,7 +411,7 @@ Owner-run, not CI: the **capability probe** (section 8) once P1-3 lands, with a 
 7. **Spark**: do you have a DGX Spark to test on, or is it hypothetical for now? It changes whether P4 tuning is real work.
 8. **Demo**: keep the Cloudflare fixtures-only demo as is while this lands (recommended), or rebuild it on the new tokens in P1-7?
 9. **Naming**: public docs call the local DGX Spark/Linux product **Portable Computer** and the Mac/Windows app **Personal Computer** (Local and Hybrid modes). Which one is the parity target, or both? Recommendation: treat the shared local runtime as the target and Personal Computer's Hybrid mode as the product shape for Open Computer (cloud orchestration, local steps when allowed).
-10. **Capability probe spend**: approve a small capped run (about 15 models, one tiny request each) through `orch` to measure reasoning and tool streaming? Recommendation: yes, cap at a few cents.
+10. **Capability probe spend**: approve a small capped run (about 15 models, one tiny request each) with a capped key to measure reasoning and tool streaming? Recommendation: yes, cap at a few cents.
 11. **Always-approve mode**: allow it at all in the web UI, and never for egress and spend? Recommendation: yes, typed confirmation, scoped as stated.
 12. **ACP bridge**: want Open Computer reachable from editors and `ori` through an Agent Client Protocol endpoint in Phase 3? Recommendation: defer; our event stream and SDK come first.
 
