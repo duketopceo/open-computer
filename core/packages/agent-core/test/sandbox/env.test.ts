@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { buildSandboxEnv } from "../../src/index.ts";
+import { fakeCloudflareToken, fakeGroqKey, fakeOpenRouterKey } from "../support/fakes.ts";
 
 const HOST_ENV = {
   PATH: "/usr/bin",
   HOME: "/root",
-  OPENROUTER_API_KEY: "sk-or-v1-hostkey000000",
-  CLOUDFLARE_API_TOKEN: "cf-token-000000",
-  GROQ_API_KEY: "gsk_000000000",
+  OPENROUTER_API_KEY: fakeOpenRouterKey("hostkey000000"),
+  CLOUDFLARE_API_TOKEN: fakeCloudflareToken(),
+  GROQ_API_KEY: fakeGroqKey(),
 };
 
 /** A fake sandbox: running `env` prints whatever environment the sandbox was given. */
@@ -31,8 +32,8 @@ describe("sandbox environment guard", () => {
 
   it("drops an allowlisted variable whose value carries a known secret", () => {
     const env = buildSandboxEnv({
-      source: { PATH: "/usr/bin", TZ: "UTC-sk-or-v1-hostkey000000" },
-      secrets: ["sk-or-v1-hostkey000000"],
+      source: { PATH: "/usr/bin", TZ: `UTC-${fakeOpenRouterKey("hostkey000000")}` },
+      secrets: [fakeOpenRouterKey("hostkey000000")],
     });
     expect(env).toEqual({ PATH: "/usr/bin" });
   });

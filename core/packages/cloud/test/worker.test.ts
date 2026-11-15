@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { verifyChain, fromNdjson } from "@open-computer/agent-core";
 import { timingSafeEqualStrings } from "../src/auth.ts";
-import { api, install, readSse, seedSecrets, startTask, textTurn, TOKEN } from "./support.ts";
+import { api, fakeGenericKey, install, readSse, seedSecrets, startTask, textTurn, TOKEN } from "./support.ts";
 
 beforeEach(async () => {
   await seedSecrets();
@@ -113,7 +113,7 @@ describe("tasks and the event stream", () => {
 
   it("rejects a task body that carries a key field, and stores nothing", async () => {
     install([textTurn("x")]);
-    const res = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "g", api_key: "sk-test-1234567890" }) });
+    const res = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "g", api_key: fakeGenericKey() }) });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("keys_not_accepted");
     const nested = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "g", options: { authorization: "x" } }) });

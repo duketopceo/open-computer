@@ -93,6 +93,9 @@ export class SessionDO extends DurableObject<Env> {
   private readonly subscribers = new Set<ReadableStreamDefaultController<Uint8Array>>();
   private pendingAudit: Array<Promise<unknown>> = [];
   private sandboxes: SandboxManager | undefined;
+  /** In-flight steps by task, so a cancel can stop the model stream and the queued tool calls. */
+  private readonly aborts = new Map<string, AbortController>();
+  private readonly cancelled = new Set<string>();
   private readonly redactor = createRedactor();
   private readonly encoder = new TextEncoder();
 
@@ -119,6 +122,14 @@ export class SessionDO extends DurableObject<Env> {
   }
   protected clock(): number {
     return Date.now();
+  }
+  private abortFor(taskId: string): AbortController {
+    let c = this.aborts.get(taskId);
+    if (!c) {
+      c = new AbortController();
+      this.aborts.set(taskId, c);
+    }
+    return c;
   }
   private sandboxManager(): SandboxManager {
     this.sandboxes ??= new SandboxManager(this.makeSandboxFactory());
@@ -334,9 +345,11 @@ export class SessionDO extends DurableObject<Env> {
       guard: new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() }),
       prices: staticPriceBook({}),
       emit: (body) => {
-        this.appendEvent(taskId, body);
+        // Once cancelled, an in-flight step must not add events after the cancel.
+        if (!this.cancelled.has(taskId)) this.appendEvent(taskId, body);
       },
       now: () => this.clock(),
+      signal: this.abortFor(taskId).signal,
     };
   }
 
@@ -402,6 +415,8 @@ export class SessionDO extends DurableObject<Env> {
   async cancelTask(taskId: string): Promise<void> {
     const stored = this.loadTask(taskId);
     if (isTerminal(stored.state.status)) return;
+    this.cancelled.add(taskId);
+    this.aborts.get(taskId)?.abort();
     this.appendEvent(taskId, { type: "run", status: "cancelled", reason: "Cancelled by the user." });
     const state: AgentState = { ...stored.state, status: "cancelled", pending: undefined, remainingCalls: [] };
     this.kvSet(`task:${taskId}`, { ...stored, state } satisfies StoredTask);

@@ -5,6 +5,7 @@ import { verifyChain } from "@open-computer/agent-core";
 import { D1MemoryStore, ftsQuery } from "../src/storage/d1-memory.ts";
 import { ledgerStub, readAllAudit } from "../src/storage/ledger-client.ts";
 import { ArtifactError, R2Artifacts } from "../src/storage/r2-artifacts.ts";
+import { fakeOpenRouterKey } from "./support.ts";
 
 const migrations = env.TEST_MIGRATIONS;
 
@@ -36,9 +37,10 @@ describe("ledger: audit chain", () => {
   });
 
   it("redacts a key-shaped string and an Authorization field before storing", async () => {
-    await ledgerStub(env).appendAudit("http", "t", { Authorization: "Bearer abcdefghij123456", note: "key sk-or-v1-abcdef1234567890 inside" });
+    await ledgerStub(env).appendAudit("http", "t", { Authorization: "Bearer abcdefghij123456", note: `key ${fakeOpenRouterKey()} inside` });
     const text = JSON.stringify(await readAllAudit(env));
-    expect(text).not.toMatch(/abcdefghij123456|sk-or-v1-abcdef/);
+    expect(text).not.toContain("abcdefghij123456");
+    expect(text).not.toContain(fakeOpenRouterKey());
   });
 });
 

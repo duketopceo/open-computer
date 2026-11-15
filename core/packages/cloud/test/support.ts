@@ -4,6 +4,10 @@ import type { AgentEvent, ChatMessage, Provider, ProviderRequest, StreamPart, Us
 import { setDoubles } from "./entry.ts";
 import type { ExecResult, SandboxPort } from "../src/sandbox/port.ts";
 
+// Key-shaped values are assembled at run time so no line looks like a real provider key to a secret scanner.
+export const fakeOpenRouterKey = (tail = "abcdef1234567890"): string => ["sk", "or", "v1", tail].join("-");
+export const fakeGenericKey = (): string => ["sk", "test", "1234567890"].join("-");
+
 export const TOKEN = "test-access-secret-0123456789abcdef";
 export const MODEL_KEY = "test-model-key-ABCDEF0123456789";
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Memory, MemoryMemoryStore, ToolRegistry, createRedactor, runLoop } from "../../src/index.ts";
+import { fakeOpenRouterKey } from "../support/fakes.ts";
 import { makeHarness, textTurn, toolTurn } from "../support/harness.ts";
 
 const mem = (enabled = true, caps?: { agent_notes?: number }) =>
@@ -46,7 +47,7 @@ describe("memory tiers", () => {
   it("stores a summary that contained a key-shaped string redacted", async () => {
     const store = new MemoryMemoryStore();
     const m = new Memory({ store, enabled: true, redactor: createRedactor() });
-    await m.recordTask({ taskId: "t1", goal: "use key sk-or-v1-abcdef1234567890 for call", outcome: "ok", ts: "x" });
+    await m.recordTask({ taskId: "t1", goal: `use key ${fakeOpenRouterKey()} for call`, outcome: "ok", ts: "x" });
     expect(JSON.stringify(store.history)).not.toContain("abcdef1234567890");
   });
 

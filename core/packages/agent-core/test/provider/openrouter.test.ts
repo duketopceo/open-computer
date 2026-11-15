@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { openRouterProvider, ProviderError, type ProviderRequest, type StreamPart } from "../../src/index.ts";
 import { cassettePlayer } from "../support/cassette.ts";
+import { fakeGenericKey } from "../support/fakes.ts";
 
-const KEY = "sk-test-KEY-should-never-leak";
+const KEY = fakeGenericKey();
 
 function make(player: ReturnType<typeof cassettePlayer>) {
   return openRouterProvider({ fetch: player.fetch, baseUrl: "https://example.test/api/v1/", apiKey: () => KEY });

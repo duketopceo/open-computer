@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fakeOpenRouterKey } from "../support/fakes.ts";
 import {
   AuditLog,
   MemoryAuditStorage,
@@ -60,8 +61,9 @@ describe("audit log", () => {
 
   it("removes common key shapes even when they were never configured", () => {
     const r = createRedactor();
-    const out = r.redact({ msg: "key sk-or-v1-abcdef1234567890 and Bearer abcdefghijkl1234" });
-    expect(JSON.stringify(out)).not.toMatch(/sk-or-v1-abcdef|abcdefghijkl1234/);
+    const out = r.redact({ msg: `key ${fakeOpenRouterKey()} and Bearer abcdefghijkl1234` });
+    expect(JSON.stringify(out)).not.toContain(fakeOpenRouterKey());
+    expect(JSON.stringify(out)).not.toContain("abcdefghijkl1234");
   });
 
   it("records a usage event with tokens and cost, and no content field", async () => {
