@@ -1,6 +1,6 @@
 import type { AuditRecord, AuditStorage } from "./log.ts";
 
-export async function readAll(storage: AuditStorage, pageSize = 500): Promise<AuditRecord[]> {
+export async function readAll(storage: Pick<AuditStorage, "read">, pageSize = 500): Promise<AuditRecord[]> {
   const out: AuditRecord[] = [];
   let from = 0;
   for (;;) {

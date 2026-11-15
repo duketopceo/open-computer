@@ -101,6 +101,48 @@ describe("workflow task driver", () => {
   });
 });
 
+describe("cancel, busy sessions and exhausted retries", () => {
+  it("keeps a cancel final when it lands while a step is still waiting on the model", async () => {
+    const fx = install([textTurn("this answer arrives after the cancel")]);
+    let release!: () => void;
+    fx.script.gate = new Promise<void>((resolve) => (release = resolve));
+    const { session_id, task_id } = await startTask({ goal: "cancel mid flight" });
+    await waitFor(async () => (fx.script.calls > 0 ? true : undefined), "the model call to start");
+    expect((await api(`/v1/sessions/${session_id}/tasks/${task_id}/cancel`, { method: "POST" })).status).toBe(200);
+    release();
+    const { events } = await readSse(await api(eventsUrl(session_id)));
+    expect((await session(session_id).taskState(task_id))?.status).toBe("cancelled");
+    expect(events.some((e) => e.type === "run" && e.status === "cancelled")).toBe(true);
+    expect(events.filter((e) => e.type === "run" && e.status === "done")).toEqual([]);
+  });
+
+  it("refuses a second task in a session that still has one running", async () => {
+    install([toolTurn([{ id: "c1", name: "sandbox.exec", args: '{"command":"ls"}' }])]);
+    const { session_id } = await startTask({ goal: "first" });
+    await pendingApproval(session_id);
+    const res = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "second", session_id }) });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("session_busy");
+    const pending = await pendingApproval(session_id);
+    await decide(session_id, pending.id, { hash: pending.hash, approved: false });
+    await readSse(await api(eventsUrl(session_id)));
+  });
+
+  it("ends the task as failed, with its sandbox released, when step retries run out", async () => {
+    const fx = install([() => ({ partial: [], throwAfter: new Error("ledger unavailable") })]);
+    await using_(await introspectWorkflow(env.TASK_WORKFLOW), async (intro) => {
+      await intro.modifyAll(async (m) => {
+        await m.disableRetryDelays();
+      });
+      const { session_id, task_id } = await startTask({ goal: "always failing" });
+      const { events } = await readSse(await api(eventsUrl(session_id)));
+      expect(events.at(-1)).toMatchObject({ type: "run", status: "failed", reason: expect.stringContaining("repeated errors") });
+      expect((await session(session_id).taskState(task_id))?.status).toBe("failed");
+      expect(fx.sandboxes.get(task_id)?.destroyed).toBe(true);
+    });
+  });
+});
+
 describe("step retries", () => {
   it("shows a subscriber each delta once when a step fails mid-stream and is retried", async () => {
     const partial: StreamPart[] = [{ t: "text", text: "par" }];
@@ -143,7 +185,7 @@ describe("step retries", () => {
     const { session_id, task_id } = await startTask({ goal: "bad key" });
     const { events } = await readSse(await api(eventsUrl(session_id)));
     expect(events.some((e) => e.type === "error" && e.code === "key_invalid")).toBe(true);
-    expect(events.at(-1)).toMatchObject({ type: "memory_write" }.type === "x" ? {} : { type: "run", status: "failed" });
+    expect(events.at(-1)).toMatchObject({ type: "run", status: "failed" });
     expect(fx.script.calls).toBe(1);
     const spend = await env.DB.prepare("SELECT COUNT(*) AS n FROM spend WHERE task_id = ?").bind(task_id).first<{ n: number }>();
     expect(spend?.n).toBe(1);

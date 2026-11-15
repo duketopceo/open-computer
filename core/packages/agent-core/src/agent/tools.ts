@@ -14,6 +14,13 @@ export interface Tool {
   run(args: unknown, ctx: ToolContext): Promise<string>;
 }
 
+/** Reads a required string argument from a tool call, with a message the model can act on. */
+export function requireString(args: unknown, key: string): string {
+  const v = (args as Record<string, unknown> | null)?.[key];
+  if (typeof v !== "string") throw new Error(`"${key}" must be a string.`);
+  return v;
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
   constructor(tools: Tool[] = []) {

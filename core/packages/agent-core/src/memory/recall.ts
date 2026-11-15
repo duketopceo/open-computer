@@ -28,7 +28,7 @@ function score(query: string[], entry: HistoryEntry): number {
   return hits / Math.sqrt(doc.length);
 }
 
-/** Keyword recall over task history. Hybrid keyword plus vector search replaces this in a later PR (U20). */
+/** Keyword recall over task history, with no vector search. Uses the store's own ranked search when it has one. */
 export async function recallHistory(store: MemoryStore, query: string, limit: number): Promise<RecalledItem[]> {
   const q = terms(query);
   if (q.length === 0 || limit <= 0) return [];

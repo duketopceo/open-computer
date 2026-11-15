@@ -12,10 +12,11 @@ export async function* readSseData(body: ReadableStream<Uint8Array>): AsyncGener
       const { value, done } = await reader.read();
       if (value) buffer += decoder.decode(value, { stream: true });
       if (done) buffer += decoder.decode();
+      let start = 0;
       let nl: number;
-      while ((nl = buffer.indexOf("\n")) >= 0) {
-        let line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
+      while ((nl = buffer.indexOf("\n", start)) >= 0) {
+        let line = buffer.slice(start, nl);
+        start = nl + 1;
         if (line.endsWith("\r")) line = line.slice(0, -1);
         if (line === "") {
           if (dataLines.length > 0) {
@@ -31,6 +32,7 @@ export async function* readSseData(body: ReadableStream<Uint8Array>): AsyncGener
           dataLines.push(line.slice(5).replace(/^ /, ""));
         }
       }
+      buffer = buffer.slice(start);
       if (done) {
         if (dataLines.length > 0) {
           const payload = dataLines.join("\n");

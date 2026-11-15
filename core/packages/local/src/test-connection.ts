@@ -24,6 +24,8 @@ export interface TestConnectionInput {
 
 const ok = (message: string): PieceResult => ({ ok: true, code: "ok", message });
 const fail = (code: MessageCode): PieceResult => ({ ok: false, code, message: MESSAGES[code] });
+const transportFailure = (kind: "timeout" | "unreachable"): PieceResult =>
+  fail(kind === "timeout" ? "backend_timeout" : "backend_unreachable");
 
 async function call(
   input: TestConnectionInput,
@@ -66,7 +68,7 @@ export async function testConnection(input: TestConnectionInput): Promise<TestCo
   else if (!input.cloudSecret) backend = fail("no_cloud_secret");
   else {
     const r = await call(input, "/v1/health", "GET");
-    if ("error" in r) backend = fail(r.error === "timeout" ? "backend_timeout" : "backend_unreachable");
+    if ("error" in r) backend = transportFailure(r.error);
     else if (r.status === 401 || r.status === 403) backend = fail("backend_unauthorized");
     else if (r.status >= 200 && r.status < 300) backend = ok(MESSAGES.ok_backend);
     else backend = fail("backend_error");
@@ -80,7 +82,7 @@ export async function testConnection(input: TestConnectionInput): Promise<TestCo
 
   let model: PieceResult;
   const m = await call(input, "/v1/model/health", "GET");
-  if ("error" in m) model = fail(m.error === "timeout" ? "backend_timeout" : "backend_unreachable");
+  if ("error" in m) model = transportFailure(m.error);
   else if (m.status === 200 && m.body.ok === true) model = ok(MESSAGES.ok_model);
   else model = fail(MODEL_CODES[String(m.body.code ?? "")] ?? "model_error");
 

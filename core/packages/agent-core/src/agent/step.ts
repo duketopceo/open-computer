@@ -2,7 +2,7 @@ import { actionHash, capRaiseHash } from "../approvals/hash.ts";
 import { estimateCost } from "../cost/pricebook.ts";
 import { ProviderError, type ChatMessage, type ProviderRequest, type ToolCall } from "../provider/types.ts";
 import type { AgentDeps } from "./deps.ts";
-import type { AgentState } from "./state.ts";
+import { isTerminal, type AgentState } from "./state.ts";
 
 export type StepKind = "continue" | "awaiting_approval" | "done" | "failed" | "cancelled";
 export interface StepOutcome {
@@ -28,9 +28,7 @@ function finish(state: AgentState, deps: AgentDeps, status: "failed" | "cancelle
  */
 export async function step(input: AgentState, deps: AgentDeps): Promise<StepOutcome> {
   let state = input;
-  if (state.status === "done" || state.status === "failed" || state.status === "cancelled") {
-    return { kind: state.status, state };
-  }
+  if (isTerminal(state.status)) return { kind: state.status, state };
   if (deps.signal?.aborted) return finish(state, deps, "cancelled", "Cancelled by the user.");
 
   let approvedCallId: string | undefined;
@@ -39,7 +37,12 @@ export async function step(input: AgentState, deps: AgentDeps): Promise<StepOutc
   if (state.pending) {
     const p = state.pending;
     if (!p.outcome) return { kind: "awaiting_approval", state: { ...state, status: "waiting" } };
-    state = { ...state, pending: undefined, status: "running" };
+    state = {
+      ...state,
+      pending: undefined,
+      status: "running",
+      startedAtMs: state.startedAtMs + Math.max(0, deps.now() - p.requestedAtMs),
+    };
     if (p.outcome === "expired") return finish(state, deps, "failed", "An approval expired before anyone decided it.");
     if (p.kind === "cap_raise") {
       if (p.outcome !== "approved") return finish(state, deps, "failed", "The spend cap was not raised, so the task stopped.");
@@ -101,7 +104,7 @@ async function runCalls(start: AgentState, deps: AgentDeps, approvedCallId: stri
           deps.emit({ type: "run", status: "waiting", reason: "Waiting for approval." });
           return {
             kind: "awaiting_approval",
-            state: { ...state, status: "waiting", pending: { approvalId: record.id, kind: "tool", hash, call } },
+            state: { ...state, status: "waiting", pending: { approvalId: record.id, kind: "tool", hash, call, requestedAtMs: deps.now() } },
           };
         }
       }
@@ -163,10 +166,11 @@ async function modelTurn(start: AgentState, deps: AgentDeps, capJustRaised: bool
     return finish(state, deps, "failed", "The task ran past its time limit.");
   }
 
+  const specs = deps.tools.specs();
   const request: ProviderRequest = {
     model: state.model,
     messages: state.messages,
-    ...(deps.tools.specs().length > 0 ? { tools: deps.tools.specs() } : {}),
+    ...(specs.length > 0 ? { tools: specs } : {}),
   };
   const estimate = estimateCost(request, deps.prices);
   const stepId = `${state.taskId}:${state.stepCount}`;
@@ -185,7 +189,7 @@ async function modelTurn(start: AgentState, deps: AgentDeps, capJustRaised: bool
     deps.emit({ type: "run", status: "waiting", reason: "Waiting for approval to spend more." });
     return {
       kind: "awaiting_approval",
-      state: { ...state, status: "waiting", pending: { approvalId: record.id, kind: "cap_raise", hash, amount } },
+      state: { ...state, status: "waiting", pending: { approvalId: record.id, kind: "cap_raise", hash, amount, requestedAtMs: deps.now() } },
     };
   }
 

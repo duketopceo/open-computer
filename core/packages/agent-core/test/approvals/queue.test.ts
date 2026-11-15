@@ -100,6 +100,38 @@ describe("approvals in the loop", () => {
     short.dispose();
   });
 
+  it("does not count the wait for an approval against the wall-clock limit", async () => {
+    let t = 1_000_000;
+    const tool = echoTool("sh", "exec");
+    const h = makeHarness({
+      turns: [toolTurn([{ id: "c1", name: "sh", args: "{}" }]), textTurn("done after a long wait")],
+      tools: [tool],
+      policy: askExec,
+      limits: { wallClockMs: 15 * 60 * 1000 },
+      now: () => t,
+    });
+    const run = runLoop(h.state, h.deps);
+    const pending = await waitPending(h.queue);
+    t += 20 * 60 * 1000; // the human answers twenty minutes later
+    h.queue.decide(pending.id, { hash: pending.hash, approved: true, actor: "human" });
+    const { state } = await run;
+    expect(state.status).toBe("done");
+    h.queue.dispose();
+  });
+
+  it("still stops a task that runs past the limit while working", async () => {
+    let t = 1_000_000;
+    const h = makeHarness({
+      turns: [toolTurn([{ id: "c1", name: "echo", args: "{}" }]), textTurn("never")],
+      tools: [echoTool("echo", "read", () => ((t += 16 * 60 * 1000), "slow"))],
+      limits: { wallClockMs: 15 * 60 * 1000 },
+      now: () => t,
+    });
+    const { state } = await runLoop(h.state, h.deps);
+    expect(state.status).toBe("failed");
+    expect(state.failureReason).toContain("time limit");
+  });
+
   it("blocks a tool the policy denies without asking", async () => {
     const tool = echoTool("rm", "write");
     const h = makeHarness({

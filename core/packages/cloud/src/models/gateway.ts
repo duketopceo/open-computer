@@ -1,6 +1,6 @@
-import { OPENROUTER_BASE_URL, openRouterProvider, type FetchLike, type Provider } from "@open-computer/agent-core";
+import { OPENROUTER_BASE_URL, ProviderError, openRouterProvider, type FetchLike, type Provider } from "@open-computer/agent-core";
 import type { Env } from "../env.ts";
-import { readSecret } from "./secrets.ts";
+import { readSecret, SecretError } from "./secrets.ts";
 
 export interface ProviderTarget {
   baseUrl: string;
@@ -10,7 +10,7 @@ export interface ProviderTarget {
 /**
  * With a gateway account and id configured, calls go through Cloudflare AI Gateway's OpenRouter route
  * (logs, budgets, fallback); otherwise straight to OpenRouter. The gateway is optional.
- * The route shape follows Cloudflare's published AI Gateway pattern; U16's first real run confirms it.
+ * The route shape follows Cloudflare's published AI Gateway pattern and has not been exercised against a live gateway.
  */
 export function providerTarget(env: Pick<Env, "AI_GATEWAY_ACCOUNT" | "AI_GATEWAY_ID">): ProviderTarget {
   if (env.AI_GATEWAY_ACCOUNT && env.AI_GATEWAY_ID) {
@@ -31,6 +31,13 @@ export function buildProvider(env: Env, fetchImpl: FetchLike): Provider {
   return openRouterProvider({
     fetch: fetchImpl,
     baseUrl: target.baseUrl,
-    apiKey: () => readSecret(env.MODEL_KEY, "model_key"),
+    apiKey: async () => {
+      try {
+        return await readSecret(env.MODEL_KEY, "model_key");
+      } catch (e) {
+        if (e instanceof SecretError) throw new ProviderError("key_missing", "No model key is stored in the cloud core yet.");
+        throw e;
+      }
+    },
   });
 }

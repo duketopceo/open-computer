@@ -11,10 +11,9 @@ use shell_core::secrets::{InMemorySecrets, SecretStore, Slot};
 #[test]
 #[ignore = "needs OC_CORE_BIN pointing at a built local core"]
 fn launch_load_a_fake_secret_and_call_health() {
-    let Ok(command) = std::env::var("OC_CORE_BIN") else {
-        eprintln!("OC_CORE_BIN is not set; nothing to run");
-        return;
-    };
+    // Run explicitly with --ignored, so a missing binary is a failure, never a silent pass.
+    let command =
+        std::env::var("OC_CORE_BIN").expect("OC_CORE_BIN must point at the built sidecar");
     let token = generate_token().unwrap();
     let spec = LaunchSpec::from_command_text(&command, token).expect("OC_CORE_BIN is empty");
     let process = CoreProcess::launch(&spec).expect("sidecar did not become ready");

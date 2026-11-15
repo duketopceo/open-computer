@@ -1,6 +1,6 @@
 import { EventSequencer, type AgentEvent, type EventBody } from "../events.ts";
 import type { AgentDeps } from "./deps.ts";
-import { resolveApproval, type AgentState } from "./state.ts";
+import { isTerminal, resolveApproval, type AgentState } from "./state.ts";
 import { step } from "./step.ts";
 
 export interface RunLoopOptions {
@@ -39,7 +39,7 @@ export async function runLoop(
     const outcome = await step(state, full);
     state = outcome.state;
     await Promise.all(pendingWrites.splice(0));
-    if (outcome.kind === "done" || outcome.kind === "failed" || outcome.kind === "cancelled") break;
+    if (isTerminal(outcome.kind)) break;
     if (outcome.kind === "awaiting_approval") {
       const pending = state.pending;
       if (!pending) break;

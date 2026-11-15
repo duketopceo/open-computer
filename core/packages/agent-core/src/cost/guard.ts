@@ -1,6 +1,6 @@
 /**
  * Spend caps that reserve before they spend. The ledger port is the only place totals live, so a
- * Cloudflare deployment can back it with a single serialized writer (U9) while tests use the in-memory one.
+ * Cloudflare deployment can back it with a single serialized writer while tests use the in-memory one.
  */
 
 export interface LedgerPort {
@@ -124,11 +124,7 @@ export class CostGuard {
   }
 
   async totals(taskId: string): Promise<{ task: number; day: number; taskCap: number; dayCap: number | null }> {
-    return {
-      task: await this.ledger.taskSpent(taskId),
-      day: await this.ledger.daySpent(this.day()),
-      taskCap: await this.taskCap(taskId),
-      dayCap: this.config.dayCap,
-    };
+    const [task, day, taskCap] = await Promise.all([this.ledger.taskSpent(taskId), this.ledger.daySpent(this.day()), this.taskCap(taskId)]);
+    return { task, day, taskCap, dayCap: this.config.dayCap };
   }
 }

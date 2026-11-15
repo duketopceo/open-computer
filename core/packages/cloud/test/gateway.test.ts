@@ -1,6 +1,6 @@
 import { env } from "./env.ts";
 import { describe, expect, it } from "vitest";
-import { OPENROUTER_BASE_URL, type FetchLike } from "@open-computer/agent-core";
+import { OPENROUTER_BASE_URL, ProviderError, type FetchLike } from "@open-computer/agent-core";
 import { buildProvider, providerTarget } from "../src/models/gateway.ts";
 import { readSecret, SecretError } from "../src/models/secrets.ts";
 import { MODEL_KEY, seedSecrets } from "./support.ts";
@@ -59,10 +59,10 @@ describe("provider from the secret store", () => {
   it("fails with a typed missing-secret error that names the slot when no key is stored", async () => {
     const noKey = { ...env, MODEL_KEY: { get: async () => "" } as unknown as SecretsStoreSecret };
     const provider = buildProvider(noKey, async () => new Response(""));
-    await expect(
-      (async () => {
-        for await (const _ of provider({ model: "m", messages: [] })) void _;
-      })(),
-    ).rejects.toThrow(/"model_key"/);
+    const err = await (async () => {
+      for await (const _ of provider({ model: "m", messages: [] })) void _;
+    })().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err).toMatchObject({ code: "key_missing" });
   });
 });

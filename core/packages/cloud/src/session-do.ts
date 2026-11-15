@@ -19,6 +19,9 @@ import {
   type EventBody,
   type Provider,
   type StepKind,
+  DEFAULT_APPROVAL_TTL_MS,
+  isTerminal,
+  type ApprovalOutcome,
 } from "@open-computer/agent-core";
 import type { Env } from "./env.ts";
 import { buildProvider } from "./models/gateway.ts";
@@ -29,8 +32,6 @@ import { ledgerPort, ledgerStub } from "./storage/ledger-client.ts";
 
 const BASE_SYSTEM =
   "You are Open Computer, an agent that finishes tasks for the user. Use the tools you are given, one step at a time, and say plainly when you are done.";
-const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
-const TERMINAL = new Set(["done", "failed", "cancelled"]);
 
 export interface StartTaskInput {
   taskId: string;
@@ -49,7 +50,7 @@ export interface RunStepResult {
 
 export type DecisionResult =
   | { ok: true; outcome: "approved" | "denied" }
-  | { ok: false; reason: "unknown" | "hash_mismatch" | "already_decided" | "expired" };
+  | { ok: false; reason: "unknown" | "hash_mismatch" | "already_decided" | "expired" | "workflow_unavailable" };
 
 interface StoredTask {
   state: AgentState;
@@ -119,6 +120,16 @@ export class SessionDO extends DurableObject<Env> {
   protected clock(): number {
     return Date.now();
   }
+  private sandboxManager(): SandboxManager {
+    this.sandboxes ??= new SandboxManager(this.makeSandboxFactory());
+    return this.sandboxes;
+  }
+  private nowIso(): string {
+    return new Date(this.clock()).toISOString();
+  }
+  private memoryFor(enabled: boolean): Memory {
+    return new Memory({ store: new D1MemoryStore(this.env.DB), enabled, redactor: this.redactor });
+  }
 
   // ---- storage helpers ----
 
@@ -148,15 +159,16 @@ export class SessionDO extends DurableObject<Env> {
     }
   }
 
-  private frame(event: AgentEvent): string {
-    return `id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`;
+  private frame(seq: number, json: string): string {
+    return `id: ${seq}\ndata: ${json}\n\n`;
   }
 
   private appendEvent(taskId: string, body: EventBody): AgentEvent {
-    const event = { ...body, task_id: taskId, seq: this.nextSeq, ts: new Date(this.clock()).toISOString() } as AgentEvent;
+    const event = { ...body, task_id: taskId, seq: this.nextSeq, ts: this.nowIso() } as AgentEvent;
     this.nextSeq += 1;
-    this.ctx.storage.sql.exec("INSERT INTO events (seq, task_id, json) VALUES (?, ?, ?)", event.seq, taskId, JSON.stringify(event));
-    this.broadcast(this.frame(event));
+    const json = JSON.stringify(event);
+    this.ctx.storage.sql.exec("INSERT INTO events (seq, task_id, json) VALUES (?, ?, ?)", event.seq, taskId, json);
+    this.broadcast(this.frame(event.seq, json));
     const entry = auditEntryForEvent(event, false);
     if (entry) this.pendingAudit.push(ledgerStub(this.env).appendAudit(entry.kind, entry.taskId, this.redactor.redact(entry.data)));
     return event;
@@ -204,7 +216,7 @@ export class SessionDO extends DurableObject<Env> {
       start: (controller) => {
         self = controller;
         controller.enqueue(this.encoder.encode(": open\n\n"));
-        for (const e of backlog) controller.enqueue(this.encoder.encode(this.frame(e)));
+        for (const e of backlog) controller.enqueue(this.encoder.encode(this.frame(e.seq, JSON.stringify(e))));
         if (closeAfterBacklog) controller.close();
         else this.subscribers.add(controller);
       },
@@ -231,7 +243,7 @@ export class SessionDO extends DurableObject<Env> {
           input.summary,
           input.amount ?? null,
           now,
-          now + APPROVAL_TTL_MS,
+          now + DEFAULT_APPROVAL_TTL_MS,
         );
         return this.getApproval(id) as ApprovalRecord;
       },
@@ -268,14 +280,22 @@ export class SessionDO extends DurableObject<Env> {
       ledgerStub(this.env).appendAudit("approval.decided", record.taskId, { approval_id: approvalId, outcome: verdict.next, kind: record.kind }),
     );
     await this.flushAudit();
-    await (await this.env.TASK_WORKFLOW.get(record.taskId)).sendEvent({ type: "approval", payload: { approvalId, outcome: verdict.next } });
+    try {
+      await (await this.env.TASK_WORKFLOW.get(record.taskId)).sendEvent({ type: "approval", payload: { approvalId, outcome: verdict.next } });
+    } catch {
+      // The Workflow was not told, so the decision must stay open: a repeat with the same hash can still land.
+      this.ctx.storage.sql.exec("UPDATE approvals SET state = 'requested' WHERE id = ?", approvalId);
+      return { ok: false, reason: "workflow_unavailable" };
+    }
     return { ok: true, outcome: verdict.next };
   }
 
   // ---- tasks ----
 
-  async startTask(input: StartTaskInput): Promise<{ taskId: string }> {
-    const memory = new Memory({ store: new D1MemoryStore(this.env.DB), enabled: input.memoryEnabled, redactor: this.redactor });
+  /** One task at a time per session: a second one would share the event log and close the first one's stream. */
+  async startTask(input: StartTaskInput): Promise<{ taskId: string } | { busy: true }> {
+    if (this.kvGet<boolean>("settled") === false) return { busy: true };
+    const memory = this.memoryFor(input.memoryEnabled);
     const prepared = await memory.prepare(input.goal);
     const system = prepared.section ? `${BASE_SYSTEM}\n\n${prepared.section}` : BASE_SYSTEM;
     const state = createState({
@@ -290,7 +310,7 @@ export class SessionDO extends DurableObject<Env> {
     this.kvSet(`task:${input.taskId}`, { state, meta } satisfies StoredTask);
     this.kvSet("settled", false);
     await this.env.DB.prepare("INSERT INTO tasks (task_id, session_id, goal, status, created_at) VALUES (?, ?, ?, 'running', ?)")
-      .bind(input.taskId, input.sessionId, input.goal, new Date(this.clock()).toISOString())
+      .bind(input.taskId, input.sessionId, input.goal, this.nowIso())
       .run();
     this.appendEvent(input.taskId, { type: "run", status: "running" });
     if (prepared.recalled.length > 0) {
@@ -304,11 +324,11 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   private depsFor(taskId: string, stored: StoredTask): AgentDeps {
-    const memory = new Memory({ store: new D1MemoryStore(this.env.DB), enabled: stored.meta.memoryEnabled, redactor: this.redactor });
-    this.sandboxes ??= new SandboxManager(this.makeSandboxFactory());
+    const memory = this.memoryFor(stored.meta.memoryEnabled);
+    const sandboxes = this.sandboxManager();
     return {
       provider: this.makeProvider(),
-      tools: new ToolRegistry([...memory.tools(), ...sandboxTools(this.sandboxes, taskId)]),
+      tools: new ToolRegistry([...memory.tools(), ...sandboxTools(sandboxes, taskId)]),
       policy: defaultPolicy,
       approvals: this.approvalRequester(),
       guard: new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() }),
@@ -343,9 +363,15 @@ export class SessionDO extends DurableObject<Env> {
     const stored = this.loadTask(taskId);
     const outcome = await step(stored.state, this.depsFor(taskId, stored));
     await this.flushAudit();
+    // A cancel can land while the step awaits the model or a tool; the cancel is final, so this outcome is dropped.
+    if (isTerminal(this.loadTask(taskId).state.status)) {
+      const cancelled: RunStepResult = { kind: "cancelled" };
+      sql.exec("UPDATE steps SET result = ? WHERE step_key = ?", JSON.stringify(cancelled), stepKey);
+      return cancelled;
+    }
     this.kvSet(`task:${taskId}`, { ...stored, state: outcome.state } satisfies StoredTask);
 
-    if (TERMINAL.has(outcome.kind)) await this.finalize(taskId, stored, outcome.state);
+    if (isTerminal(outcome.kind)) await this.finalize(taskId, stored, outcome.state);
     const result: RunStepResult = {
       kind: outcome.kind,
       ...(outcome.state.pending ? { approvalId: outcome.state.pending.approvalId } : {}),
@@ -355,7 +381,7 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /** Records the human decision on the task state so the next step acts on it. Idempotent. */
-  async resolvePendingApproval(taskId: string, approvalId: string, outcome: "approved" | "denied" | "expired"): Promise<void> {
+  async resolvePendingApproval(taskId: string, approvalId: string, outcome: ApprovalOutcome): Promise<void> {
     const stored = this.loadTask(taskId);
     if (stored.state.pending?.approvalId !== approvalId || stored.state.pending.outcome) return;
     if (outcome === "expired") this.ctx.storage.sql.exec("UPDATE approvals SET state = 'expired' WHERE id = ? AND state = 'requested'", approvalId);
@@ -375,7 +401,7 @@ export class SessionDO extends DurableObject<Env> {
 
   async cancelTask(taskId: string): Promise<void> {
     const stored = this.loadTask(taskId);
-    if (TERMINAL.has(stored.state.status)) return;
+    if (isTerminal(stored.state.status)) return;
     this.appendEvent(taskId, { type: "run", status: "cancelled", reason: "Cancelled by the user." });
     const state: AgentState = { ...stored.state, status: "cancelled", pending: undefined, remainingCalls: [] };
     this.kvSet(`task:${taskId}`, { ...stored, state } satisfies StoredTask);
@@ -388,21 +414,32 @@ export class SessionDO extends DurableObject<Env> {
     }
   }
 
+  /** Ends a task that can no longer make progress (retries exhausted, Workflow could not start). */
+  async failTask(taskId: string, reason: string): Promise<void> {
+    const stored = this.loadTask(taskId);
+    if (isTerminal(stored.state.status)) return;
+    this.appendEvent(taskId, { type: "run", status: "failed", reason });
+    const state: AgentState = { ...stored.state, status: "failed", failureReason: reason, pending: undefined, remainingCalls: [] };
+    this.kvSet(`task:${taskId}`, { ...stored, state } satisfies StoredTask);
+    await this.flushAudit().catch(() => undefined);
+    await this.finalize(taskId, stored, state);
+  }
+
   private async finalize(taskId: string, stored: StoredTask, state: AgentState): Promise<void> {
     await this.env.DB.prepare("UPDATE tasks SET status = ? WHERE task_id = ?").bind(state.status, taskId).run();
     if (state.status === "done") {
-      const memory = new Memory({ store: new D1MemoryStore(this.env.DB), enabled: stored.meta.memoryEnabled, redactor: this.redactor });
+      const memory = this.memoryFor(stored.meta.memoryEnabled);
       const last = [...state.messages].reverse().find((m) => m.role === "assistant");
       const id = await memory.recordTask({
         taskId,
         goal: stored.meta.goal,
         outcome: typeof last?.content === "string" ? last.content.slice(0, 500) : "Finished.",
-        ts: new Date(this.clock()).toISOString(),
+        ts: this.nowIso(),
       });
       if (id) this.appendEvent(taskId, { type: "memory_write", id, tier: "history" });
       await this.flushAudit();
     }
-    await this.sandboxes?.release(taskId);
+    await this.sandboxManager().release(taskId);
     this.kvSet("settled", true);
     this.closeSubscribers();
   }

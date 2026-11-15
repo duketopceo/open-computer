@@ -62,6 +62,8 @@ export interface Script {
   turns: Array<StreamPart[] | ((attempt: number) => StreamPart[] | { partial: StreamPart[]; throwAfter: Error })>;
   requests: ProviderRequest[];
   calls: number;
+  /** When set, the provider waits for it before streaming, which holds a step in flight. */
+  gate?: Promise<void>;
 }
 
 export function scriptedProvider(script: Script): Provider {
@@ -69,6 +71,7 @@ export function scriptedProvider(script: Script): Provider {
     script.requests.push(JSON.parse(JSON.stringify(request)) as ProviderRequest);
     const index = Math.min(script.calls, script.turns.length - 1);
     script.calls += 1;
+    if (script.gate) await script.gate;
     const entry = script.turns[index];
     const turn = typeof entry === "function" ? entry(script.calls) : entry;
     if (!turn) return;

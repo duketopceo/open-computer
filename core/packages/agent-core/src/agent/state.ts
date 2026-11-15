@@ -1,4 +1,5 @@
-import type { ApprovalKind } from "../approvals/queue.ts";
+import type { ApprovalKind, ApprovalOutcome } from "../approvals/queue.ts";
+import type { RunStatus } from "../events.ts";
 import type { ChatMessage, ToolCall } from "../provider/types.ts";
 
 export interface AgentLimits {
@@ -16,11 +17,17 @@ export interface PendingApproval {
   /** For a tool approval: the call being gated. For a cap raise: the dollars to add. */
   call?: ToolCall;
   amount?: number;
+  /** When the approval was requested; the wait is not counted against the wall-clock limit. */
+  requestedAtMs: number;
   /** Set by `resolveApproval` once a human decided. */
-  outcome?: "approved" | "denied" | "expired";
+  outcome?: ApprovalOutcome;
 }
 
-export type TaskStatus = "running" | "waiting" | "done" | "failed" | "cancelled";
+export type TaskStatus = RunStatus;
+
+export function isTerminal(status: string): status is "done" | "failed" | "cancelled" {
+  return status === "done" || status === "failed" || status === "cancelled";
+}
 
 /** Plain data only, so a durable driver can persist it and resume in another process. */
 export interface AgentState {
@@ -68,7 +75,7 @@ export function createState(input: CreateStateInput): AgentState {
 }
 
 /** Records the human decision on the pending approval so the next step can act on it. */
-export function resolveApproval(state: AgentState, outcome: "approved" | "denied" | "expired"): AgentState {
+export function resolveApproval(state: AgentState, outcome: ApprovalOutcome): AgentState {
   if (!state.pending) return state;
   return { ...state, status: "running", pending: { ...state.pending, outcome } };
 }

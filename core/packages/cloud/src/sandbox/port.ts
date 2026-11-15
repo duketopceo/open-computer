@@ -1,4 +1,4 @@
-import type { Tool } from "@open-computer/agent-core";
+import { requireString as str, type Tool } from "@open-computer/agent-core";
 
 export interface ExecResult {
   stdout: string;
@@ -22,6 +22,7 @@ export const MAX_FILE_BYTES = 1024 * 1024;
 export class SandboxManager {
   private readonly factory: SandboxFactory;
   private readonly live = new Map<string, Promise<SandboxPort>>();
+  private readonly released = new Set<string>();
   constructor(factory: SandboxFactory) {
     this.factory = factory;
   }
@@ -33,18 +34,17 @@ export class SandboxManager {
     }
     return p;
   }
+  /**
+   * Destroys the task's sandbox. The live map lives in one Durable Object instance, which can be evicted while
+   * a task waits for an approval, so with no live entry the sandbox is addressed by task id and destroyed anyway.
+   */
   async release(taskId: string): Promise<void> {
+    if (this.released.has(taskId)) return;
+    this.released.add(taskId);
     const p = this.live.get(taskId);
-    if (!p) return;
     this.live.delete(taskId);
-    await (await p).destroy();
+    await (await (p ?? this.factory(taskId))).destroy();
   }
-}
-
-function str(args: unknown, key: string): string {
-  const v = (args as Record<string, unknown> | null)?.[key];
-  if (typeof v !== "string") throw new Error(`"${key}" must be a string.`);
-  return v;
 }
 
 /** Sandbox tools. Exec and write ask for approval under the default policy; read does not. */

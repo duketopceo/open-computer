@@ -93,7 +93,7 @@ impl App {
         match self.store.set(slot, &edit.text) {
             Ok(()) => {
                 edit.replace_text("");
-                self.onboarding.set_secret_flag(slot, true);
+                self.onboarding.secret_saved(slot);
                 true
             }
             Err(e) => {

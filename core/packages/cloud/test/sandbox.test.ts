@@ -31,6 +31,20 @@ describe("sandbox manager and tools", () => {
     await m.release("task-a"); // releasing twice is harmless
   });
 
+  it("destroys a task's sandbox by task id when this instance never held it (the Durable Object was evicted)", async () => {
+    const made: FakeSandbox[] = [];
+    const m = new SandboxManager(() => {
+      const s = new FakeSandbox();
+      made.push(s);
+      return s;
+    });
+    await m.release("task-from-another-instance");
+    expect(made).toHaveLength(1);
+    expect(made[0]?.destroyed).toBe(true);
+    await m.release("task-from-another-instance"); // and only once
+    expect(made).toHaveLength(1);
+  });
+
   it("returns stdout, stderr and the exit code, and turns a nonzero exit into an error observation", async () => {
     const m = new SandboxManager(() => ({
       exec: async (cmd: string) => (cmd === "false" ? { stdout: "", stderr: "boom", exitCode: 1 } : { stdout: "ok", stderr: "", exitCode: 0 }),

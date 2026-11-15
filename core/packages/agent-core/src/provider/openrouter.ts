@@ -230,6 +230,19 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
     }
     if (signal?.aborted) return;
 
+    if (finish === null || finish === "length") {
+      yield {
+        t: "error",
+        code: "provider_stream_error",
+        message:
+          finish === "length"
+            ? "The model's answer was cut off by its output limit."
+            : "The response ended before the model finished.",
+        retryable: false,
+      };
+      return;
+    }
+
     const ordered = [...calls.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c);
     const message: Extract<ChatMessage, { role: "assistant" }> = {
       role: "assistant",

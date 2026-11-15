@@ -14,9 +14,12 @@ afterEach(async () => {
 });
 
 /** A fake cloud core: maps path to a JSON response, or throws for network failure. */
+const seenAuth: string[] = [];
+
 function fakeCloud(routes: Record<string, { status?: number; body: unknown } | "unreachable" | "hang">): FetchLike {
   return async (url, init) => {
     const path = new URL(url).pathname;
+    seenAuth.push(new Headers(init.headers).get("authorization") ?? "");
     const spec = routes[path];
     if (spec === "unreachable" || !spec) throw new TypeError("fetch failed");
     if (spec === "hang") {
@@ -157,6 +160,64 @@ describe("local core server", () => {
     expect(body.backend?.ok).toBe(true);
     expect(body.model?.ok).toBe(true);
     expect(body.memory).toMatchObject({ ok: false, code: "memory_failed" });
+  });
+
+  it("sends the loaded cloud access secret as the bearer on all three cloud calls", async () => {
+    seenAuth.length = 0;
+    const { req } = await configured(CLOUD_OK);
+    await req("/v1/test-connection", { method: "POST" });
+    expect(seenAuth).toEqual(Array(3).fill("Bearer placeholder-not-a-real-secret"));
+  });
+
+  it("maps each failure to its plain-words code", async () => {
+    const cases: Array<[Record<string, never> | Record<string, unknown>, string, string]> = [
+      [{ "/v1/health": { status: 401, body: {} } }, "backend", "backend_unauthorized"],
+      [{ "/v1/health": { status: 403, body: {} } }, "backend", "backend_unauthorized"],
+      [{ "/v1/health": { status: 500, body: {} } }, "backend", "backend_error"],
+      [{ "/v1/health": { body: { ok: true } }, "/v1/model/health": { body: { ok: false, code: "key_missing" } }, "/v1/memory/probe": { body: { ok: true } } }, "model", "model_key_missing"],
+      [{ "/v1/health": { body: { ok: true } }, "/v1/model/health": { body: { ok: false, code: "payment_required" } }, "/v1/memory/probe": { body: { ok: true } } }, "model", "model_no_credit"],
+      [{ "/v1/health": { body: { ok: true } }, "/v1/model/health": { body: { ok: false, code: "rate_limited" } }, "/v1/memory/probe": { body: { ok: true } } }, "model", "model_rate_limited"],
+      [{ "/v1/health": { body: { ok: true } }, "/v1/model/health": { body: { ok: false, code: "surprise" } }, "/v1/memory/probe": { body: { ok: true } } }, "model", "model_error"],
+    ];
+    for (const [routes, piece, code] of cases) {
+      const { req } = await configured(fakeCloud(routes as Parameters<typeof fakeCloud>[0]));
+      const body = (await (await req("/v1/test-connection", { method: "POST" })).json()) as Record<string, { code: string }>;
+      expect(body[piece]?.code, code).toBe(code);
+    }
+  });
+
+  it("reports a missing address and a missing secret before calling anything", async () => {
+    seenAuth.length = 0;
+    const noUrl = await boot(CLOUD_OK);
+    const a = (await (await noUrl.req("/v1/test-connection", { method: "POST" })).json()) as Record<string, { code: string }>;
+    expect(a.backend?.code).toBe("no_cloud_url");
+    const noSecret = await boot(CLOUD_OK);
+    await noSecret.req("/v1/settings", { method: "PUT", body: JSON.stringify({ cloud_url: "https://core.example.com" }) });
+    const b = (await (await noSecret.req("/v1/test-connection", { method: "POST" })).json()) as Record<string, { code: string }>;
+    expect(b.backend?.code).toBe("no_cloud_secret");
+    expect(seenAuth).toEqual([]);
+  });
+
+  it("with memory off the memory piece passes as off, both when healthy and when the backend is down", async () => {
+    const healthy = await configured(CLOUD_OK, { memory_enabled: false });
+    const ok = (await (await healthy.req("/v1/test-connection", { method: "POST" })).json()) as Record<string, { ok: boolean; code: string }>;
+    expect(ok.memory).toMatchObject({ ok: true, code: "ok" });
+    const down = await configured(fakeCloud({ "/v1/health": "unreachable" }), { memory_enabled: false });
+    const bad = (await (await down.req("/v1/test-connection", { method: "POST" })).json()) as Record<string, { ok: boolean }>;
+    expect(bad.memory?.ok).toBe(true);
+    expect(bad.backend?.ok).toBe(false);
+  });
+
+  it("only accepts an https cloud address, or http on this computer, because the secret is sent there", async () => {
+    const { req } = await boot();
+    for (const url of ["http://core.example.com", "ftp://x", "not a url", "javascript:alert(1)", 42]) {
+      const res = await req("/v1/settings", { method: "PUT", body: JSON.stringify({ cloud_url: url }) });
+      expect(res.status, String(url)).toBe(400);
+    }
+    for (const url of ["https://core.example.com", "http://127.0.0.1:8787", "http://localhost:8787", null]) {
+      const res = await req("/v1/settings", { method: "PUT", body: JSON.stringify({ cloud_url: url }) });
+      expect(res.status, String(url)).toBe(200);
+    }
   });
 
   it("refuses to bind a non-loopback address even when asked", async () => {

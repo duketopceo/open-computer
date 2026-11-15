@@ -2,6 +2,7 @@ import { Files } from "@cloudflare/sandbox";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { buildSandboxEnv } from "@open-computer/agent-core";
 import type { Env } from "../env.ts";
+import { ledgerStub } from "../storage/ledger-client.ts";
 import { createOutboundHandler, type OutboundRule } from "./outbound.ts";
 import type { ExecResult } from "./port.ts";
 
@@ -52,13 +53,12 @@ export class Sandbox extends DurableObject<Env> {
 /** Outbound credential handler bound to the Container. Hosts and secret names are configuration, not code. */
 export class OutboundProxy extends WorkerEntrypoint<Env, { taskId: string }> {
   override async fetch(request: Request): Promise<Response> {
-    const rules: OutboundRule[] = []; // First PR: no credentialed hosts are enabled; every request is denied and audited.
+    const rules: OutboundRule[] = []; // No credentialed hosts are configured: every request is denied and audited.
     const handler = createOutboundHandler({
       rules,
       upstream: (r) => fetch(r),
       audit: async (kind, data) => {
-        const ledger = this.env.LEDGER.get(this.env.LEDGER.idFromName("ledger"));
-        await ledger.appendAudit(kind, this.ctx.props.taskId, data);
+        await ledgerStub(this.env).appendAudit(kind, this.ctx.props.taskId, data);
       },
     });
     return handler(request);

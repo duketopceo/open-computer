@@ -206,6 +206,12 @@ impl Onboarding {
         }
     }
 
+    /// A secret was just stored (possibly replacing one). Whatever the test proved no longer holds.
+    pub fn secret_saved(&mut self, slot: Slot) {
+        self.set_secret_flag(slot, true);
+        self.test = None;
+    }
+
     /// Read the set flags from a store. Values are not kept.
     pub fn sync_secrets(&mut self, store: &dyn SecretStore) {
         for slot in Slot::ALL {
@@ -412,6 +418,16 @@ mod tests {
         assert_eq!(o.advance(), Ok(Step::Memory));
         assert_eq!(o.advance(), Ok(Step::Test));
         o
+    }
+
+    #[test]
+    fn replacing_a_secret_after_a_passing_test_requires_testing_again() {
+        let mut o = ready_for_test();
+        o.record_test(result(true, true, true)).unwrap();
+        assert!(o.test_passed());
+        o.secret_saved(Slot::CloudAccess);
+        assert!(!o.test_passed());
+        assert_eq!(o.advance(), Err(StepError::TestNotPassed));
     }
 
     #[test]

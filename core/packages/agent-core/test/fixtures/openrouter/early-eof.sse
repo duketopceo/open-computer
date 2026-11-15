@@ -1,0 +1,4 @@
+: synthetic cassette, hand-authored from the documented OpenRouter chunk shapes
+
+data: {"id":"gen-7","choices":[{"index":0,"delta":{"role":"assistant","content":"Half an ans"},"finish_reason":null}]}
+

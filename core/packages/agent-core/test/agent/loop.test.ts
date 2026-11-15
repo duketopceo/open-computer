@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { runLoop, type AgentEvent } from "../../src/index.ts";
@@ -113,7 +113,7 @@ describe("agent loop", () => {
     const { events } = await runLoop(h.state, h.deps);
     const actual = JSON.stringify(events.map(({ ts: _ts, ...rest }) => rest), null, 2) + "\n";
     const path = fileURLToPath(new URL("../fixtures/golden/tool-roundtrip.events.json", import.meta.url));
-    if (process.env.UPDATE_GOLDEN === "1" || !existsSync(path)) writeFileSync(path, actual);
+    if (process.env.UPDATE_GOLDEN === "1") writeFileSync(path, actual);
     expect(actual).toBe(readFileSync(path, "utf8"));
   });
 });

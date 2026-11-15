@@ -1,6 +1,10 @@
-export type ApprovalKind = "tool" | "cap_raise";
-export type ApprovalState = "requested" | "approved" | "denied" | "expired";
-export type ApprovalOutcome = "approved" | "denied" | "expired";
+import type { APPROVAL_KINDS, APPROVAL_STATES } from "../events.ts";
+
+export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
+export type ApprovalState = (typeof APPROVAL_STATES)[number];
+export type ApprovalOutcome = Exclude<ApprovalState, "requested">;
+
+export const DEFAULT_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface ApprovalRecord {
   id: string;
@@ -74,7 +78,7 @@ export class ApprovalQueue {
   private readonly newId: () => string;
 
   constructor(options: ApprovalQueueOptions = {}) {
-    this.ttlMs = options.ttlMs ?? 24 * 60 * 60 * 1000;
+    this.ttlMs = options.ttlMs ?? DEFAULT_APPROVAL_TTL_MS;
     this.now = options.now ?? (() => Date.now());
     this.newId = options.newId ?? (() => crypto.randomUUID());
     this.requester = {

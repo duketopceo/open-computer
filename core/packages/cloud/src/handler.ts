@@ -85,7 +85,7 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
         const model = typeof body.model === "string" && body.model !== "" ? body.model : env.DEFAULT_MODEL;
         const taskId = crypto.randomUUID();
         const session = env.SESSION.get(env.SESSION.idFromName(sessionId));
-        await session.startTask({
+        const started = await session.startTask({
           taskId,
           sessionId,
           goal: body.goal,
@@ -94,7 +94,15 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
           dayCap,
           memoryEnabled: body.memory !== false,
         });
-        await env.TASK_WORKFLOW.create({ id: taskId, params: { sessionId, taskId } });
+        if ("busy" in started) {
+          return problem(409, "session_busy", "This session already has a task running. Wait for it to finish or start a new session.");
+        }
+        try {
+          await env.TASK_WORKFLOW.create({ id: taskId, params: { sessionId, taskId } });
+        } catch {
+          await session.failTask(taskId, "The task could not be started.");
+          return problem(503, "workflow_unavailable", "The task could not be started. Try again shortly.");
+        }
         return json({ task_id: taskId, session_id: sessionId }, 202);
       }
 
@@ -123,7 +131,7 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
           }
           const result = await session.decideApproval(approval[1] as string, { hash: body.hash, approved: body.approved });
           if (result.ok) return json({ ok: true, outcome: result.outcome });
-          const status = result.reason === "unknown" ? 404 : 409;
+          const status = result.reason === "unknown" ? 404 : result.reason === "workflow_unavailable" ? 503 : 409;
           return problem(status, result.reason, `The approval was not recorded: ${result.reason.replace("_", " ")}.`);
         }
         const cancel = /^tasks\/([^/]+)\/cancel$/.exec(rest);
@@ -156,7 +164,11 @@ async function modelHealth(env: Env, fetchImpl: FetchLike): Promise<Response> {
   }
   try {
     // Key-info request: proves the key is valid without spending anything.
-    const res = await fetchImpl(`${OPENROUTER_BASE_URL}/key`, { method: "GET", headers: { authorization: `Bearer ${key}` } });
+    const res = await fetchImpl(`${OPENROUTER_BASE_URL}/key`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(4000),
+    });
     if (res.status >= 200 && res.status < 300) return json({ ok: true });
     if (res.status === 401 || res.status === 403) return json({ ok: false, code: "key_invalid" });
     if (res.status === 402) return json({ ok: false, code: "payment_required" });

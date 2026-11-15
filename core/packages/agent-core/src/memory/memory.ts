@@ -1,4 +1,4 @@
-import type { Tool } from "../agent/tools.ts";
+import { requireString, type Tool } from "../agent/tools.ts";
 import type { Redactor } from "../audit/redact.ts";
 import { createRedactor } from "../audit/redact.ts";
 import { BlockManager } from "./blocks.ts";
@@ -64,11 +64,7 @@ export class Memory {
       risk: "write" as const,
       trusted: true,
     });
-    const str = (v: unknown, k: string): string => {
-      const x = (v as Record<string, unknown> | null)?.[k];
-      if (typeof x !== "string") throw new Error(`"${k}" must be a string.`);
-      return x;
-    };
+    const str = requireString;
     const blk = (v: unknown): BlockName => {
       const b = str(v, "block");
       if (!(BLOCK_NAMES as readonly string[]).includes(b)) throw new Error(`"block" must be one of ${BLOCK_NAMES.join(", ")}.`);

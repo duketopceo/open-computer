@@ -31,6 +31,17 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
+/** The access secret is sent to this address, so it must be https, or plain http only to this computer. */
+export function isAllowedCloudUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === "https:" || (u.protocol === "http:" && LOOPBACK.has(u.hostname));
+  } catch {
+    return false;
+  }
+}
+
 function safeEqual(a: string, b: string): boolean {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -68,7 +79,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
     cloud_url: settings.cloud_url,
     model: settings.model,
     memory_enabled: settings.memory_enabled,
-    secrets_set: { cloud_access: secrets.has("cloud_access"), model_key: secrets.has("model_key") },
+    secrets_set: Object.fromEntries(SECRET_SLOTS.map((slot) => [slot, secrets.has(slot)])),
   });
 
   const server = createServer(async (req, res) => {
@@ -91,8 +102,8 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
         if ("model" in body && (typeof body.model !== "string" || body.model === "")) {
           return err(res, 400, "bad_request", "model must be a non-empty string.");
         }
-        if ("cloud_url" in body && body.cloud_url !== null && typeof body.cloud_url !== "string") {
-          return err(res, 400, "bad_request", "cloud_url must be a string or null.");
+        if ("cloud_url" in body && body.cloud_url !== null && !isAllowedCloudUrl(body.cloud_url)) {
+          return err(res, 400, "bad_request", "cloud_url must be an https address, or http on this computer.");
         }
         settings = { ...settings, ...(body as Partial<Settings>) };
         return send(res, 200, settingsBody());

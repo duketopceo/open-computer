@@ -91,6 +91,18 @@ describe("openrouter provider (cassettes)", () => {
     expect(err.message).toContain("Upstream provider dropped the connection");
   });
 
+  it("reports a response cut off by the output limit as an error, never as a finished answer", async () => {
+    const parts = await collect(make(cassettePlayer([{ cassette: "truncated-length" }]))(baseRequest));
+    expect(parts.map((p) => p.t)).toEqual(["text", "error"]);
+    expect(parts[1]).toMatchObject({ t: "error", message: expect.stringContaining("cut off") });
+  });
+
+  it("reports a stream that ends with no finish reason as an error, never as a finished answer", async () => {
+    const parts = await collect(make(cassettePlayer([{ cassette: "early-eof" }]))(baseRequest));
+    expect(parts.map((p) => p.t)).toEqual(["text", "error"]);
+    expect(parts.some((p) => p.t === "done")).toBe(false);
+  });
+
   it("stops reading and yields nothing more when the signal aborts mid-stream", async () => {
     const ac = new AbortController();
     const player = cassettePlayer([{ cassette: "text-only", hangAfterChunks: 14 }]);
