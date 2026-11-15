@@ -5,7 +5,6 @@ spliced back as a user-role message immediately before the live turn."""
 
 from __future__ import annotations
 
-import pytest
 
 from services import compact as c
 

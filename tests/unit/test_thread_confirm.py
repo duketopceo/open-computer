@@ -4,7 +4,6 @@ and an always-human page state is a handoff no approval path can pass."""
 
 from __future__ import annotations
 
-import pytest
 
 from services.gate.gate import payload_hash
 from services.threads import confirm

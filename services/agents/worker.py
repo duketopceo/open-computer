@@ -192,16 +192,6 @@ class AcpWorker:
                 self._tainted.add(taint_key)
             verdict = policy.classify(tool_call, cwd, taint_key in self._tainted)
 
-            # an always-human page state (CAPTCHA, paywall, security
-            # warning, forced identity check) is the owner's to resolve:
-            # refused as a handoff before any approval path can ask
-            from services.threads.confirm import always_human, refusal as _handoff_refusal
-            marker = always_human(str(tool_call.get("rawInput") or ""))
-            if marker:
-                emit("permission", {"tool": title, "verdict": "handoff"})
-                answer(False, _handoff_refusal(marker))
-                return
-
             def answer(allow: bool, why: str):
                 want = "allow_once" if allow else "reject_once"
                 pick = next((o["optionId"] for o in options if o.get("kind") == want), None)
@@ -211,6 +201,14 @@ class AcpWorker:
 
             if verdict != "ask":
                 answer(verdict == "allow", verdict)
+                return
+            # an always-human page state (CAPTCHA, paywall, security
+            # warning, forced identity check) is the owner's to resolve:
+            # refused as a handoff before any approval path can ask
+            from services.threads.confirm import always_human, refusal as _handoff_refusal
+            marker = always_human(str(tool_call.get("rawInput") or ""))
+            if marker:
+                answer(False, _handoff_refusal(marker))
                 return
             seen["ask"] += 1
             if seen["ask"] > MAX_OWNER_ASKS or seen["perm"] > MAX_PERMISSIONS:
