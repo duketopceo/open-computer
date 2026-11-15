@@ -53,6 +53,8 @@ def evidence():
             {"name": "python (ruff, pytest not live)", "conclusion": "success"},
             {"name": "console e2e (playwright + axe)", "conclusion": "success"},
             {"name": "provisioning (hash-verified install)", "conclusion": "success"},
+            {"name": "core (typecheck, tests, sidecar build, bundle dry run)", "conclusion": "success"},
+            {"name": "desktop (fmt, clippy, tests, sidecar e2e)", "conclusion": "success"},
             {"name": "production approval", "conclusion": "success"},
         ]},
         "environment": {"protection_rules": [{

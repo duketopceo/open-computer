@@ -250,7 +250,7 @@ Product Contract preservation: Product Contract unchanged except that Outstandin
 - KTD14. **The shell mirrors Hex's dependency set rather than copying Hex code.** Rust edition 2024, Rune crates at the same pinned revision Hex uses, `keyring` for secrets and `ureq` for HTTP. Logic that does not need a window lives in a pure `shell-core` crate so tests run without a display or GPU. Hex and Rune are MIT; Rune's LICENSE text has not been read, so U13 reads it and records the notice before the first commit that depends on it. Governs R3. (session-settled: user-directed — chosen over all-TypeScript and Rust-everywhere: keeps Hex's native feel without writing the agent core twice.)
 - KTD15. **The local core ships as one compiled binary.** `bun build --compile` per target, with Node's single-executable support as the fallback if bun's output fails the smoke test. Tests run the TypeScript source under Node, so the binary is a packaging concern, not a test dependency.
 - KTD16. **No live anything in tests, and nothing deploys from this plan.** Provider tests replay SSE cassettes stored as fixtures, hand-authored from the documented chunk shapes and labeled synthetic. Cloudflare code runs under miniflare. `wrangler deploy` appears only with `--dry-run`, and `wrangler dev` only locally. A live capability probe is owner-run with a spend cap and lives in U24.
-- KTD17. **New CI jobs are required checks but not production-deploy gates.** The core and desktop jobs join `ci.yml` beside the Python jobs; `production-approval` keeps its current `needs` because the deploy controller depends on those names and nothing in this plan changes what server-001 deploys.
+- KTD17. **New CI jobs are deploy gates like every other job.** The core and desktop jobs join `ci.yml` beside the Python jobs. `tests/unit/test_approved_deploy.py` requires every non-deploy job name in `ci.yml` to be registered in the deploy controller's `REQUIRED_JOBS`, so U15 registers both names there and lists them in `production-approval`'s `needs`; nothing in this plan changes what server-001 deploys.
 
 ### Assumptions
 
@@ -734,7 +734,7 @@ docs/runbooks/core.md
 - **Goal:** Put the new tests in CI, keep the operator-string hygiene test covering the new file types, and document how the pieces fit and run.
 - **Requirements:** R23 (public defaults stay clean), supports all units.
 - **Dependencies:** U1 to U14.
-- **Files:** `.github/workflows/ci.yml`, `tests/unit/test_obs_open_source_hygiene.py`, `docs/runbooks/core.md`, `README.md`, `ARCHITECTURE_MAP.md`.
+- **Files:** `.github/workflows/ci.yml`, `deploy/approved_deploy.py`, `tests/unit/test_approved_deploy.py`, `tests/unit/test_obs_open_source_hygiene.py`, `docs/runbooks/core.md`, `README.md`, `ARCHITECTURE_MAP.md`.
 - **Approach:**
   - Add a `core` job (frozen install, typecheck, tests for all packages, build the sidecar and run its smoke check, `wrangler deploy --dry-run` for the cloud package) and a `desktop` job (format check, clippy with warnings denied, shell-core tests, `cargo check` for the workspace) using the same pinned-action style as existing jobs.
   - Extend the hygiene test's scanned suffixes to cover `.rs` and `.jsonc`, and add a check that no core or desktop file contains a Cloudflare account id pattern.
@@ -933,12 +933,11 @@ The Product Contract's Deferred for later and Outside this product's identity li
 - Audit-log signing or external anchoring: the hash chain detects edits; add signing if a customer needs non-repudiation.
 - Hosted decision model for routing: the Python router is frozen and effort is a user setting; add it when the golden-task suite shows effort selection is the main quality gap.
 - Cloudflare OAuth application: needs a maintainer-operated app and unverified third-party availability; revisit once the token flow is measured in real use.
-- Adding the core jobs to the production deploy gate: the deploy controller depends on current job names and nothing here changes what server-001 deploys.
 
 ## System-Wide Impact
 
 - Python services, `ui/` and `edge/` are untouched; the demo deployment keeps its no-bindings rule.
-- `ci.yml` gains two jobs; its Python gates and deploy chain are unchanged.
+- `ci.yml` gains two jobs, registered as gates in the deploy controller (`deploy/approved_deploy.py`) and in `production-approval`'s `needs`; the Python gates and the deploy steps are unchanged, and a red core or desktop job now blocks a production deploy.
 - The hygiene test now scans two more file types, so future `.rs` and `.jsonc` files are checked too.
 - New secrets surface: a cloud bearer secret and provider keys; the plan keeps both out of logs, events, audit records and the sandbox (U5, U7, U11, U12).
 

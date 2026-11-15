@@ -27,6 +27,7 @@ EXCLUDE = {pathlib.Path(__file__).resolve().relative_to(ROOT).as_posix(), "LICEN
 TEXT_SUFFIXES = {
     ".py", ".md", ".mjs", ".js", ".ts", ".tsx", ".json", ".jsonl", ".ndjson", ".yml", ".yaml", ".toml",
     ".service", ".sh", ".html", ".css", ".svg", ".txt", ".cfg", ".ini", ".env", ".example", ".compose",
+    ".rs", ".jsonc", ".sql",  # the v1 core: desktop shell (Rust), Wrangler configs, D1 migrations
 }
 
 
@@ -60,6 +61,28 @@ def test_no_operator_specific_strings():
         hits += [(p.relative_to(ROOT).as_posix(), w) for w in DENY if w in text]
         hits += [(p.relative_to(ROOT).as_posix(), r.pattern) for r in map(re.compile, DENY_RE) if r.search(text)]
     assert hits == []
+
+
+def test_the_v1_core_file_types_are_scanned_for_operator_strings():
+    # Rust, JSONC and SQL joined the repo with the v1 core. If the scanner skipped them, a machine name in one
+    # would pass, so the scanned set must include a file of each type.
+    names = {p.relative_to(ROOT).as_posix() for p in FILES}
+    for must in ("core/packages/cloud/wrangler.jsonc", "core/packages/cloud/migrations/0001_init.sql", "desktop/src/main.rs"):
+        assert must in names, must
+
+
+ACCOUNT_ID_RE = re.compile(r"\b[0-9a-f]{32}\b")
+
+
+def test_no_cloudflare_account_or_resource_ids_in_core_or_desktop_files():
+    # A Cloudflare account id is 32 hex characters. The v1 core never commits one: the one-step deploy fills
+    # real ids in at deploy time, and the checked-in configs carry inert placeholders.
+    hits = []
+    for p in FILES:
+        rel = p.relative_to(ROOT).as_posix()
+        if rel.startswith(("core/", "desktop/")) and ACCOUNT_ID_RE.search(p.read_text(errors="ignore")):
+            hits.append(rel)
+    assert hits == [], hits
 
 
 def test_passkey_parent_domain_comes_from_env_not_code(monkeypatch):
