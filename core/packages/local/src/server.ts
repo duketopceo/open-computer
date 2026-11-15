@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { FetchLike } from "@open-computer/agent-core";
+import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import { testConnection } from "./test-connection.ts";
 
 export const VERSION = "0.1.0";
@@ -73,7 +74,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
   if (!LOOPBACK.has(host)) throw new Error("The local core only binds to a loopback address.");
   const fetchImpl: FetchLike = options.fetch ?? ((url, init) => fetch(url, init));
   const secrets = new Map<SecretSlot, string>();
-  let settings: Settings = { cloud_url: null, model: "example/model", memory_enabled: true, ...options.settings };
+  let settings: Settings = { cloud_url: null, model: defaults.default_model, memory_enabled: true, ...options.settings };
 
   const settingsBody = () => ({
     cloud_url: settings.cloud_url,

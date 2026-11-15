@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FetchLike } from "@open-computer/agent-core";
+import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import { startLocalServer, type RunningServer } from "../src/server.ts";
 
 const TOKEN = "per-launch-token-for-tests";
@@ -104,6 +105,12 @@ describe("local core server", () => {
   it("returns the initial settings fixture, with a null cloud address, before anything is set", async () => {
     const { req } = await boot();
     expect(await (await req("/v1/settings")).json()).toEqual(fixture("settings-initial"));
+  });
+
+  it("starts from the default model in the shared defaults file", async () => {
+    const { req } = await boot();
+    const body = (await (await req("/v1/settings")).json()) as { model: string };
+    expect(body.model).toBe(defaults.default_model);
   });
 
   it("rejects an unknown setting field and a non-boolean memory flag", async () => {

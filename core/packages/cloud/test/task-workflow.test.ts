@@ -43,7 +43,8 @@ describe("workflow task driver", () => {
     const { session_id, task_id } = await startTask({ goal: "list files" });
     const pending = await pendingApproval(session_id);
     expect(pending.kind).toBe("tool");
-    expect((await session(session_id).taskState(task_id))?.status).toBe("waiting");
+    // The approval row exists a moment before the step saves its state, so wait for the saved state.
+    await waitFor(async () => ((await session(session_id).taskState(task_id))?.status === "waiting" ? true : undefined), "the task to be saved as waiting");
     expect(fx.sandboxes.get(task_id)?.execs ?? []).toEqual([]); // nothing ran before approval
     const res = await decide(session_id, pending.id, { hash: pending.hash, approved: true });
     expect(await res.json()).toEqual({ ok: true, outcome: "approved" });
@@ -60,7 +61,7 @@ describe("workflow task driver", () => {
     const pending = await pendingApproval(session_id);
     const res = await decide(session_id, pending.id, { hash: "not-the-hash", approved: true });
     expect(res.status).toBe(409);
-    expect((await session(session_id).taskState(task_id))?.status).toBe("waiting");
+    await waitFor(async () => ((await session(session_id).taskState(task_id))?.status === "waiting" ? true : undefined), "the task to be saved as waiting");
     const again = await decide(session_id, pending.id, { hash: pending.hash, approved: false });
     expect(again.status).toBe(200);
     expect((await decide(session_id, pending.id, { hash: pending.hash, approved: true })).status).toBe(409);
@@ -156,7 +157,9 @@ describe("step retries", () => {
       const deltas = events.filter((e) => e.type === "message.delta").map((e) => (e as { text: string }).text);
       expect(deltas).toEqual(["full answer"]);
       expect(superseded.length).toBeGreaterThanOrEqual(1);
-      expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i));
+      const seqs = events.map((e) => e.seq);
+      expect(seqs).toEqual([...seqs].sort((x, y) => x - y));
+      expect(new Set(seqs).size).toBe(seqs.length);
       expect(fx.script.calls).toBe(2);
     });
   });

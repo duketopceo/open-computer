@@ -10,8 +10,16 @@ use serde::Serialize;
 use crate::core_client::{PieceResult, SecretsSet, SettingsUpdate, TestConnection};
 use crate::secrets::{SecretStore, Slot};
 
-/// The model used until the person picks another one (OpenRouter's router model).
-pub const DEFAULT_MODEL: &str = "openrouter/auto";
+/// The one definition of the default model, shared with the cloud core and the local core.
+const DEFAULTS_JSON: &str = include_str!("../../../../core/contracts/defaults.json");
+
+/// The model used until the person picks another one.
+pub fn default_model() -> String {
+    serde_json::from_str::<serde_json::Value>(DEFAULTS_JSON)
+        .ok()
+        .and_then(|v| v["default_model"].as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -144,7 +152,7 @@ impl Onboarding {
         Self {
             step: Step::Connect,
             cloud_url: String::new(),
-            model: DEFAULT_MODEL.to_owned(),
+            model: default_model(),
             memory_enabled: true,
             secrets_set: SecretsSet::default(),
             test: None,
@@ -418,6 +426,15 @@ mod tests {
         assert_eq!(o.advance(), Ok(Step::Memory));
         assert_eq!(o.advance(), Ok(Step::Test));
         o
+    }
+
+    #[test]
+    fn the_default_model_comes_from_the_shared_defaults_file() {
+        let shared: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../core/contracts/defaults.json")).unwrap();
+        assert!(!default_model().is_empty());
+        assert_eq!(default_model(), shared["default_model"].as_str().unwrap());
+        assert_eq!(Onboarding::new().settings_update().model, default_model());
     }
 
     #[test]

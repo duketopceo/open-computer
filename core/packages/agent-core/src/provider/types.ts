@@ -67,7 +67,8 @@ export type ProviderErrorCode =
   | "payment_required"
   | "rate_limited"
   | "provider_http_error"
-  | "provider_stream_error";
+  | "provider_stream_error"
+  | "provider_timeout";
 
 export class ProviderError extends Error {
   readonly code: ProviderErrorCode;

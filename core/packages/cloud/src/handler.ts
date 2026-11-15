@@ -1,4 +1,5 @@
 import { OPENROUTER_BASE_URL, toNdjson, verifyChain, type FetchLike } from "@open-computer/agent-core";
+import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import { authenticate } from "./auth.ts";
 import type { Env } from "./env.ts";
 import { readSecret, SecretError } from "./models/secrets.ts";
@@ -82,7 +83,7 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
         if (!Number.isFinite(taskCap) || taskCap <= 0 || taskCap > 100) return problem(400, "bad_request", "task_cap must be above 0 and at most 100.");
         const dayCap = body.day_cap === undefined || body.day_cap === null ? null : Number(body.day_cap);
         if (dayCap !== null && (!Number.isFinite(dayCap) || dayCap <= 0)) return problem(400, "bad_request", "day_cap must be above 0.");
-        const model = typeof body.model === "string" && body.model !== "" ? body.model : env.DEFAULT_MODEL;
+        const model = typeof body.model === "string" && body.model !== "" ? body.model : defaults.default_model;
         const taskId = crypto.randomUUID();
         const session = env.SESSION.get(env.SESSION.idFromName(sessionId));
         const started = await session.startTask({

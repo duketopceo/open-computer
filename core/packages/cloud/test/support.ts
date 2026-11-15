@@ -63,7 +63,7 @@ export function toolTurn(calls: Array<{ id: string; name: string; args: string }
 
 export interface Script {
   /** One entry per model call, played in order. A function turn can throw to simulate a mid-stream failure. */
-  turns: Array<StreamPart[] | ((attempt: number) => StreamPart[] | { partial: StreamPart[]; throwAfter: Error })>;
+  turns: Array<StreamPart[] | ((attempt: number) => StreamPart[] | { partial: StreamPart[]; throwAfter: Error; waitFor?: Promise<void> })>;
   requests: ProviderRequest[];
   calls: number;
   /** When set, the provider waits for it before streaming, which holds a step in flight. */
@@ -81,6 +81,7 @@ export function scriptedProvider(script: Script): Provider {
     if (!turn) return;
     if (!Array.isArray(turn)) {
       for (const p of turn.partial) yield p;
+      if (turn.waitFor) await turn.waitFor;
       throw turn.throwAfter;
     }
     for (const p of turn) yield p;
@@ -108,6 +109,7 @@ export interface Fixture {
   sandboxes: Map<string, FakeSandbox>;
   fetchCalls: Array<{ url: string; auth: string | null }>;
   keyInfoStatus: { value: number };
+  failFlushAt: string[];
 }
 
 export function install(turns: Script["turns"]): Fixture {
@@ -115,7 +117,9 @@ export function install(turns: Script["turns"]): Fixture {
   const sandboxes = new Map<string, FakeSandbox>();
   const fetchCalls: Fixture["fetchCalls"] = [];
   const keyInfoStatus = { value: 200 };
+  const failFlushAt: string[] = [];
   setDoubles({
+    failFlushAt,
     provider: scriptedProvider(script),
     sandbox: (taskId) => {
       const sb = new FakeSandbox();
@@ -127,28 +131,60 @@ export function install(turns: Script["turns"]): Fixture {
       return new Response("{}", { status: keyInfoStatus.value });
     },
   });
-  return { script, sandboxes, fetchCalls, keyInfoStatus };
+  return { script, sandboxes, fetchCalls, keyInfoStatus, failFlushAt };
 }
 
-/** Reads an SSE response to its end and applies the client-side supersede rule. */
-export async function readSse(res: Response): Promise<{ events: AgentEvent[]; superseded: number[] }> {
-  const text = await res.text();
-  const events: AgentEvent[] = [];
-  const superseded: number[] = [];
+export interface SseResult {
+  events: AgentEvent[];
+  /** Each supersede frame received: the inclusive range of sequence numbers it replaced. */
+  superseded: Array<{ from_seq: number; to_seq: number }>;
+  /** The id of the last frame of any kind, for Last-Event-ID. */
+  lastId: number;
+}
+
+/** Applies one SSE chunk to a result: events are kept, a supersede frame drops the range it names. */
+export function applySse(into: SseResult, text: string): SseResult {
   for (const block of text.split("\n\n")) {
     const lines = block.split("\n");
     const name = lines.find((l) => l.startsWith("event:"))?.slice(6).trim();
+    const id = lines.find((l) => l.startsWith("id:"))?.slice(3).trim();
     const data = lines.find((l) => l.startsWith("data:"))?.slice(5).trim();
     if (!data) continue;
+    if (id !== undefined) into.lastId = Number(id);
     if (name === "supersede") {
-      const from = (JSON.parse(data) as { from_seq: number }).from_seq;
-      superseded.push(from);
-      while (events.length && (events.at(-1) as AgentEvent).seq >= from) events.pop();
+      const range = JSON.parse(data) as { from_seq: number; to_seq: number };
+      into.superseded.push(range);
+      into.events = into.events.filter((e) => e.seq < range.from_seq || e.seq > range.to_seq);
     } else {
-      events.push(JSON.parse(data) as AgentEvent);
+      into.events.push(JSON.parse(data) as AgentEvent);
     }
   }
-  return { events, superseded };
+  return into;
+}
+
+/** Reads an SSE response to its end and applies the client-side supersede rule. */
+export async function readSse(res: Response): Promise<SseResult> {
+  return applySse({ events: [], superseded: [], lastId: -1 }, await res.text());
+}
+
+/** Reads an SSE response until `done` says enough has arrived, then disconnects, as a client that drops would. */
+export async function readSseUntil(res: Response, done: (r: SseResult) => boolean): Promise<SseResult> {
+  const result: SseResult = { events: [], superseded: [], lastId: -1 };
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done: end } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    const cut = buffer.lastIndexOf("\n\n");
+    if (cut >= 0) {
+      applySse(result, buffer.slice(0, cut + 2));
+      buffer = buffer.slice(cut + 2);
+    }
+    if (end || done(result)) break;
+  }
+  await reader.cancel();
+  return result;
 }
 
 export async function startTask(body: Record<string, unknown>): Promise<{ task_id: string; session_id: string }> {

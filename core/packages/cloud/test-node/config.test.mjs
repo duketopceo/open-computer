@@ -68,6 +68,23 @@ test("the sandbox image is pinned to the SDK version and holds no credential", (
   assert.ok(!/\b(ENV|ARG)\b[^\n]*(KEY|TOKEN|SECRET|PASSWORD)/i.test(docker));
 });
 
+test("the default model has one owner: neither Wrangler config defines it", () => {
+  assert.equal(prod.vars.DEFAULT_MODEL, undefined);
+  assert.equal(testCfg.vars.DEFAULT_MODEL, undefined);
+  const shared = JSON.parse(read("../../contracts/defaults.json"));
+  assert.equal(typeof shared.default_model, "string");
+  assert.ok(shared.default_model.length > 0);
+});
+
+test("model call limits are configured as positive millisecond counts", () => {
+  for (const name of ["MODEL_CONNECT_TIMEOUT_MS", "MODEL_IDLE_TIMEOUT_MS", "MODEL_TOTAL_TIMEOUT_MS"]) {
+    const n = Number(prod.vars[name]);
+    assert.ok(Number.isFinite(n) && n > 0, name);
+  }
+  assert.ok(Number(prod.vars.MODEL_CONNECT_TIMEOUT_MS) <= Number(prod.vars.MODEL_IDLE_TIMEOUT_MS));
+  assert.ok(Number(prod.vars.MODEL_IDLE_TIMEOUT_MS) <= Number(prod.vars.MODEL_TOTAL_TIMEOUT_MS));
+});
+
 test("the migration creates every table the code reads", () => {
   const sql = read("migrations/0001_init.sql");
   for (const t of ["audit", "spend", "task_cap_extra", "tasks", "memory_blocks", "memory_history", "memory_history_fts"]) {

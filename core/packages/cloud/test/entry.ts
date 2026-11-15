@@ -13,6 +13,8 @@ export interface Doubles {
   provider: Provider;
   sandbox: SandboxFactory;
   fetch: FetchLike;
+  /** Step-key suffixes (for example ":2") whose audit write fails once, as a ledger outage would. */
+  failFlushAt: string[];
 }
 
 const g = globalThis as unknown as { __doubles?: Doubles };
@@ -28,6 +30,14 @@ const doubles = (): Doubles => {
 export class SessionDO extends BaseSessionDO {
   protected override makeProvider(): Provider {
     return (request, signal) => doubles().provider(request, signal);
+  }
+  protected override async beforeAuditFlush(stepKey: string): Promise<void> {
+    const pending = doubles().failFlushAt;
+    const hit = pending.findIndex((suffix) => stepKey.endsWith(suffix));
+    if (hit >= 0) {
+      pending.splice(hit, 1);
+      throw new Error("audit ledger unavailable");
+    }
   }
   protected override makeSandboxFactory(): SandboxFactory {
     return (taskId) => doubles().sandbox(taskId);

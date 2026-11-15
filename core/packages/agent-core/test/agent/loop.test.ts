@@ -105,6 +105,40 @@ describe("agent loop", () => {
     expect(events.at(-1)).toMatchObject({ type: "run", status: "cancelled" });
   });
 
+  it("runs a tool once however often the step is retried: a journaled call is replayed, not executed again", async () => {
+    let runs = 0;
+    const tool = echoTool("echo", "read", () => ((runs += 1), "side effect"));
+    const store = new Map<string, { status: "ok" | "error"; output: string; ms: number }>();
+    const journal = { get: (k: string) => store.get(k), put: (k: string, o: { status: "ok" | "error"; output: string; ms: number }) => void store.set(k, o) };
+    const script = [toolTurn([{ id: "c1", name: "echo", args: "{}" }]), textTurn("done")];
+    const first = makeHarness({ turns: script, tools: [tool] });
+    await runLoop(first.state, { ...first.deps, journal });
+    expect(runs).toBe(1);
+    expect([...store.keys()]).toEqual(["task-1:1:c1"]);
+    // The same task again from its start (a retried step reloading old state): the call is replayed from the journal.
+    const retry = makeHarness({ turns: script, tools: [tool] });
+    const { events, state } = await runLoop(retry.state, { ...retry.deps, journal });
+    expect(runs).toBe(1);
+    expect(state.status).toBe("done");
+    expect(events.find((e) => e.type === "tool_call.result")).toMatchObject({ status: "ok", output: "side effect" });
+  });
+
+  it("journals a failed tool call too, so a retry does not run it again", async () => {
+    let runs = 0;
+    const boom = echoTool("boom", "read", () => {
+      runs += 1;
+      throw new Error("failed once");
+    });
+    const store = new Map<string, { status: "ok" | "error"; output: string; ms: number }>();
+    const journal = { get: (k: string) => store.get(k), put: (k: string, o: { status: "ok" | "error"; output: string; ms: number }) => void store.set(k, o) };
+    const turns = [toolTurn([{ id: "c1", name: "boom", args: "{}" }]), textTurn("ok")];
+    const a = makeHarness({ turns, tools: [boom] });
+    await runLoop(a.state, { ...a.deps, journal });
+    const b = makeHarness({ turns, tools: [boom] });
+    await runLoop(b.state, { ...b.deps, journal });
+    expect(runs).toBe(1);
+  });
+
   it("matches the stored golden event sequence for a fixed script", async () => {
     const h = makeHarness({
       turns: [toolTurn([{ id: "c1", name: "echo", args: '{"x":1}' }]), textTurn("done")],

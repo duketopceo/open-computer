@@ -118,14 +118,19 @@ async function runCalls(start: AgentState, deps: AgentDeps, approvedCallId: stri
       if (parseError) {
         state = observe(state, deps, call, "error", parseError, 0);
       } else {
-        const started = deps.now();
-        try {
-          const out = await tool.run(args, { taskId: state.taskId, callId: call.id, emit: deps.emit, ...(deps.signal ? { signal: deps.signal } : {}) });
-          state = observe(state, deps, call, "ok", out, deps.now() - started);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "The tool failed.";
-          state = observe(state, deps, call, "error", message, deps.now() - started);
+        const journalKey = `${state.taskId}:${state.stepCount}:${call.id}`;
+        let outcome = await deps.journal?.get(journalKey);
+        if (!outcome) {
+          const started = deps.now();
+          try {
+            const out = await tool.run(args, { taskId: state.taskId, callId: call.id, emit: deps.emit, ...(deps.signal ? { signal: deps.signal } : {}) });
+            outcome = { status: "ok", output: out, ms: deps.now() - started };
+          } catch (err) {
+            outcome = { status: "error", output: err instanceof Error ? err.message : "The tool failed.", ms: deps.now() - started };
+          }
+          await deps.journal?.put(journalKey, outcome);
         }
+        state = observe(state, deps, call, outcome.status, outcome.output, outcome.ms);
       }
     }
     if (state.consecutiveToolFailures >= state.limits.maxConsecutiveToolFailures) {

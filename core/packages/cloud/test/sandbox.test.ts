@@ -6,7 +6,7 @@ import { FakeSandbox, MODEL_KEY, TOKEN } from "./support.ts";
 
 const ctx = { taskId: "t", callId: "c", emit: () => {} };
 const tool = (manager: SandboxManager, name: string) => {
-  const t = sandboxTools(manager, "t", 100).find((x) => x.spec.name === name);
+  const t = sandboxTools(manager, "t", { maxFileBytes: 100, execGraceMs: 20 }).find((x) => x.spec.name === name);
   if (!t) throw new Error(name);
   return t;
 };
@@ -84,6 +84,50 @@ describe("sandbox manager and tools", () => {
     await expect(write.run({ path: "/workspace/big", content: "x".repeat(101) }, ctx)).rejects.toThrow(/limit is 100/);
     expect(await write.run({ path: "/workspace/small", content: "x".repeat(100) }, ctx)).toContain("Wrote 100 bytes");
     expect(writes).toEqual(["/workspace/small"]);
+  });
+
+  describe("exec timeout", () => {
+    const recording = (result: () => Promise<{ stdout: string; stderr: string; exitCode: number; timedOut?: boolean }>) => {
+      const seen: Array<number | undefined> = [];
+      const manager = new SandboxManager(() => ({
+        exec: async (_cmd: string, options?: { timeoutMs?: number }) => (seen.push(options?.timeoutMs), result()),
+        readFile: async () => "",
+        writeFile: async () => {},
+        destroy: async () => {},
+      }));
+      return { seen, manager };
+    };
+    const ok = async () => ({ stdout: "ok", stderr: "", exitCode: 0 });
+    const exec = (manager: SandboxManager, options = {}) => {
+      const t = sandboxTools(manager, "t", options).find((x) => x.spec.name === "sandbox.exec");
+      if (!t) throw new Error("no exec tool");
+      return t;
+    };
+
+    it("passes a default limit to the port, and the model's own limit when it asks for one", async () => {
+      const { seen, manager } = recording(ok);
+      await exec(manager).run({ command: "true" }, ctx);
+      await exec(manager).run({ command: "true", timeout_seconds: 5 }, ctx);
+      expect(seen).toEqual([120_000, 5_000]);
+    });
+
+    it("never lets the model ask for more than the maximum", async () => {
+      const { seen, manager } = recording(ok);
+      await exec(manager).run({ command: "true", timeout_seconds: 99_999 }, ctx);
+      expect(seen).toEqual([600_000]);
+    });
+
+    it("turns a command the port stopped into a plain error observation", async () => {
+      const { manager } = recording(async () => ({ stdout: "", stderr: "", exitCode: 124, timedOut: true }));
+      await expect(exec(manager).run({ command: "sleep 999", timeout_seconds: 3 }, ctx)).rejects.toThrow(/did not finish within 3 seconds and was stopped/);
+    });
+
+    it("gives up on a port that never answers, a little after the limit", async () => {
+      const { manager } = recording(() => new Promise(() => {}));
+      const started = Date.now();
+      await expect(exec(manager, { execTimeoutMs: 30, execGraceMs: 30 }).run({ command: "hang" }, ctx)).rejects.toThrow(/did not finish/);
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
   });
 
   it("declares exec as an exec risk, write as write and read as read so the policy asks first", () => {

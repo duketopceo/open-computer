@@ -1,4 +1,11 @@
-import { OPENROUTER_BASE_URL, ProviderError, openRouterProvider, type FetchLike, type Provider } from "@open-computer/agent-core";
+import {
+  DEFAULT_PROVIDER_TIMEOUTS,
+  OPENROUTER_BASE_URL,
+  ProviderError,
+  openRouterProvider,
+  type FetchLike,
+  type Provider,
+} from "@open-computer/agent-core";
 import type { Env } from "../env.ts";
 import { readSecret, SecretError } from "./secrets.ts";
 
@@ -26,11 +33,25 @@ export function providerTarget(env: Pick<Env, "AI_GATEWAY_ACCOUNT" | "AI_GATEWAY
  * Builds the model provider for the cloud core. The key comes only from the Secrets Store binding; a key
  * in a request or task body is never consulted.
  */
+function ms(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function modelTimeouts(env: Pick<Env, "MODEL_CONNECT_TIMEOUT_MS" | "MODEL_IDLE_TIMEOUT_MS" | "MODEL_TOTAL_TIMEOUT_MS">) {
+  return {
+    connectMs: ms(env.MODEL_CONNECT_TIMEOUT_MS, DEFAULT_PROVIDER_TIMEOUTS.connectMs),
+    idleMs: ms(env.MODEL_IDLE_TIMEOUT_MS, DEFAULT_PROVIDER_TIMEOUTS.idleMs),
+    totalMs: ms(env.MODEL_TOTAL_TIMEOUT_MS, DEFAULT_PROVIDER_TIMEOUTS.totalMs),
+  };
+}
+
 export function buildProvider(env: Env, fetchImpl: FetchLike): Provider {
   const target = providerTarget(env);
   return openRouterProvider({
     fetch: fetchImpl,
     baseUrl: target.baseUrl,
+    timeouts: modelTimeouts(env),
     apiKey: async () => {
       try {
         return await readSecret(env.MODEL_KEY, "model_key");

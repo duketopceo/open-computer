@@ -18,6 +18,55 @@ export interface OpenRouterOptions {
   apiKey: () => string | Promise<string>;
   /** Extra non-secret headers (attribution, gateway authorization). */
   headers?: Record<string, string>;
+  timeouts?: Partial<ProviderTimeouts>;
+}
+
+export interface ProviderTimeouts {
+  /** Longest wait for the response to start. */
+  connectMs: number;
+  /** Longest silence once the response has started: no bytes at all (keep-alive comments count as bytes). */
+  idleMs: number;
+  /** Longest a whole model call may take. */
+  totalMs: number;
+}
+
+export const DEFAULT_PROVIDER_TIMEOUTS: ProviderTimeouts = { connectMs: 30_000, idleMs: 60_000, totalMs: 600_000 };
+
+const TIMEOUT_MESSAGE: Record<"connect" | "idle" | "total", string> = {
+  connect: "The model did not start answering in time.",
+  idle: "The model stopped sending tokens and the call was stopped.",
+  total: "The model call took too long and was stopped.",
+};
+
+/** Aborts a model call that never starts, goes silent, or runs too long, and remembers why. */
+function createGuard(caller: AbortSignal | undefined, limits: ProviderTimeouts) {
+  const controller = new AbortController();
+  let why: "connect" | "idle" | "total" | null = null;
+  const fire = (reason: "connect" | "idle" | "total") => {
+    if (why === null) why = reason;
+    controller.abort();
+  };
+  let timer = setTimeout(() => fire("connect"), limits.connectMs);
+  const total = setTimeout(() => fire("total"), limits.totalMs);
+  return {
+    signal: caller ? AbortSignal.any([caller, controller.signal]) : controller.signal,
+    /** Any bytes at all reset the idle clock. */
+    touch: () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fire("idle"), limits.idleMs);
+    },
+    expired: () => why,
+    dispose: () => {
+      clearTimeout(timer);
+      clearTimeout(total);
+    },
+  };
+}
+
+type Guard = ReturnType<typeof createGuard>;
+
+function timeoutPart(why: "connect" | "idle" | "total"): StreamPart {
+  return { t: "error", code: "provider_timeout", message: TIMEOUT_MESSAGE[why], retryable: true };
 }
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -106,7 +155,18 @@ function pushDetail(details: ReasoningDetail[], item: ReasoningDetail): void {
 }
 
 export function openRouterProvider(options: OpenRouterOptions): Provider {
-  return async function* provider(request, signal) {
+  const limits: ProviderTimeouts = { ...DEFAULT_PROVIDER_TIMEOUTS, ...options.timeouts };
+  return async function* provider(request, caller) {
+    const guard = createGuard(caller, limits);
+    try {
+      yield* attempt(request, guard);
+    } finally {
+      guard.dispose();
+    }
+  };
+
+  async function* attempt(request: ProviderRequest, guard: Guard): AsyncGenerator<StreamPart> {
+    const signal = guard.signal;
     const key = await options.apiKey();
     const url = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
     let response: Response;
@@ -122,10 +182,16 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
         ...(signal ? { signal } : {}),
       });
     } catch (err) {
-      if (signal?.aborted) return;
+      const why = guard.expired();
+      if (why) {
+        yield timeoutPart(why);
+        return;
+      }
+      if (signal.aborted) return;
       const msg = err instanceof Error ? err.message : "network error";
       throw new ProviderError("provider_http_error", key ? msg.split(key).join("[redacted]") : msg);
     }
+    guard.touch();
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw mapHttpError(response.status, text, key);
@@ -140,7 +206,7 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
     let usage: Usage | null = null;
 
     try {
-      for await (const data of readSseData(response.body)) {
+      for await (const data of readSseData(response.body, guard.touch)) {
         let chunk: unknown;
         try {
           chunk = JSON.parse(data);
@@ -225,10 +291,20 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
         }
       }
     } catch (err) {
-      if (signal?.aborted) return;
+      const why = guard.expired();
+      if (why) {
+        yield timeoutPart(why);
+        return;
+      }
+      if (signal.aborted) return;
       throw err;
     }
-    if (signal?.aborted) return;
+    const why = guard.expired();
+    if (why) {
+      yield timeoutPart(why);
+      return;
+    }
+    if (signal.aborted) return;
 
     if (finish === null || finish === "length") {
       yield {
@@ -254,5 +330,5 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
     };
     const done: StreamPart = { t: "done", message, finishReason: finish, usage, reasoningKinds: [...kinds] };
     yield done;
-  };
+  }
 }

@@ -41,7 +41,10 @@
   "containers": [{ "class_name": "Sandbox", "image": "./sandbox/Dockerfile", "instance_type": "lite", "max_instances": 10 }],
 
   "vars": {
-    "DEFAULT_MODEL": "example/model",
+    // Model call limits (ms): time to first byte, silence once streaming, and the whole call.
+    "MODEL_CONNECT_TIMEOUT_MS": "30000",
+    "MODEL_IDLE_TIMEOUT_MS": "60000",
+    "MODEL_TOTAL_TIMEOUT_MS": "600000",
     "APPROVAL_TIMEOUT": "24 hours",
     // Optional AI Gateway in front of OpenRouter. Empty means call OpenRouter directly.
     "AI_GATEWAY_ACCOUNT": "",

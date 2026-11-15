@@ -12,7 +12,10 @@ export interface Env {
   ARTIFACTS: R2Bucket;
   ACCESS_SECRET: SecretsStoreSecret;
   MODEL_KEY: SecretsStoreSecret;
-  DEFAULT_MODEL: string;
+  /** Model call limits in milliseconds, as text (Wrangler vars are strings). Unset or invalid means the default. */
+  MODEL_CONNECT_TIMEOUT_MS?: string;
+  MODEL_IDLE_TIMEOUT_MS?: string;
+  MODEL_TOTAL_TIMEOUT_MS?: string;
   /** How long a task waits for a human decision before it fails as expired, for example "24 hours". */
   APPROVAL_TIMEOUT: string;
   AI_GATEWAY_ACCOUNT: string;

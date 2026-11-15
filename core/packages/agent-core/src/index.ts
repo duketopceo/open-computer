@@ -1,7 +1,7 @@
 export * from "./events.ts";
 export * from "./provider/types.ts";
-export { openRouterProvider, buildRequestBody, OPENROUTER_BASE_URL } from "./provider/openrouter.ts";
-export type { OpenRouterOptions } from "./provider/openrouter.ts";
+export { openRouterProvider, buildRequestBody, OPENROUTER_BASE_URL, DEFAULT_PROVIDER_TIMEOUTS } from "./provider/openrouter.ts";
+export type { OpenRouterOptions, ProviderTimeouts } from "./provider/openrouter.ts";
 export { readSseData } from "./provider/sse.ts";
 export * from "./agent/tools.ts";
 export * from "./agent/state.ts";

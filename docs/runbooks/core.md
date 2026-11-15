@@ -58,7 +58,14 @@ Tests never touch the network or a real model: the provider tests replay SSE cas
 - Let a started task finish (read its event stream to the end) before a test ends; a workflow still running when the test's storage is reset breaks the next test.
 - `forceEventTimeout` on a workflow introspector did not shorten the approval wait in our runs, so the wait comes from the `APPROVAL_TIMEOUT` variable, which `wrangler.test.jsonc` sets to two seconds.
 - `@cloudflare/sandbox` 1.0 is not a `getSandbox` client: your own Durable Object starts the Container and the package supplies file operations, so `sandbox-do.ts` follows that shape.
-- A retried Workflow step reuses its event sequence numbers; the session streams a `supersede` frame with the first replaced sequence number, and a client drops everything from there. A client that reconnects after the retry does not get that frame yet (see the PR's unapplied findings).
+- The approval row exists a moment before the step saves its state, so a test that reads the task state right after an approval appears should wait for the saved state.
+
+## How retries and limits behave
+
+- A Workflow step can be retried at any point, so a step is written to be repeated safely. A tool call that finished is recorded in a journal (keyed by task, step and call id) before anything else can fail, and a retry replays it instead of running it again. A retry marks the failed attempt's events as replaced and appends a stored `supersede` frame (the inclusive range of replaced sequence numbers, in its own sequence slot), so a client that reconnects with `Last-Event-ID` still learns what to drop. Sequence numbers are never reused, so a client sees gaps where an attempt was replaced. The approvals a failed attempt asked for are expired, so a late human decision on them gets a 409. Once a step's state is saved, a retry only repeats the closing work.
+- Model calls are bounded by three limits (connect, idle and total), set by `MODEL_CONNECT_TIMEOUT_MS`, `MODEL_IDLE_TIMEOUT_MS` and `MODEL_TOTAL_TIMEOUT_MS`. Any bytes, including provider keep-alive comments, reset the idle clock. A tripped limit ends the call with a retryable `provider_timeout` error event.
+- `sandbox.exec` stops a command after 120 seconds by default; the model may ask for up to 600 seconds with `timeout_seconds`.
+- The default model has one definition, `core/contracts/defaults.json`. The cloud handler and the local core import it and the desktop shell embeds it; the Wrangler configs do not define it, and a config test keeps it that way.
 
 ## Known gaps in this slice
 

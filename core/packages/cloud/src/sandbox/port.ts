@@ -4,6 +4,8 @@ export interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** True when the port stopped the command because it ran past `timeoutMs`. */
+  timedOut?: boolean;
 }
 
 /** What the agent needs from a sandbox. The Cloudflare Container implements it; tests use a fake. */
@@ -17,6 +19,15 @@ export interface SandboxPort {
 export type SandboxFactory = (taskId: string) => SandboxPort | Promise<SandboxPort>;
 
 export const MAX_FILE_BYTES = 1024 * 1024;
+export const DEFAULT_EXEC_TIMEOUT_MS = 120_000;
+export const MAX_EXEC_TIMEOUT_MS = 600_000;
+
+export interface SandboxToolOptions {
+  maxFileBytes?: number;
+  execTimeoutMs?: number;
+  /** How long past `timeoutMs` the tool waits for the port to stop a command before it gives up on it. */
+  execGraceMs?: number;
+}
 
 /** One fresh sandbox per task id, created on first use and destroyed when the task reaches a terminal state. */
 export class SandboxManager {
@@ -48,18 +59,37 @@ export class SandboxManager {
 }
 
 /** Sandbox tools. Exec and write ask for approval under the default policy; read does not. */
-export function sandboxTools(manager: SandboxManager, taskId: string, maxFileBytes = MAX_FILE_BYTES): Tool[] {
+export function sandboxTools(manager: SandboxManager, taskId: string, options: SandboxToolOptions = {}): Tool[] {
+  const maxFileBytes = options.maxFileBytes ?? MAX_FILE_BYTES;
+  const defaultTimeoutMs = options.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
+  const graceMs = options.execGraceMs ?? 5000;
   return [
     {
       spec: {
         name: "sandbox.exec",
-        description: "Run a shell command in this task's sandbox and return its output.",
-        parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
+        description: "Run a shell command in this task's sandbox and return its output. It is stopped if it runs too long.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: { type: "string" },
+            timeout_seconds: { type: "number", description: `Optional limit, at most ${MAX_EXEC_TIMEOUT_MS / 1000} seconds.` },
+          },
+          required: ["command"],
+        },
         risk: "exec",
       },
       run: async (args) => {
         const sb = await manager.acquire(taskId);
-        const r = await sb.exec(str(args, "command"));
+        const asked = (args as { timeout_seconds?: unknown } | null)?.timeout_seconds;
+        const timeoutMs =
+          typeof asked === "number" && asked > 0 ? Math.min(asked * 1000, MAX_EXEC_TIMEOUT_MS) : Math.min(defaultTimeoutMs, MAX_EXEC_TIMEOUT_MS);
+        const stopped = new Error(`The command did not finish within ${Math.round(timeoutMs / 1000)} seconds and was stopped.`);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const backstop = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(stopped), timeoutMs + graceMs);
+        });
+        const r = await Promise.race([sb.exec(str(args, "command"), { timeoutMs }), backstop]).finally(() => clearTimeout(timer));
+        if (r.timedOut) throw stopped;
         const text = `exit code ${r.exitCode}\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`;
         if (r.exitCode !== 0) throw new Error(text);
         return text;

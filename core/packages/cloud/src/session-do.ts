@@ -22,6 +22,7 @@ import {
   DEFAULT_APPROVAL_TTL_MS,
   isTerminal,
   type ApprovalOutcome,
+  type ToolOutcome,
 } from "@open-computer/agent-core";
 import type { Env } from "./env.ts";
 import { buildProvider } from "./models/gateway.ts";
@@ -102,12 +103,16 @@ export class SessionDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const sql = ctx.storage.sql;
-    sql.exec("CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, task_id TEXT NOT NULL, json TEXT NOT NULL)");
+    // `discarded` marks events a retried step replaced; `control` rows carry the supersede frame in sequence order.
+    sql.exec(
+      "CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, task_id TEXT NOT NULL, json TEXT NOT NULL, step_key TEXT, discarded INTEGER NOT NULL DEFAULT 0, control INTEGER NOT NULL DEFAULT 0)",
+    );
+    sql.exec("CREATE TABLE IF NOT EXISTS tool_results (key TEXT PRIMARY KEY, json TEXT NOT NULL)");
     sql.exec("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     sql.exec(
-      "CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, kind TEXT NOT NULL, hash TEXT NOT NULL, summary TEXT NOT NULL, amount REAL, state TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, kind TEXT NOT NULL, hash TEXT NOT NULL, summary TEXT NOT NULL, amount REAL, state TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, step_key TEXT)",
     );
-    sql.exec("CREATE TABLE IF NOT EXISTS steps (step_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, start_seq INTEGER NOT NULL, result TEXT)");
+    sql.exec("CREATE TABLE IF NOT EXISTS steps (step_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, saved INTEGER NOT NULL DEFAULT 0, result TEXT)");
     const max = sql.exec<{ m: number | null }>("SELECT MAX(seq) AS m FROM events").one().m;
     this.nextSeq = max === null ? 0 : max + 1;
   }
@@ -123,6 +128,8 @@ export class SessionDO extends DurableObject<Env> {
   protected clock(): number {
     return Date.now();
   }
+  /** Runs just before a step's audit entries are written. The test entry uses it to inject a failure. */
+  protected async beforeAuditFlush(_stepKey: string): Promise<void> {}
   private abortFor(taskId: string): AbortController {
     let c = this.aborts.get(taskId);
     if (!c) {
@@ -174,11 +181,16 @@ export class SessionDO extends DurableObject<Env> {
     return `id: ${seq}\ndata: ${json}\n\n`;
   }
 
-  private appendEvent(taskId: string, body: EventBody): AgentEvent {
+  /** Tells every client to drop the events a retried step streamed: sequence numbers from..to (inclusive). */
+  private supersedeFrame(seq: number, json: string): string {
+    return `event: supersede\nid: ${seq}\ndata: ${json}\n\n`;
+  }
+
+  private appendEvent(taskId: string, body: EventBody, stepKey: string | null = null): AgentEvent {
     const event = { ...body, task_id: taskId, seq: this.nextSeq, ts: this.nowIso() } as AgentEvent;
     this.nextSeq += 1;
     const json = JSON.stringify(event);
-    this.ctx.storage.sql.exec("INSERT INTO events (seq, task_id, json) VALUES (?, ?, ?)", event.seq, taskId, json);
+    this.ctx.storage.sql.exec("INSERT INTO events (seq, task_id, json, step_key) VALUES (?, ?, ?, ?)", event.seq, taskId, json, stepKey);
     this.broadcast(this.frame(event.seq, json));
     const entry = auditEntryForEvent(event, false);
     if (entry) this.pendingAudit.push(ledgerStub(this.env).appendAudit(entry.kind, entry.taskId, this.redactor.redact(entry.data)));
@@ -202,9 +214,10 @@ export class SessionDO extends DurableObject<Env> {
     await Promise.all(pending);
   }
 
+  /** Events a client should hold after `afterSeq`: replaced attempts and control rows are left out. */
   async eventsAfter(afterSeq: number): Promise<AgentEvent[]> {
     return this.ctx.storage.sql
-      .exec<{ json: string }>("SELECT json FROM events WHERE seq > ? ORDER BY seq ASC", afterSeq)
+      .exec<{ json: string }>("SELECT json FROM events WHERE seq > ? AND discarded = 0 AND control = 0 ORDER BY seq ASC", afterSeq)
       .toArray()
       .map((r) => JSON.parse(r.json) as AgentEvent);
   }
@@ -220,14 +233,21 @@ export class SessionDO extends DurableObject<Env> {
     if (url.pathname !== "/events") return new Response("Not found", { status: 404 });
     const header = request.headers.get("last-event-id");
     const after = Number(header ?? url.searchParams.get("after") ?? "-1");
-    const backlog = await this.eventsAfter(Number.isFinite(after) ? after : -1);
+    // Replay in sequence order: live events, plus the supersede frames of retried steps, so a client that already
+    // holds a discarded attempt's events (it saw them before it disconnected) learns they were replaced.
+    const backlog = this.ctx.storage.sql
+      .exec<{ seq: number; json: string; control: number }>(
+        "SELECT seq, json, control FROM events WHERE seq > ? AND discarded = 0 ORDER BY seq ASC",
+        Number.isFinite(after) ? after : -1,
+      )
+      .toArray();
     const closeAfterBacklog = this.settled();
     let self: ReadableStreamDefaultController<Uint8Array>;
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         self = controller;
         controller.enqueue(this.encoder.encode(": open\n\n"));
-        for (const e of backlog) controller.enqueue(this.encoder.encode(this.frame(e.seq, JSON.stringify(e))));
+        for (const e of backlog) controller.enqueue(this.encoder.encode(e.control ? this.supersedeFrame(e.seq, e.json) : this.frame(e.seq, e.json)));
         if (closeAfterBacklog) controller.close();
         else this.subscribers.add(controller);
       },
@@ -240,13 +260,13 @@ export class SessionDO extends DurableObject<Env> {
 
   // ---- approvals ----
 
-  private approvalRequester(): ApprovalRequester {
+  private approvalRequester(stepKey: string): ApprovalRequester {
     return {
       request: async (input) => {
         const now = this.clock();
         const id = crypto.randomUUID();
         this.ctx.storage.sql.exec(
-          "INSERT INTO approvals (id, task_id, kind, hash, summary, amount, state, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, 'requested', ?, ?)",
+          "INSERT INTO approvals (id, task_id, kind, hash, summary, amount, state, created_at, expires_at, step_key) VALUES (?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?)",
           id,
           input.taskId,
           input.kind,
@@ -255,6 +275,7 @@ export class SessionDO extends DurableObject<Env> {
           input.amount ?? null,
           now,
           now + DEFAULT_APPROVAL_TTL_MS,
+          stepKey,
         );
         return this.getApproval(id) as ApprovalRecord;
       },
@@ -334,47 +355,56 @@ export class SessionDO extends DurableObject<Env> {
     return { taskId: input.taskId };
   }
 
-  private depsFor(taskId: string, stored: StoredTask): AgentDeps {
+  private depsFor(taskId: string, stored: StoredTask, stepKey: string): AgentDeps {
     const memory = this.memoryFor(stored.meta.memoryEnabled);
     const sandboxes = this.sandboxManager();
     return {
       provider: this.makeProvider(),
       tools: new ToolRegistry([...memory.tools(), ...sandboxTools(sandboxes, taskId)]),
       policy: defaultPolicy,
-      approvals: this.approvalRequester(),
+      approvals: this.approvalRequester(stepKey),
       guard: new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() }),
       prices: staticPriceBook({}),
       emit: (body) => {
         // Once cancelled, an in-flight step must not add events after the cancel.
-        if (!this.cancelled.has(taskId)) this.appendEvent(taskId, body);
+        if (!this.cancelled.has(taskId)) this.appendEvent(taskId, body, stepKey);
       },
       now: () => this.clock(),
       signal: this.abortFor(taskId).signal,
+      journal: {
+        get: (key) => {
+          const row = this.ctx.storage.sql.exec<{ json: string }>("SELECT json FROM tool_results WHERE key = ?", key).toArray()[0];
+          return row ? (JSON.parse(row.json) as ToolOutcome) : undefined;
+        },
+        put: (key, outcome) => {
+          this.ctx.storage.sql.exec("INSERT OR REPLACE INTO tool_results (key, json) VALUES (?, ?)", key, JSON.stringify(outcome));
+        },
+      },
     };
   }
 
-  /** Runs one agent step. Idempotent per step key; a retry supersedes the failed attempt's streamed events. */
+  /**
+   * Runs one agent step. Idempotent per step key, however often the Workflow retries it:
+   * - A tool call that finished is journaled before anything else can fail, so a retry replays it, never re-runs it.
+   * - A retry first marks the failed attempt's events as replaced (and tells clients), and expires the approvals it asked.
+   * - Once the step's state is saved, a retry only finishes the closing work.
+   */
   async runStep(taskId: string, stepKey: string): Promise<RunStepResult> {
     const sql = this.ctx.storage.sql;
-    const prior = sql.exec<{ attempts: number; start_seq: number; result: string | null }>("SELECT * FROM steps WHERE step_key = ?", stepKey).toArray()[0];
+    const prior = sql.exec<{ attempts: number; saved: number; result: string | null }>("SELECT * FROM steps WHERE step_key = ?", stepKey).toArray()[0];
     if (prior?.result) return JSON.parse(prior.result) as RunStepResult;
+    if (prior?.saved) return this.finishSavedStep(taskId, stepKey);
 
-    let startSeq = this.nextSeq;
-    if (prior) {
-      startSeq = prior.start_seq;
-      sql.exec("DELETE FROM events WHERE seq >= ?", startSeq);
-      this.broadcast(`event: supersede\ndata: ${JSON.stringify({ from_seq: startSeq })}\n\n`);
-      this.nextSeq = startSeq;
-    }
+    if (prior) this.discardAttempt(taskId, stepKey);
     sql.exec(
-      "INSERT INTO steps (step_key, attempts, start_seq, result) VALUES (?, ?, ?, NULL) ON CONFLICT(step_key) DO UPDATE SET attempts = attempts + 1, start_seq = excluded.start_seq",
+      "INSERT INTO steps (step_key, attempts) VALUES (?, ?) ON CONFLICT(step_key) DO UPDATE SET attempts = attempts + 1",
       stepKey,
       (prior?.attempts ?? 0) + 1,
-      startSeq,
     );
 
     const stored = this.loadTask(taskId);
-    const outcome = await step(stored.state, this.depsFor(taskId, stored));
+    const outcome = await step(stored.state, this.depsFor(taskId, stored, stepKey));
+    await this.beforeAuditFlush(stepKey);
     await this.flushAudit();
     // A cancel can land while the step awaits the model or a tool; the cancel is final, so this outcome is dropped.
     if (isTerminal(this.loadTask(taskId).state.status)) {
@@ -383,13 +413,37 @@ export class SessionDO extends DurableObject<Env> {
       return cancelled;
     }
     this.kvSet(`task:${taskId}`, { ...stored, state: outcome.state } satisfies StoredTask);
+    sql.exec("UPDATE steps SET saved = 1 WHERE step_key = ?", stepKey);
+    return this.finishSavedStep(taskId, stepKey);
+  }
 
-    if (isTerminal(outcome.kind)) await this.finalize(taskId, stored, outcome.state);
+  /** A failed attempt's events are replaced and its approvals can no longer be decided. */
+  private discardAttempt(taskId: string, stepKey: string): void {
+    const sql = this.ctx.storage.sql;
+    const range = sql
+      .exec<{ lo: number | null; hi: number | null }>("SELECT MIN(seq) AS lo, MAX(seq) AS hi FROM events WHERE step_key = ? AND discarded = 0 AND control = 0", stepKey)
+      .one();
+    if (range.lo !== null && range.hi !== null) {
+      sql.exec("UPDATE events SET discarded = 1 WHERE step_key = ? AND control = 0", stepKey);
+      const seq = this.nextSeq;
+      this.nextSeq += 1;
+      const json = JSON.stringify({ from_seq: range.lo, to_seq: range.hi });
+      sql.exec("INSERT INTO events (seq, task_id, json, step_key, control) VALUES (?, ?, ?, ?, 1)", seq, taskId, json, stepKey);
+      this.broadcast(this.supersedeFrame(seq, json));
+    }
+    sql.exec("UPDATE approvals SET state = 'expired' WHERE step_key = ? AND state = 'requested'", stepKey);
+  }
+
+  /** The closing work of a step whose state is already saved; safe to repeat. */
+  private async finishSavedStep(taskId: string, stepKey: string): Promise<RunStepResult> {
+    const stored = this.loadTask(taskId);
+    const state = stored.state;
+    if (isTerminal(state.status)) await this.finalize(taskId, stored, state);
     const result: RunStepResult = {
-      kind: outcome.kind,
-      ...(outcome.state.pending ? { approvalId: outcome.state.pending.approvalId } : {}),
+      kind: isTerminal(state.status) ? state.status : state.pending && !state.pending.outcome ? "awaiting_approval" : "continue",
+      ...(state.pending ? { approvalId: state.pending.approvalId } : {}),
     };
-    sql.exec("UPDATE steps SET result = ? WHERE step_key = ?", JSON.stringify(result), stepKey);
+    this.ctx.storage.sql.exec("UPDATE steps SET result = ? WHERE step_key = ?", JSON.stringify(result), stepKey);
     return result;
   }
 
@@ -441,6 +495,7 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   private async finalize(taskId: string, stored: StoredTask, state: AgentState): Promise<void> {
+    if (this.kvGet<boolean>(`finalized:${taskId}`) === true) return;
     await this.env.DB.prepare("UPDATE tasks SET status = ? WHERE task_id = ?").bind(state.status, taskId).run();
     if (state.status === "done") {
       const memory = this.memoryFor(stored.meta.memoryEnabled);
@@ -455,6 +510,7 @@ export class SessionDO extends DurableObject<Env> {
       await this.flushAudit();
     }
     await this.sandboxManager().release(taskId);
+    this.kvSet(`finalized:${taskId}`, true);
     this.kvSet("settled", true);
     this.closeSubscribers();
   }

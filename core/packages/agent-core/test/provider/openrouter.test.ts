@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openRouterProvider, ProviderError, type ProviderRequest, type StreamPart } from "../../src/index.ts";
+import { openRouterProvider, ProviderError, type FetchLike, type ProviderRequest, type StreamPart } from "../../src/index.ts";
 import { cassettePlayer } from "../support/cassette.ts";
 import { fakeGenericKey } from "../support/fakes.ts";
 
@@ -113,6 +113,73 @@ describe("openrouter provider (cassettes)", () => {
       ac.abort();
     }
     expect(seen.some((p) => p.t === "done")).toBe(false);
+  });
+
+  it("stops a stream that goes silent and reports a retryable timeout instead of hanging", async () => {
+    const player = cassettePlayer([{ cassette: "text-only", hangAfterChunks: 14 }]);
+    const provider = openRouterProvider({ fetch: player.fetch, baseUrl: "https://example.test/api/v1", apiKey: () => KEY, timeouts: { idleMs: 40 } });
+    const started = Date.now();
+    const parts = await collect(provider(baseRequest));
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(parts.at(-1)).toMatchObject({ t: "error", code: "provider_timeout", retryable: true, message: expect.stringContaining("stopped sending tokens") });
+    expect(parts.some((p) => p.t === "done")).toBe(false);
+  });
+
+  it("counts keep-alive comment bytes as activity, so a slow but live stream is not cut off", async () => {
+    // Chunks arrive every ~15 ms against a 100 ms idle limit.
+    const slowFetch: FetchLike = async () => {
+      const encoder = new TextEncoder();
+      const lines = [": OPENROUTER PROCESSING\n\n", ": OPENROUTER PROCESSING\n\n", 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"];
+      let i = 0;
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            if (i >= lines.length) return controller.close();
+            await new Promise((r) => setTimeout(r, 15));
+            controller.enqueue(encoder.encode(lines[i++]));
+          },
+        }),
+      );
+    };
+    const provider = openRouterProvider({ fetch: slowFetch, baseUrl: "https://example.test/api/v1", apiKey: () => KEY, timeouts: { idleMs: 100 } });
+    const parts = await collect(provider(baseRequest));
+    expect(parts.at(-1)?.t).toBe("done");
+  });
+
+  it("reports a response that never starts as a retryable timeout", async () => {
+    const neverStarts: FetchLike = (_url, init) =>
+      new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+    const provider = openRouterProvider({ fetch: neverStarts, baseUrl: "https://example.test/api/v1", apiKey: () => KEY, timeouts: { connectMs: 30 } });
+    const parts = await collect(provider(baseRequest));
+    expect(parts).toEqual([{ t: "error", code: "provider_timeout", message: "The model did not start answering in time.", retryable: true }]);
+  });
+
+  it("stops a call that runs past the total limit even while bytes keep arriving", async () => {
+    const endless: FetchLike = async (_url, init) =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            await new Promise((r) => setTimeout(r, 10));
+            if (init.signal?.aborted) return controller.error(new DOMException("aborted", "AbortError"));
+            controller.enqueue(new TextEncoder().encode(": still working\n\n"));
+          },
+        }),
+      );
+    const provider = openRouterProvider({ fetch: endless, baseUrl: "https://example.test/api/v1", apiKey: () => KEY, timeouts: { totalMs: 60, idleMs: 1000 } });
+    const parts = await collect(provider(baseRequest));
+    expect(parts.at(-1)).toMatchObject({ t: "error", code: "provider_timeout", message: expect.stringContaining("took too long") });
+  });
+
+  it("does not turn a caller's own cancel into a timeout", async () => {
+    const ac = new AbortController();
+    const player = cassettePlayer([{ cassette: "text-only", hangAfterChunks: 14 }]);
+    const provider = openRouterProvider({ fetch: player.fetch, baseUrl: "https://example.test/api/v1", apiKey: () => KEY, timeouts: { idleMs: 5000 } });
+    const seen: StreamPart[] = [];
+    for await (const p of provider(baseRequest, ac.signal)) {
+      seen.push(p);
+      ac.abort();
+    }
+    expect(seen.some((p) => p.t === "error")).toBe(false);
   });
 
   it("sends stream, reasoning, tools and require_parameters, and never puts the key in the body", async () => {

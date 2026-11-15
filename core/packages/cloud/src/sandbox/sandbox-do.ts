@@ -28,11 +28,19 @@ export class Sandbox extends DurableObject<Env> {
     return container;
   }
 
-  async run(taskId: string, command: string, cwd = "/workspace"): Promise<ExecResult> {
+  async run(taskId: string, command: string, cwd = "/workspace", timeoutMs?: number): Promise<ExecResult> {
     const container = await this.ensureStarted(taskId);
     const proc = await container.exec(["sh", "-c", command], { cwd });
-    const out = await proc.output();
-    return { stdout: decoder.decode(out.stdout), stderr: decoder.decode(out.stderr), exitCode: out.exitCode };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<"timeout">((resolve) => {
+      if (timeoutMs !== undefined) timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    });
+    const finished = await Promise.race([proc.output(), timedOut]).finally(() => clearTimeout(timer));
+    if (finished === "timeout") {
+      proc.kill();
+      return { stdout: "", stderr: "", exitCode: 124, timedOut: true };
+    }
+    return { stdout: decoder.decode(finished.stdout), stderr: decoder.decode(finished.stderr), exitCode: finished.exitCode };
   }
 
   async readText(taskId: string, path: string): Promise<string> {

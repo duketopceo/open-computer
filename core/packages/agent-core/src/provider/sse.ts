@@ -2,7 +2,7 @@
  * Minimal Server-Sent Events reader. Yields the `data` payload of each event, skips comment lines
  * (such as `: OPENROUTER PROCESSING`) and stops at the `[DONE]` marker.
  */
-export async function* readSseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export async function* readSseData(body: ReadableStream<Uint8Array>, onChunk?: () => void): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -10,7 +10,10 @@ export async function* readSseData(body: ReadableStream<Uint8Array>): AsyncGener
   try {
     for (;;) {
       const { value, done } = await reader.read();
-      if (value) buffer += decoder.decode(value, { stream: true });
+      if (value) {
+        onChunk?.();
+        buffer += decoder.decode(value, { stream: true });
+      }
       if (done) buffer += decoder.decode();
       let start = 0;
       let nl: number;
