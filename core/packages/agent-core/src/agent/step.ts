@@ -87,7 +87,8 @@ async function runCalls(start: AgentState, deps: AgentDeps, approvedCallId: stri
       state = observe(state, deps, call, "error", `Unknown tool "${call.name}".`, 0);
     } else {
       if (!preApproved) {
-        const verdict = deps.policy.decide(tool.spec.risk);
+        const raw = deps.policy.decide(tool.spec.risk);
+        const verdict = tool.spec.trusted && raw === "ask" ? "allow" : raw;
         if (verdict === "deny") {
           state = observe(state, deps, call, "denied", "This action is blocked by policy.", 0);
           continue;
@@ -116,7 +117,7 @@ async function runCalls(start: AgentState, deps: AgentDeps, approvedCallId: stri
       } else {
         const started = deps.now();
         try {
-          const out = await tool.run(args, { taskId: state.taskId, callId: call.id, ...(deps.signal ? { signal: deps.signal } : {}) });
+          const out = await tool.run(args, { taskId: state.taskId, callId: call.id, emit: deps.emit, ...(deps.signal ? { signal: deps.signal } : {}) });
           state = observe(state, deps, call, "ok", out, deps.now() - started);
         } catch (err) {
           const message = err instanceof Error ? err.message : "The tool failed.";

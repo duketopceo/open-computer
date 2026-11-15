@@ -1,9 +1,11 @@
+import type { EventBody } from "../events.ts";
 import type { ToolSpec } from "../provider/types.ts";
 
 export interface ToolContext {
   taskId: string;
   callId: string;
   signal?: AbortSignal;
+  emit: (body: EventBody) => void;
 }
 
 export interface Tool {

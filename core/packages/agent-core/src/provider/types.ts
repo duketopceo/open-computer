@@ -22,6 +22,11 @@ export interface ToolSpec {
   /** JSON Schema for the arguments object. */
   parameters: Record<string, unknown>;
   risk: RiskClass;
+  /**
+   * The tool only touches the user's own core state (for example memory edits, which emit their own audit
+   * events). Policy `deny` still blocks it; `ask` does not apply.
+   */
+  trusted?: boolean;
 }
 
 export interface ProviderRequest {
