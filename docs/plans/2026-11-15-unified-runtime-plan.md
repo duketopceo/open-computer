@@ -27,8 +27,8 @@ contains our own design only: no code, strings, prompts, assets or screenshots f
 Today Open Computer has five ways to "run an agent", three approval stores, three event/trail formats, two sandbox lifecycles, two model-choice systems and three UIs.
 The live path works but its worker is a one-shot script generator, not an agent loop; the long-horizon loop (`services/agents`) is built and tested but never wired in production.
 This plan picks ONE runtime: a task runs a tool-calling loop, tools run in a per-task sandbox (microVM in the cloud tier, bubblewrap on the owner's own machine),
-every model call goes through one provider/router layer (OpenRouter by default, any OpenAI-compatible endpoint opt-in), every action emits one event stream, and every approval is one object in one queue.
-The UI becomes strictly black-on-white / white-on-black with no hue anywhere, and Settings becomes a real page with ten sections. A TypeScript SDK is deferred until the HTTP+SSE contract is stable (phase 3).
+every model call goes through one provider/router layer (OpenRouter by default, any OpenAI-compatible endpoint opt-in), every action emits one event stream (including streamed reasoning, tool-call arguments and per-step cost from OpenRouter), and every approval is one object in one queue.
+The UI becomes strictly black-on-white / white-on-black with no hue anywhere, and Settings becomes a real page with ten sections. The UX follows a transcript-first, tool-card, permission-mode style the owner likes in Ori Grok, in our own black and white design. A three-way parity matrix against Perplexity's cloud and local products is in section 7. A TypeScript SDK is deferred until the HTTP+SSE contract is stable (phase 3).
 
 ## 1. Audit: every runtime path on `main`
 
@@ -215,33 +215,167 @@ One page with a left section list (top tabs on phones), one URL per section (`/s
 
 | Question | Answer |
 |---|---|
-| Why not now | The HTTP + SSE surface and the event schema are still moving (P1-2 changes them). A client over a moving contract is churn. The SPA, CLI (`oc run`) and MCP server already cover first-party use. |
+| Why not now | The HTTP + SSE surface and the event schema are still moving (P1-2 and P1-3 change them). A client over a moving contract is churn. The SPA, CLI (`oc run`) and MCP server already cover first-party use. |
 | What it exposes (v1) | `createTask(goal, {effort, cap, sandbox})`; `stream(taskId)` async iterator of typed events (`step`, `tool_call`, `llm_call`, `approval`, `cost`, `artifact`, `error`, `run`); `approve(approvalId, {hash})` and `deny`, only for tokens with the approve scope; `registerTool({name, schema, risk, handler})` for host-side tools the loop may call, subject to the same permission policy; `listTasks`, `cancel`, `getArtifact`. |
 | Shape | A thin TypeScript client generated from an OpenAPI file and `oc/events/schema/event.schema.json`, about 300 lines, zero runtime dependencies, Node and browser, resume with `Last-Event-ID`. Token scopes: `task:write`, `task:read`, `approve`, `tools:register`. |
 | Tool registration | Prefer MCP first (already supported by design); SDK `registerTool` is the in-process shortcut for apps embedding the runtime. |
 | Python | Not justified yet: `bench/` and tests already import the runtime directly. Revisit when an external Python user exists. |
 
-## 7. Phasing and PR list
+## 7. Three-way parity
 
-Sequence respects the pending next-wave units (U1 streaming, U2 reasoning, U3 buttons and stop, U4 settings, U5 Tauri, U6 online, U7 Sonar, U8 subagents, U9 install). This plan absorbs U4 (becomes P1-7 and P2), reshapes U8 onto the unified Loop, and does not conflict with U1-U3, U5, U6, U9.
+Naming first, because it matters for the target. Perplexity's public help center separates **Computer** (the cloud agent), **Portable Computer** (the fully local version for Linux and NVIDIA DGX Spark, plus RTX GPUs with at least 24 GB of VRAM per press coverage) and **Personal Computer** (the Mac and Windows app with a Local mode and a Hybrid mode). The Linux package we studied ships the local runtime, so the "PPC" column below is that local runtime (what Portable Computer runs; Personal Computer's Local and Hybrid modes use the same idea on a Mac). Whether the Mac binary differs was not inspected. Sources: Perplexity help center ["What is Computer"](https://perplexity.ai/help-center/en/articles/13837784-what-is-computer) (fetched 2026-11-15) and press coverage; the local-runtime column also rests on symbol and file-name evidence, not observed behaviour. "Cloud" cells say "not stated" where Perplexity does not say.
 
-**Phase 1: unify runtime, black/white theme, settings shell** (each is one small PR, tests included, merged only by the owner)
+Columns: **PPC** = local runtime; **Cloud** = Perplexity Computer; **OC now** = `main`; **OC after** = after this plan, with the phase that closes it.
+
+| Capability | PPC (local) | Cloud | OC now | OC after (phase) |
+|---|---|---|---|---|
+| Agent loop | tool-calling loop in a Rust server | autonomous multi-step agent | one-shot script per step; separate unwired planner | tool-calling loop (P1) |
+| Subagents | depth 1, tool absent at leaf | specialist sub-agents, "Wide Research" in parallel | none live | named subagents, depth 1 (P2) |
+| Local sandbox | bwrap + Landlock + seccomp + cgroup per task workspace | n/a | none (device plane only) | bwrap + Landlock + cgroup (P2) |
+| Cloud sandbox | n/a | cloud sandbox per task | microVM per run (Cube / SPACE) | same, unified interface (P1) |
+| File and shell tools | read, write, edit, glob, apply-patch, shell | yes (details not stated) | shell inside script only | typed `shell/read/write/edit` (P1) |
+| Browser control | via MCP apps and search broker | browses the web | host-side search/fetch; BrowserOS opt-in | same plus browse tool on MCP (P3) |
+| Desktop/native app control | MCP apps on the device | not stated | wisp actuator via device plane | device backend merged (P4) |
+| Connectors | Google/Microsoft overlays, MCP apps | Gmail, Outlook, GitHub, Linear, Slack, Notion, Snowflake, Databricks, Salesforce, data feeds | Composio read-only in chat steps | same, write actions behind approval (P3) |
+| MCP | client for local and remote servers | local and remote MCP (enterprise) | server only (read, request approval) | client UI + server (P3) |
+| Skills | markdown playbooks, app-owned and user-owned trees, plugin bundles | plugins bundle connectors and skills | catalog exists, body not injected | injected, user tree, versioned (P2) |
+| Schedules/automations | pause, run-now, delete; per-skill grants | scheduled jobs, condition triggers, proactive | Temporal cron (opt-in) | keep, surface in UI (P2) |
+| Memory | persistent notes | persistent across sessions and platforms | optional Kurultai memory, forget | keep (done); add export (P2) |
+| Voice | speech recognition and voice sessions | mobile voice | `/api/transcribe`, `/api/voice` | keep (P3) |
+| Model choice | named models, remote box, advisor escalation | multi-model, models not named | effort presets via OpenRouter | same plus `openai-compatible` (P2) |
+| Local models | llama.cpp and vLLM-Docker engines, hardware gating | n/a | none by rule | opt-in provider + HardwareProbe (P2); no engine supervision until P4 |
+| Approvals | one interaction verb, permission modal | not stated in detail | 3 stores, hash-bound in gate | one queue, hash-bound (P1) |
+| Artifacts | files in workspace | docs, decks, apps, email | run files with preview and zip | same (done) |
+| Cost visibility | final Usage section; credits only in cloud | credits, spending limits, auto-refill off by default | per-run cap, ledger, cost records | per-step cost live, caps (P1) |
+| Streaming UX | UI renders pushed snapshots and streams | task view; queued follow-ups | polling, final text | streamed reasoning, tool calls, text, cost (P1) |
+| Settings | broad (see REA) | account, plan, Computer configuration | partial | ten sections (P1 shell, P2 fill) |
+| SDK/API | internal RPC | not stated | HTTP API, MCP server | versioned API P2, TS SDK P3 |
+| Multi-device | remote box, device identity | web, iOS, Android | device plane, relay | Tauri + web, device backend (P3-P4) |
+
+**Top gaps and where they close**
+
+| # | Gap | Closes |
+|---|---|---|
+| 1 | No agent loop in the live worker | P1 |
+| 2 | No streamed reasoning, tool calls or cost in the UI | P1 |
+| 3 | Three approval stores | P1 |
+| 4 | No local sandbox tier | P2 |
+| 5 | Local models and hardware gating absent | P2 (probe + provider), P4 (engine supervision) |
+| 6 | Skills not injected, no user tree | P2 |
+| 7 | Subagents not live | P2 |
+| 8 | MCP client and connector write actions missing | P3 |
+| 9 | No SDK | P3 |
+| 10 | No packaged desktop and update path | P3 (Tauri, next-wave U5) |
+
+**What we will not match**
+- **Their search index and retrieval stack.** Substitute: OpenRouter's web search (engines Exa, Parallel, Firecrawl, native or Perplexity's own through OpenRouter) plus our host-side fetch rules. Quality will differ.
+- **Proprietary models and their tuned local checkpoints.** Substitute: open-weight models on OpenRouter, or any `openai-compatible` endpoint.
+- **Premium data connectors and enterprise admin controls.** Substitute: Composio and MCP; no org admin plane.
+- **Their managed GPU engine installer.** Substitute: we probe and use whatever the host runs (Ollama, llama.cpp, vLLM); no root-level installer.
+- **Credits and a hosted plan.** Substitute: BYO OpenRouter key and a hard per-run cap.
+- **Mobile apps.** Out of scope; web works on a phone.
+
+## 8. OpenRouter integration (streaming reasoning and tool calls)
+
+Verified against OpenRouter documentation fetched 2026-11-15. Where a page did not answer, it says so.
+
+| Topic | Verdict | Source |
+|---|---|---|
+| Reasoning request control | `reasoning` object with `effort` (max, xhigh, high, medium, low, minimal, none), `max_tokens` (explicit budget, mainly Anthropic and some Gemini/Qwen), `enabled`, `exclude` (Chat Completions only); reasoning tokens count against the output limit | [reasoning tokens](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) |
+| Streaming reasoning | Yes on Chat Completions via `choices[].delta.reasoning_details` (types `reasoning.summary`, `reasoning.text` with optional `signature`, `reasoning.encrypted`; fields `id`, `format`, `index`); plaintext models also use `reasoning` / `reasoning_content`; encrypted blocks may show as redacted in streams | same |
+| Which models show reasoning | Anthropic: summarized (default) or omitted; OpenAI reasoning models: summary only, and some return none; DeepSeek R1 style: raw text; Gemini 3: level mapped from effort. **Open-weight catalog models (GLM, Qwen, Gemma, particle, Nemotron, MiMo, Minimax): not documented per model, provider-dependent.** Do not assume; probe | same |
+| Multi-turn tool use with reasoning | Pass the assistant message's `reasoning_details` back unmodified (order preserved); on Responses replay `encrypted_content` unchanged | same; [tool calling](https://openrouter.ai/docs/guides/features/tool-calling) |
+| Streaming tool calls | Yes. Chat Completions streams tool-call deltas and a final `finish_reason` (the streaming page does not describe the delta shape; follow the OpenAI-compatible shape and verify with a recorded cassette). Responses emits `response.output_item.done` with full `arguments` | [streaming](https://openrouter.ai/docs/api/reference/streaming), tool calling |
+| Parallel tool calls | `parallel_tool_calls` defaults true for most models; set false to serialise | tool calling |
+| `tool_choice` | `auto`, `none`, or force one function (shape differs per API) | tool calling |
+| Tools are only a soft preference in routing | `tools`, `response_format` and `verbosity` are soft preferences even when `require_parameters` is false; set `require_parameters: true` for tool loops | [provider routing](https://openrouter.ai/docs/guides/routing/provider-routing) |
+| Structured outputs | `response_format: json_schema` with `strict`; streams partial JSON; support varies per endpoint; combine with `require_parameters` | [structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs) |
+| Responses API vs Chat Completions | Responses is OpenAI-compatible and stateless (no `store`, no `previous_response_id`, send full history every time) with reasoning, encrypted reasoning, parallel tools and web search. The overview page does not say "beta"; **I could not confirm a beta label.** Recommendation: stay on Chat Completions (our client, our catalog, `models` fallbacks); adopt Responses only if a provider's reasoning needs it | [responses overview](https://openrouter.ai/docs/api/reference/responses/overview) |
+| Fallbacks and routing | top-level `models` array; provider `order`, `allow_fallbacks`, `sort`, `data_collection: deny`, `zdr: true`; sticky routing keeps a conversation on one provider while the cache is warm; `session_id` sets the key (60 minute expiry) | provider routing, [caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) |
+| Prompt caching | Automatic for OpenAI, Grok, Moonshot, Groq (Kimi), DeepSeek, Z.AI, Gemini 2.5+; needs `cache_control` for Anthropic and Qwen; reported as `prompt_tokens_details.cached_tokens` and `cache_write_tokens`, plus `cache_discount` | caching |
+| In-stream usage and cost | Usage is always returned; `usage.include` and `stream_options.include_usage` are deprecated no-ops. Chat Completions sends usage on the last chunk before `[DONE]` (empty `delta`, repeats `finish_reason`). Fields: `cost`, `cost_details.upstream_inference_cost` (BYOK only via `/generation`), `completion_tokens_details.reasoning_tokens`. **This corrects next-wave U1, which assumed `stream_options.include_usage` is required** | [usage accounting](https://openrouter.ai/docs/guides/guides/usage-accounting) |
+| Mid-stream errors | HTTP 200 may carry an error: final chunk has top-level `error` and `finish_reason: "error"`; skip SSE comment lines such as `: OPENROUTER PROCESSING`; `length` is a finish reason, not an error | streaming |
+| Cancellation | Aborting the connection stops billing only for supported providers (not Bedrock, Groq, Google and others); otherwise the full response is billed. Keep the conservative reservation from next-wave U1 | streaming |
+| Web search | `:online` suffix or the `web` plugin (`engine`: native, exa, firecrawl, parallel, perplexity; `max_results`; domain filters); citations arrive as `annotations[].url_citation` (`url`, `title`, `start_index`, `end_index`); priced per request on top of tokens | [web search](https://openrouter.ai/docs/guides/features/plugins/web-search) |
+| BYOK and limits | own provider keys tried first or as fallback; 5% fee on list-price cost beyond the plan allowance; with credits OpenRouter manages provider rate limits, with BYOK a 429 is the provider's | [BYOK](https://openrouter.ai/docs/guides/overview/auth/byok) |
+
+**Verdict.** Streaming reasoning: yes for Anthropic (summarized text), DeepSeek-style models (raw text) and any model that returns `reasoning` or `reasoning_details`; partial for OpenAI-style models (summary only or nothing); unknown, to be measured, for each open-weight catalog model. Streaming tool calls: yes on Chat Completions and Responses; parallel calls and forced choice are supported; routing must set `require_parameters` or a provider may silently drop `tools`. Both need a recorded cassette per catalog model before we claim support.
+
+**Capability probe (in P1).** A script, run by the owner with a spend cap (never CI), sends one tiny streamed request per catalog model with reasoning enabled and one tool defined, and writes `reasoning: {visible_text | summary | none}`, `tool_stream: yes/no`, `parallel_tools: yes/no`, `usage_in_stream: yes/no` into `model_catalog.json` metadata. The UI reads that metadata, not guesses.
+
+**Event mapping (oc/events v1, additive v1.1).** Existing types stay (`run`, `step`, `tool_call`, `llm_call`, `route`, `approval`, `cost`, `source`, `artifact`, `change`, `error`, `memory_*`, `note`). New streaming types are additive and the validator accepts v1 events unchanged.
+
+| OpenRouter chunk | oc event | Notes |
+|---|---|---|
+| `delta.content` | `message.delta {step, text}` | coalesced to about 50 ms or 200 characters before it hits the log; final `message.done` carries the full text |
+| `delta.reasoning`, `reasoning_details[type=reasoning.text or summary]` | `reasoning.delta {step, kind: text or summary, text}`; `reasoning.done {step, kind, tokens}` | redacted on a rolling buffer before any disk write (next-wave KTD2); `signature` and `reasoning.encrypted` blocks are stored only in a private replay sidecar for multi-turn tool use, never rendered, never in the public stream |
+| `delta.tool_calls[i]` first chunk | `tool_call.started {step, call_id, name, index}` | `index` keeps parallel calls apart |
+| `delta.tool_calls[i].function.arguments` | `tool_call.args.delta {call_id, text}` | the UI shows raw partial JSON in a code block, never parses it until `finished` |
+| finish with `tool_calls` | `tool_call.finished {call_id, args, risk}` then policy decision then `approval` (if ask) then `tool_call.result {call_id, status, output_ref, ms}` | the existing `tool_call` type becomes the final record |
+| last chunk `usage` | `usage {step, prompt, completion, reasoning, cached, cost, cost_upstream}` then the existing `cost` event | ledger takes `cost`; unknown cost reserves against the cap |
+| top-level `error` / `finish_reason: error` | `error {step, retryable}` | fallback tail is retried; recorded as `llm_call` with the serving model |
+| SSE comments | dropped; optionally `step` state "waiting on provider" | |
+
+Persistence rule: the live SSE carries deltas; the stored log keeps coalesced deltas plus the `.done` records so replay and the fixtures-only demo work without a token-by-token file.
+
+**UI treatment.**
+- Message text streams into a document-style block; no per-word animation required (a restrained fade on new words only if Reduce effects is off).
+- **Thinking:** a collapsible block per step, open while it streams, collapsed once the answer starts; label "Thinking" (text), "Summary of thinking" (summary only) or "Working" (none). Never invented text.
+- **Tool cards:** one card per call: name, a one-line human summary, args (streamed raw, then formatted), approval state, result with elapsed time and, for edits, an inline diff before approval. Parallel calls render side by side in call order. Failed calls show the error as an observation the model also saw.
+- **Per-step cost:** each step header shows model, tokens, reasoning tokens when reported, and cost; the footer shows run cost against the cap; unknown cost shows "cost pending" with the reserved amount.
+- **Models without visible reasoning:** show the step as "Working" with elapsed time and `reasoning_tokens` once usage arrives, and narrate from real events only (which tool is being called, what it returned). No spinner of indeterminate length.
+- **Cancel/stop** works mid-stream and mid-tool; the reservation rule applies on stop.
+- **Search:** `annotations[].url_citation` become `source` events and the existing Sources panel.
+
+## 9. UX north star: Ori Grok-like, our own design
+
+Method and limits: read only the documentation and changelog that sit on this machine under the Grok Build home that `ori` wraps (user guide, theming, permissions, plan mode, sandbox, tools, shortcuts). No prompt was sent, no session, history or credential file was opened, and `ori` itself was not run. Traits are described in my words; nothing is copied, and the visual identity here is ours (black and white, no purple; their default theme uses a magenta accent, which we do not adopt).
+
+| Trait observed | What it does | Our adoption (web UI) |
+|---|---|---|
+| One scrollback transcript, not panes | everything (your message, thoughts, tool calls, diffs, output) is one chronological stream with a footer | single central column; side panel only for Sources/Files, collapsed by default |
+| Thoughts stream and fold | reasoning text streams live, can be folded, and a fold remembers state | collapsible Thinking block per step (section 8) |
+| Tool calls with real-time output | each call shows progress and output as it runs | tool cards with live stdout tail, elapsed time, truncated with "show all" |
+| Inline diffs before apply | edits show as diffs; you approve with the diff in view | edit cards render a unified diff first; Approve/Deny bound to the payload hash |
+| Permission modes with one-key toggle | ask (default), accept-edits, plan, auto, always-approve; deny rules still apply on top; sensitive paths always protected | mode selector in the footer (Ask, Accept edits, Plan, Auto), `always-approve` only after a typed confirmation and never for egress or spend; refuse rules cannot be overridden |
+| Plan mode | agent explores read-only, writes a plan, asks to exit with your approval | the existing plan card; plan state is read-only for edits; matches our "approve the plan once" |
+| Plan and TODO panel | toggleable task list the agent maintains | collapsible Plan panel from `step` events |
+| Footer status | model, context usage, key hints, background-task count | footer: model, effort, cost vs cap, context used, sandbox tier, running tasks |
+| Slash commands and palette | `/model`, `/new`, `/resume`, `/rewind` (restores files), `/compact`, `/memory`, `/skills`, `/btw` side question | command palette (Ctrl/Cmd+K and `/` in the composer) with the same verbs; rewind uses sandbox snapshots when available |
+| Background tasks | send the foreground task to the background; stop buttons in a dock | "Run in background" and a task dock; Stop is always visible |
+| Subagents panel | parallel child sessions with status lines ("N agents still running") | subagent rows under the parent step; parent Stop cancels children |
+| `@` file references and prompt history search | fuzzy file mentions; reverse history search | `@` mentions for workspace files, connectors and subagents; history search |
+| Density and keyboard completeness | terminal density, every action has a key, multiline toggle, undo on input | dense mode in Appearance; every action reachable by keyboard; Esc cancels |
+| Theme from a central palette, `auto` follows system, a "terminal" theme that borrows the user's colours | one palette drives everything | one token file; Light, Dark, System, plus High-contrast boost; no hue |
+| Sandbox profiles (off, workspace, read-only, strict) applied irreversibly at start | the model cannot relax them at runtime | Settings > Sandbox profiles with the same semantics; set per task, immutable during the task |
+| ACP and headless modes | the same agent is reachable by scripts and editors, with thought, message, tool-call and plan updates as typed events | our event stream is that contract; the SDK and CLI read it; an optional ACP bridge is a P3 idea, not a commitment |
+
+Visual rules for our version: monospace for code, args and ids only; sans for prose; state is glyph plus word; ink-on-canvas with the weave behind; tool cards are bordered boxes, not bubbles; no colour except the three status colours with glyphs; motion only for state changes.
+
+## 10. Phasing and PR list
+
+Sequence respects the pending next-wave units (U1 streaming, U2 reasoning, U3 buttons and stop, U4 settings, U5 Tauri, U6 online, U7 Sonar, U8 subagents, U9 install). **This plan absorbs U1, U2 and U3** (streaming, live reasoning and stop become part of Phase 1 on the unified event stream, with the corrections in section 8) and U4 (settings), reshapes U8 onto the unified Loop, and does not conflict with U5, U6, U7, U9.
+
+**Phase 1: unified runtime with streamed reasoning and tool calls, black/white theme, settings shell** (each one small PR, tests included, merged only by the owner)
 
 | PR | Title | Content | Gate |
 |---|---|---|---|
 | P1-1 | `refactor(runtime): shared types, ToolRegistry, Sandbox and Provider interfaces` | new `oc/runtime/`; adapters over today's execplane and OpenRouter client; no behaviour change | existing unit suite unchanged and green |
-| P1-2 | `feat(events): one event stream for chat, goal and agent runs` | all three emit via `Emitter`; `/api/tasks/<id>/events` SSE with resume; legacy routes read the same data | schema validation tests; replay fixtures still pass |
-| P1-3 | `refactor(approvals): one queue` | fold `agents/approvals.py` store and lease into the gate queue; shared permission policy | hash-bind, single-use and human-only tests; MCP no-decide test |
-| P1-4 | `feat(runtime): tool-calling loop replaces single-shot step worker` | `shell/read/write/edit` in the run sandbox; step, cost and time caps; failed tool call becomes an observation; flag `OC_RUNTIME=unified`, default on after the golden tasks | cassette-replayed golden tasks (3) green; fail-closed tests; cap tests |
-| P1-5 | `feat(cli): oc run and golden-task replay` | closes OC-039 | CLI snapshot tests |
-| P1-6 | `feat(ui): black and white high-contrast tokens, no hue, weave kept` | tokens, focus ring, hue lint, `palette.test.ts` extension, axe in both themes and `prefers-contrast: more` | e2e axe 0 violations; visual check light and dark at 390 and 1440 |
-| P1-7 | `feat(settings): sectioned settings shell with routes and search` | the ten sections as routes; existing Account, Connectors, OpenRouter, Memory, Brain, Runtime, Appearance moved in; the rest render honest "not available yet" states | `Sections.test.tsx`, 403-without-session tests, no key material in responses |
+| P1-2 | `feat(events): event schema v1.1 with message, reasoning, tool-call and usage events` | additive types from section 8, coalescing, redaction on a rolling buffer, `/api/tasks/<id>/events` SSE with `Last-Event-ID` resume; chat, goal and agent runs emit through `Emitter` | schema validation; v1 fixtures still pass; split-secret redaction test |
+| P1-3 | `feat(openrouter): streaming client for content, reasoning, tool-call deltas and usage` | Chat Completions SSE parser, tool-call assembly by index, `reasoning_details` capture and replay for multi-turn tools, `require_parameters`, mid-stream error and comment-line handling, cancel plus cap reservation; capability metadata in the catalog | scripted chunk cassettes per family (summary-only, raw text, none, parallel tools); no live network in CI |
+| P1-4 | `refactor(approvals): one queue` | fold `agents/approvals.py` store and lease into the gate queue; shared permission policy; permission modes | hash-bind, single-use and human-only tests; MCP no-decide test |
+| P1-5 | `feat(runtime): tool-calling loop replaces single-shot step worker` | `shell/read/write/edit` in the run sandbox; step, cost and time caps; failed tool call becomes an observation; Stop cancels stream and tool; flag `OC_RUNTIME=unified`, default on after the golden tasks | cassette-replayed golden tasks (3) green; fail-closed and cap tests |
+| P1-6 | `feat(ui): streamed thinking, tool cards, per-step cost, stop` | components from section 8 on the new stream; footer status; permission-mode selector; reduced-motion safe | vitest per component; e2e with a fixture stream; axe |
+| P1-7 | `feat(ui): black and white high-contrast tokens, no hue, weave kept` | tokens, focus ring, hue lint, `palette.test.ts` extension, axe in both themes and `prefers-contrast: more` | e2e axe 0 violations; visual check light and dark at 390 and 1440 |
+| P1-8 | `feat(settings): sectioned settings shell with routes and search` | the ten sections as routes; existing Account, Connectors, OpenRouter, Memory, Brain, Runtime, Appearance moved in; the rest render honest "not available yet" states | `Sections.test.tsx`, 403-without-session tests, no key material in responses |
 
-**Phase 2: local tier and complete settings.** P2-1 `HardwareProbe` + typed errors; P2-2 bwrap/Landlock/cgroup sandbox backend with canary and Verify action; P2-3 `openai-compatible` provider with health/model list and per-provider concurrency; P2-4 `SecretStore` backends and the Models, Routing, Sandbox, Permissions, Data sections; P2-5 delete R3 `sandbox_work`, the separate planner and the legacy console after parity; P2-6 shortcuts section.
-**Phase 3: SDK and integrations.** OpenAPI + token scopes, TypeScript SDK, MCP server management UI, `harness.code` tool on the unified loop, Tauri shell wiring (U5).
-**Phase 4: later.** Device backend merged into the Sandbox interface, Spark profile tuning with real hardware, SQLite state (U10), Python SDK on demand, engine supervision if the owner wants it.
+Owner-run, not CI: the **capability probe** (section 8) once P1-3 lands, with a spend cap, to fill the catalog metadata.
 
-## 8. Test strategy
+**Phase 2: local tier, skills, subagents, complete settings.** P2-1 `oc run` CLI and golden-task replay (closes OC-039); P2-2 `HardwareProbe` + typed errors; P2-3 bwrap/Landlock/cgroup sandbox backend with canary and Verify action; P2-4 `openai-compatible` provider with health/model list and per-provider concurrency; P2-5 `SecretStore` backends and the Models, Routing, Sandbox, Permissions, Data sections; P2-6 named subagents on the Loop (replaces next-wave U8); P2-7 skills injected into the worker prompt plus a user skills tree; P2-8 delete R3 `sandbox_work`, the separate planner and the legacy console after parity; P2-9 shortcuts section and command palette.
+**Phase 3: SDK and integrations.** OpenAPI + token scopes, TypeScript SDK, MCP client management UI, connector write actions behind approval, `harness.code` tool on the unified loop, Tauri shell wiring (U5), optional ACP bridge.
+**Phase 4: later.** Device backend merged into the Sandbox interface, Spark profile tuning with real hardware, engine supervision if the owner wants it, SQLite state (U10), Python SDK on demand.
+
+## 11. Test strategy
 
 - Determinism first: no live network or models in CI; fake OpenRouter, fake sandbox and cassettes already exist (`tests/fakes`, `services/execplane/cassette.py`).
 - Golden tasks: three cassette-replayed tasks (research, coding, file transform) with exact expected events and costs; each fails against a deliberately broken fake (the repo's "weak check" rule).
@@ -251,7 +385,7 @@ Sequence respects the pending next-wave units (U1 streaming, U2 reasoning, U3 bu
 - Local tier: bwrap tests run only where `bwrap` exists and skip loudly (not silently) elsewhere; one manual live checklist for the Asahi box and for a Spark; live rows stay out of CI.
 - Contract tests: event schema validation on every emitter path; OpenAPI diffed in CI once it exists (phase 3).
 
-## 9. Risks
+## 12. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -259,21 +393,28 @@ Sequence respects the pending next-wave units (U1 streaming, U2 reasoning, U3 bu
 | Replacing the live worker regresses working runs | flag, golden tasks, keep R3 until P2-5 |
 | bwrap/Landlock availability varies (kernel, userns policy) | typed unavailable reason, no silent downgrade, Verify action |
 | Local models weaken the privacy and spend rule | opt-in, never default, never in an effort tier, shown in Settings and in each task's event stream |
-| Merge-conflict churn with next-wave U1-U3 on `threads.py` | land P1-1/P1-2 behind adapters first; coordinate order with the owner |
-| Contrast changes break existing visual assumptions (status colours, glow) | palette test and visual review in P1-6; status is glyph plus word already |
-| Over-building settings before backends exist | P1-7 ships honest empty states; sections fill in during phase 2 |
+| Merge-conflict churn with next-wave U1-U3 on `threads.py` and the OpenRouter client | this plan absorbs U1-U3; land P1-1 to P1-3 first and close or rebase those units |
+| Open-weight catalog models may not stream reasoning or tool calls | capability probe fills catalog metadata; UI shows "Working" when no reasoning arrives; tool loops use `require_parameters` |
+| Providers drop `tools` silently or bill after an aborted stream | `require_parameters: true`; conservative cap reservation on stop |
+| Doc claims drift (the Responses API label, delta shapes) | cassettes recorded from real streams once, then replayed; re-verify docs before P1-3 merges |
+| Contrast changes break existing visual assumptions (status colours, glow) | palette test and visual review in P1-7; status is glyph plus word already |
+| Over-building settings before backends exist | P1-8 ships honest empty states; sections fill in during phase 2 |
 
-## 10. Open questions for Luke
+## 13. Open questions for Luke
 
 1. **Local tier at all?** Should phase 2 include running tools on this machine (bwrap), or stay cloud-only until after the demo? Recommendation: yes, because it is the only way the app is useful offline and it is what a Spark owner expects.
 2. **Local models**: keep "OpenRouter only by default" with an opt-in `openai-compatible` provider, or allow Ollama as a first-class default on a machine that has it? Recommendation: opt-in only.
 3. **Accent**: none (ink only), or one optional accent? Recommendation: none by default; the optional yellow above only if you ask.
 4. **Delete the vanilla console and `/workspace` page** once the SPA covers them, or keep them as the Developer fallback? Recommendation: delete after one release with the SPA parity check.
-5. **Order**: do U1-U3 (streaming, reasoning, buttons) land before P1-1, or after? Recommendation: U1 first, then P1-1/P1-2.
+5. **Order**: this plan absorbs next-wave U1-U3 into Phase 1. Close or rebase those units, and land P1-1 to P1-3 first? Recommendation: yes.
 6. **SDK**: confirm TypeScript in phase 3 and no Python until a user asks.
 7. **Spark**: do you have a DGX Spark to test on, or is it hypothetical for now? It changes whether P4 tuning is real work.
-8. **Demo**: keep the Cloudflare fixtures-only demo as is while this lands (recommended), or rebuild it on the new tokens in P1-6?
+8. **Demo**: keep the Cloudflare fixtures-only demo as is while this lands (recommended), or rebuild it on the new tokens in P1-7?
+9. **Naming**: public docs call the local DGX Spark/Linux product **Portable Computer** and the Mac/Windows app **Personal Computer** (Local and Hybrid modes). Which one is the parity target, or both? Recommendation: treat the shared local runtime as the target and Personal Computer's Hybrid mode as the product shape for Open Computer (cloud orchestration, local steps when allowed).
+10. **Capability probe spend**: approve a small capped run (about 15 models, one tiny request each) through `orch` to measure reasoning and tool streaming? Recommendation: yes, cap at a few cents.
+11. **Always-approve mode**: allow it at all in the web UI, and never for egress and spend? Recommendation: yes, typed confirmation, scoped as stated.
+12. **ACP bridge**: want Open Computer reachable from editors and `ori` through an Agent Client Protocol endpoint in Phase 3? Recommendation: defer; our event stream and SDK come first.
 
 ## Verification (this docs PR)
 
-Docs only. Claims about the live path were read from `main` at `b72e9a0`: `services/orchestrator/engines.py` (`sandbox_work` is single-shot), `services/opsview/server.py` (no production `configure_runner` call; `agentjobs.resume_all` at startup), `services/opsview/threads.py`, `services/orchestrator/dispatch.py` (#159 effort precedence), `DESIGN.md` (graphite accent, weave), `ui/src/index.css` (weave). Items marked "verify" (live use of the vanilla console and `/workspace`) need access logs from the deployed host. Contrast ratios were computed with the WCAG formula and must be re-asserted by the P1-6 test.
+Docs only. Claims about the live path were read from `main` at `b72e9a0`: `services/orchestrator/engines.py` (`sandbox_work` is single-shot), `services/opsview/server.py` (no production `configure_runner` call; `agentjobs.resume_all` at startup), `services/opsview/threads.py`, `services/orchestrator/dispatch.py` (#159 effort precedence), `DESIGN.md` (graphite accent, weave), `ui/src/index.css` (weave). Items marked "verify" (live use of the vanilla console and `/workspace`) need access logs from the deployed host. OpenRouter behaviour in section 8 was read from the linked docs pages on 2026-11-15 (summaries by a fetch tool; delta shapes and the Responses "beta" label were not confirmed and are marked). Perplexity Computer facts come from its public help center and press, never a login. The Ori Grok study used only on-disk docs and changelog; no session, history, config or credential file was opened and the binary was not run. Contrast ratios were computed with the WCAG formula and must be re-asserted by the P1-6 test.
