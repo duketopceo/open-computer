@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test test-node/ && vitest run",
+    "test": "node --test \"test-node/*.test.mjs\" && vitest run",
     "bundle:check": "wrangler deploy --dry-run --outdir dist"
   },
   "dependencies": {
