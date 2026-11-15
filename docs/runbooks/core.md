@@ -51,6 +51,15 @@ Tests never touch the network or a real model: the provider tests replay SSE cas
 - Desktop: the shell owns the operating-system keyring and hands values to the local core in memory. The UI shows only whether a key is set.
 - Sandbox: environments are built from an allowlist. An outbound handler outside the sandbox adds credentials for a minimal host list that never includes a model-provider host, and audits every credentialed request. In the first slice the list is empty: every sandbox request is denied and audited.
 
+## Testing notes for the Workers test pool
+
+- The test plugin is `@cloudflare/vitest-plugin` (the older `vitest-pool-workers` package is deprecated and renamed). Both need a vitest 4 release.
+- Durable Object and D1 state is shared across the tests of one file. Write assertions relative to what is already there (count before, compare after) and use unique ids.
+- Let a started task finish (read its event stream to the end) before a test ends; a workflow still running when the test's storage is reset breaks the next test.
+- `forceEventTimeout` on a workflow introspector did not shorten the approval wait in our runs, so the wait comes from the `APPROVAL_TIMEOUT` variable, which `wrangler.test.jsonc` sets to two seconds.
+- `@cloudflare/sandbox` 1.0 is not a `getSandbox` client: your own Durable Object starts the Container and the package supplies file operations, so `sandbox-do.ts` follows that shape.
+- A retried Workflow step reuses its event sequence numbers; the session streams a `supersede` frame with the first replaced sequence number, and a client drops everything from there. A client that reconnects after the retry does not get that frame yet (see the PR's unapplied findings).
+
 ## Known gaps in this slice
 
 - Containers and the outbound interception over HTTPS are unproven until an owner-approved real run; the port and handler are tested with fakes.
