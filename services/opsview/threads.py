@@ -279,7 +279,18 @@ def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES, waiting_on: s
             msgs = chat.build_messages(t, runs, final=final, memory=block)
             if d.compact is not None:
                 msgs = d.compact.fit(tid, msgs).messages
+            # the thread's own memory file rides last, right before the
+            # live turn: a disk read at injection time, never part of the
+            # compacted block, so what the model wrote survives it whole
+            mem = oc_compact.memory_message(tid)
+            if mem is not None:
+                msgs.append(mem)
             dec = chat.parse_decision(d.engine(msgs + restored))
+            if dec.action == "memory":
+                if d.compact is not None and oc_compact.write_memory(tid, dec.text):
+                    trace(tid, "memory_write", {"chars": len(dec.text)})
+                    continue  # writing memory is not a pass: the model answers again with it saved
+                dec = chat.Decision("reply", "I could not save my memory file.")
             if dec.action == "restore":
                 text = d.compact.restore(tid, dec.spans) if d.compact is not None else None
                 if len(restored) < MAX_RESTORES:

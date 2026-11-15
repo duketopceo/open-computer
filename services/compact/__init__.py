@@ -68,6 +68,68 @@ HEADER = (
     '{"action":"restore","spans":"s4-s9"} and it will be shown to you.'
 )
 
+# The thread's own memory file: what the model wrote about this piece of
+# work (goal, rules it was given, what done means, where progress lives).
+# It bypasses the summarizer by construction — the writer and the
+# summarizer are different actors — and is spliced back as a live message
+# immediately before the user's turn, the most recent thing in context.
+# Short is the only constraint (MEMORY_MAX_CHARS bounds a runaway file;
+# a long file eats the budget this exists to save).
+MEMORY_NAME = "memory.md"
+MEMORY_HEADER = "Your memory file for this thread, as you last wrote it:"
+MEMORY_MAX_CHARS = 4_000
+MEMORY_NOTE = (
+    "When the work spans many turns, keep your memory file (memory.md) short: the goal in a line, every "
+    "rule or correction the user gave in their words, what counts as done, and where progress lives. "
+    "It is shown back to you after every compaction and at the start of a resumed turn, so write it "
+    "before the bulk of the work and update it when a rule or the plan changes. Answer "
+    '{"action":"memory","text":"<full file>"} to write or replace it.'
+)
+
+
+def memory_path(tid: str, root_dir: Path | None = None) -> Path:
+    """`<threads root>/_compact/<thread>/memory.md` — beside the span
+    store, outside the workspace the sandbox mounts."""
+    return (root_dir or root()) / tid / MEMORY_NAME
+
+
+def read_memory(tid: str, root_dir: Path | None = None) -> str | None:
+    """The thread's memory file as the model last wrote it, or None.
+    Empty or absent is None: an empty file must not splice a blank
+    reminder into every turn."""
+    try:
+        text = memory_path(tid, root_dir).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    text = text.strip()
+    return text[:MEMORY_MAX_CHARS] if text else None
+
+
+def write_memory(tid: str, text: str, root_dir: Path | None = None) -> bool:
+    """Replace the memory file with the model's text. The model may only
+    replace it whole — no appends, no deletes — so the file is always
+    exactly what the model believes, and a hallucinated merge cannot
+    leave a stale rule standing."""
+    if not text or not text.strip():
+        return False
+    p = memory_path(tid, root_dir)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text.strip()[:MEMORY_MAX_CHARS], encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def memory_message(tid: str, root_dir: Path | None = None) -> dict | None:
+    """The memory file as a user-role message for the turn's message
+    list — immediately before the live user turn, never inside the
+    compacted block. None when the thread has no memory file."""
+    body = read_memory(tid, root_dir)
+    if body is None:
+        return None
+    return {"role": "user", "content": f"{MEMORY_HEADER}\n{body}"}
+
 
 @dataclass(frozen=True)
 class CompactConfig:

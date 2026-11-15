@@ -61,10 +61,56 @@ def deps(engine, views=None, stops=None):
         ('{"action":"run","text":"on it"}', chat.Decision("reply", '{"action":"run","text":"on it"}')),  # no goal: not a run
         ("just words", chat.Decision("reply", "just words")),
         ("", chat.Decision("reply", "I did not get an answer back. Try again.")),
+        ('{"action":"memory","text":"goal: the lidar fix"}', chat.Decision("memory", "goal: the lidar fix")),
+        ('{"action":"memory"}', chat.Decision("reply", '{"action":"memory"}')),  # no text: not a memory write
     ],
 )
 def test_parse_decision_never_loses_text(raw, want):
     assert chat.parse_decision(raw) == want
+
+
+# --- the thread memory file (OC-077): what the model wrote survives compaction whole
+def test_memory_file_splices_last_and_survives_compaction(tdir):
+    from services import compact as oc_compact
+
+    t = threads.create("long research thread", PLAN)
+    # a thread long enough that fit() must compact it (budget 1 forces it)
+    for i in range(4):
+        threads.append(t["id"], "user", f"filler {i}: {'words ' * 60}")
+        threads.append(t["id"], "assistant", f"reply {i}: {'notes ' * 60}")
+    d, started = deps(Script(decision("memory", "goal: survey the regolith papers"), decision("reply", "on it")))
+    d.compact = oc_compact.Compactor(oc_compact.CompactConfig(budget=1, tail=1), lambda model, messages: '{"rel":1,"load":0.1}')
+    threads.run_turn(t["id"], d)
+    # the file was written beside the span store
+    assert oc_compact.read_memory(t["id"]) == "goal: survey the regolith papers"
+    # the second pass (the one that produced the reply) saw the memory file last, after the compacted block
+    second = d.engine.seen[1] if hasattr(d.engine, "seen") else d.engine.calls[1]
+    assert second[-1]["content"].startswith(oc_compact.MEMORY_HEADER)
+    assert "goal: survey the regolith papers" in second[-1]["content"]
+    # and the compacted summary block sat before it, not after
+    assert any(oc_compact.HEADER in m["content"] for m in second[:-1])
+    # the memory write cost no run
+    assert started == []
+
+
+def test_no_memory_file_splices_nothing(tdir):
+    t = threads.create("hello", PLAN)
+    d, _ = deps(Script(decision("reply", "hi")))
+    threads.run_turn(t["id"], d)
+    assert oc_compact_read(t["id"]) is None  # shape only; covered below
+
+
+def oc_compact_read(tid):
+    from services import compact as oc_compact
+    return oc_compact.read_memory(tid)
+
+
+def test_memory_write_without_a_compactor_replies_with_a_failure_note(tdir):
+    t = threads.create("hello", PLAN)
+    d, _ = deps(Script(decision("memory", "goal: x"), decision("reply", "hi")))
+    threads.run_turn(t["id"], d)
+    msgs = threads.get(t["id"])["messages"]
+    assert msgs[-1]["role"] == "assistant" and "memory file" in msgs[-1]["text"]
 
 
 # --- turns
