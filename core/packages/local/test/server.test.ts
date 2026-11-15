@@ -98,6 +98,11 @@ describe("local core server", () => {
     expect(await (await req("/v1/settings")).json()).toEqual(fixture("settings"));
   });
 
+  it("returns the initial settings fixture, with a null cloud address, before anything is set", async () => {
+    const { req } = await boot();
+    expect(await (await req("/v1/settings")).json()).toEqual(fixture("settings-initial"));
+  });
+
   it("rejects an unknown setting field and a non-boolean memory flag", async () => {
     const { req } = await boot();
     const a = await req("/v1/settings", { method: "PUT", body: JSON.stringify({ colour: "red" }) });

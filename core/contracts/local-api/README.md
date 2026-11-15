@@ -7,7 +7,7 @@ The local core binds to loopback only. On start it prints one line, `ready-line.
 | Endpoint | Request fixture | Response fixture |
 |---|---|---|
 | `GET /v1/health` | none | `health.json` |
-| `GET /v1/settings` | none | `settings.json` |
+| `GET /v1/settings` | none | `settings.json`, `settings-initial.json` (before a cloud address is set) |
 | `PUT /v1/settings` | `settings-put-request.json` | `settings.json` |
 | `POST /v1/secrets/load` | `secrets-load-request.json` | `secrets-load-response.json` |
 | `POST /v1/test-connection` | none | `test-connection-ok.json`, `test-connection-model-key-rejected.json` |
