@@ -1,0 +1,16 @@
+: synthetic cassette, hand-authored from the documented OpenRouter chunk shapes
+
+data: {"id":"gen-3","choices":[{"index":0,"delta":{"role":"assistant","reasoning":"Plan: check files.","reasoning_details":[{"type":"reasoning.summary","summary":"Plan: ","index":0}]},"finish_reason":null}]}
+
+data: {"id":"gen-3","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"check files.","index":0}]},"finish_reason":null}]}
+
+data: {"id":"gen-3","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","text":"Raw thought A. ","index":1,"signature":"sig-1"}]},"finish_reason":null}]}
+
+data: {"id":"gen-3","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"ENCRYPTED-BLOCK","index":2}]},"finish_reason":null}]}
+
+data: {"id":"gen-3","choices":[{"index":0,"delta":{"content":"Done."},"finish_reason":null}]}
+
+data: {"id":"gen-3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":18,"cost":0.0009,"completion_tokens_details":{"reasoning_tokens":11}}}
+
+data: [DONE]
+
