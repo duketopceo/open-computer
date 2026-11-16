@@ -1,6 +1,5 @@
-//! Connect Cloudflare. In this slice the person enters the address and access secret of an
-//! already deployed cloud core; the guided deploy step arrives later, so there is no deploy
-//! button here.
+//! The by-hand fields under Advanced: the address and access secret of a deployed cloud core, local-only mode, and a pasted
+//! OpenRouter key. The normal way in is the Get started screen, which needs no typing.
 
 use rune::{El, col, row};
 use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, Field, Kit, TextInput};
@@ -35,15 +34,6 @@ pub fn view(s: &App, k: &Kit) -> El {
         )
         .build(k);
 
-    let sign_in = Button::new("Sign in with Cloudflare")
-        .variant(if s.signing_in {
-            ButtonVariant::Loading
-        } else {
-            ButtonVariant::Submit
-        })
-        .disabled(s.signing_in)
-        .on_press(|s: &mut App| s.sign_in_cloudflare())
-        .build(k);
     let local = s.onboarding.local_only();
     let toggle = Button::new(if local {
         "Local only: on (press to use a cloud core)"
@@ -68,29 +58,20 @@ pub fn view(s: &App, k: &Kit) -> El {
         page = page
             .child(caption(
                 k,
-                "Point the app at your deployed cloud core. The secret is kept in your system keyring.",
+                "Only if the steps above cannot find your core: type the address and access secret of your deployed core. The secret is kept in your system keyring.",
             ))
             .child(url)
             .child(secret)
-            .child(row().child(status_badge(k, access_set)))
-            .child(caption(k, "To set up a new core, sign in with Cloudflare: your browser opens Cloudflare's page, you click Allow, and nothing is pasted."))
-            .child(sign_in);
-        if let Some(line) = &s.cloudflare_line {
-            page = page.child(caption(k, line.clone()));
-        }
-        if s.signing_in {
-            page = page.child(caption(k, "Working… the first run can take up to 30 seconds while Wrangler is found or downloaded."));
-        }
-        if s.cf_open_url.is_some() {
-            page = page.child(
-                Button::new("Open sign-in page")
-                    .variant(ButtonVariant::Submit)
-                    .on_press(|s: &mut App| s.open_sign_in_page())
-                    .build(k),
-            );
-        }
+            .child(row().child(status_badge(k, access_set)));
     }
-    page.child(toggle)
+    page.child(super::model_key::paste(s, k))
+        .child(toggle)
+        .child(
+            Button::new("Continue with these")
+                .variant(ButtonVariant::Neutral)
+                .on_press(|s: &mut App| s.next())
+                .build(k),
+        )
 }
 
 fn status_badge(k: &Kit, set: bool) -> El {

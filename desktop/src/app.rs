@@ -35,6 +35,17 @@ pub(crate) enum Msg {
         access: shell_core::signin::AccessState,
     },
     HarnessDetected(Vec<shell_core::harness::Detected>),
+    /// What looking for the core on the Cloudflare account found.
+    CoreFound(Result<shell_core::autoconnect::Discovery, String>),
+    SetupRows(Vec<shell_core::autoconnect::SetupRow>),
+    /// A line about setup for step 2, and whether to offer the AI Gateway dashboard link.
+    SetupNote {
+        line: String,
+        gateway_link: bool,
+    },
+    SetupDone(Result<bool, String>),
+    /// Whether the connected core already holds an OpenRouter key.
+    CoreHasKey(bool),
     /// Whether the connected core routes model calls through an AI Gateway.
     Gateway(Option<bool>),
     GatewayReason(Option<String>),
@@ -88,6 +99,20 @@ pub struct App {
     pub expanded_rows: std::collections::BTreeSet<String>,
     /// Keep the running row in view while the chain runs; opening a row stops it.
     pub follow_running: bool,
+    /// When each running row started, and when the chain did, for the live timers.
+    pub row_started: std::collections::BTreeMap<String, std::time::Instant>,
+    pub chain_started: Option<std::time::Instant>,
+    // Get started: finding or setting up the core with no typing.
+    pub found_core: Option<shell_core::autoconnect::FoundCore>,
+    pub finding_core: bool,
+    /// Wrangler's own sign-in answered a token request, so someone is signed in even before a sign-in click.
+    pub cf_hint_signed_in: bool,
+    pub core_line: Option<String>,
+    pub setup_rows: Vec<shell_core::autoconnect::SetupRow>,
+    pub setup_running: bool,
+    pub gateway_link: bool,
+    pub show_advanced: bool,
+    pub core_has_model_key: bool,
     last_tick: u64,
     waker: Option<Waker>,
     tx: Sender<Msg>,
@@ -96,9 +121,14 @@ pub struct App {
 
 impl App {
     pub fn new() -> App {
-        let store: Arc<dyn SecretStore> = Arc::new(shell_core::secrets::ResilientSecrets::new(
-            Box::new(KeyringSecrets::new()),
-        ));
+        // Screenshot runs never touch the real keyring.
+        let store: Arc<dyn SecretStore> = if std::env::var_os("OC_SCREEN_START").is_some() {
+            Arc::new(shell_core::secrets::InMemorySecrets::new())
+        } else {
+            Arc::new(shell_core::secrets::ResilientSecrets::new(Box::new(
+                KeyringSecrets::new(),
+            )))
+        };
         Self::with_store(store)
     }
 
@@ -142,6 +172,17 @@ impl App {
             set_model_key: TextEdit::new("").secure(),
             expanded_rows: Default::default(),
             follow_running: true,
+            row_started: Default::default(),
+            chain_started: None,
+            found_core: None,
+            finding_core: false,
+            cf_hint_signed_in: false,
+            core_line: None,
+            setup_rows: Vec::new(),
+            setup_running: false,
+            gateway_link: false,
+            show_advanced: false,
+            core_has_model_key: false,
             last_tick: 0,
             waker: None,
             tx,
@@ -160,14 +201,16 @@ impl App {
     pub fn setup(&mut self, waker: Waker) {
         self.waker = Some(waker);
         self.resume_from_config();
+        self.auto_connect_on_start();
     }
 
     /// Drain results from the test thread. True when state changed.
     pub fn poll(&mut self, seconds: f64, tx: &mut Tx) -> bool {
         // The "Working" timer ticks once a second while a task runs.
-        let tick = seconds.floor() as u64;
-        let mut changed =
-            self.main.as_ref().is_some_and(|m| m.chat.is_busy()) && tick != self.last_tick;
+        let tick = (seconds * 4.0).floor() as u64;
+        let mut changed = (self.main.as_ref().is_some_and(|m| m.chat.is_busy())
+            || self.diag_running)
+            && tick != self.last_tick;
         self.last_tick = tick;
         while let Ok(msg) = self.rx.try_recv() {
             changed = true;
@@ -180,6 +223,15 @@ impl App {
                             .find(|r| r.status == shell_core::diagnostics::Status::Running)
                     {
                         tx.scroll_into_view(format!("row-{}", r.id));
+                    }
+                    for r in &rows {
+                        if r.status == shell_core::diagnostics::Status::Running {
+                            self.row_started
+                                .entry(r.id.to_owned())
+                                .or_insert_with(std::time::Instant::now);
+                        } else {
+                            self.row_started.remove(r.id);
+                        }
                     }
                     self.diag_rows = rows;
                 }
@@ -195,7 +247,11 @@ impl App {
                     match r {
                         Ok(st) => {
                             self.cloudflare_line = Some(st.summary());
+                            let signed = st.signed_in;
                             self.cf_state = Some(st);
+                            if signed {
+                                self.after_sign_in();
+                            }
                         }
                         Err(words) => self.cloudflare_line = Some(words),
                     }
@@ -211,6 +267,14 @@ impl App {
                     self.cf_access = Some(access);
                 }
                 Msg::HarnessDetected(list) => self.harness_info = list,
+                Msg::CoreFound(r) => self.on_core_found(r),
+                Msg::SetupRows(rows) => self.setup_rows = rows,
+                Msg::SetupNote { line, gateway_link } => {
+                    self.core_line = Some(line);
+                    self.gateway_link = gateway_link;
+                }
+                Msg::SetupDone(r) => self.on_setup_done(r),
+                Msg::CoreHasKey(has) => self.on_core_has_key(has),
                 Msg::GatewayReason(r) => self.cf_gateway_reason = r,
                 Msg::Gateway(g) => {
                     if g.is_some() {
@@ -299,6 +363,10 @@ impl App {
                 self.onboarding.set_cloud_url(self.cloud_url.text.clone());
                 self.save_secret(Slot::CloudAccess)
             }
+            Step::ModelKey if self.core_has_model_key => {
+                self.mark_core_key_managed();
+                true
+            }
             Step::ModelKey => self.save_secret(Slot::ModelKey),
             _ => true,
         };
@@ -307,6 +375,12 @@ impl App {
         }
         if let Err(e) = self.onboarding.advance() {
             self.notice = Some(e.to_string());
+            return;
+        }
+        // The OpenRouter step is skipped when the core already holds a key.
+        if self.onboarding.step() == Step::ModelKey && self.core_has_model_key {
+            self.mark_core_key_managed();
+            let _ = self.onboarding.advance();
         }
     }
 
@@ -387,6 +461,7 @@ impl App {
         }
         self.notice = None;
         self.follow_running = true;
+        self.chain_started = Some(std::time::Instant::now());
         if self.onboarding.local_only() {
             self.run_local_full_tests();
             return;

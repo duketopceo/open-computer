@@ -210,3 +210,5 @@ app, setup wizard served by the cloud core, console) and supersedes the status h
   rows run as `oc doctor`. Source: `core/packages/diagnostics`.
 
 - **Sign in with Cloudflare (2026-11-16):** setup starts with a browser sign-in on Cloudflare's own page (click Allow). Nothing is minted, pasted or shown; an API token is only a hidden Advanced / CI fallback.
+
+- **Accent (2026-11-16):** one orange-to-red gradient (`#FFB020` to `#FF4D2E`), defined once as a theme token in the desktop app and as CSS custom properties in the web console. It marks what matters most on a screen (the primary action, live progress); everything else stays black and white. The colour lint allows exactly these two values and still fails on any other colour and on purple.

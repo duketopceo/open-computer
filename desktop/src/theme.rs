@@ -25,6 +25,11 @@ pub fn accent_fill(el: rune::El) -> rune::El {
     el.linear_gradient(std::f32::consts::FRAC_PI_2, [(0.0, a), (1.0, b)])
 }
 
+/// The amber end of the accent, for the running spinner.
+pub fn accent_amber() -> Color {
+    accent_colors()[0]
+}
+
 /// Text on the accent: black in both appearances, which keeps contrast on amber and on red.
 pub fn on_accent() -> Color {
     Color::BLACK

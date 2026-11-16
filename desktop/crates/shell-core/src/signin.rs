@@ -145,42 +145,69 @@ pub fn locate_wrangler(
     path: Option<&std::ffi::OsStr>,
     exists: &dyn Fn(&std::path::Path) -> bool,
 ) -> Located {
+    locate_wrangler_with(env_override, path, &[], exists)
+}
+
+/// Directories to check after the PATH: an app started from a desktop menu has a minimal PATH, but Node and npm tools
+/// usually live in the mise shims or `~/.local/bin`.
+pub fn extra_dirs(home: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    home.map(|h| vec![h.join(".local/share/mise/shims"), h.join(".local/bin")])
+        .unwrap_or_default()
+}
+
+/// The first executable called `name` in the PATH entries, then in `extras`.
+pub fn find_program(
+    name: &str,
+    path: Option<&std::ffi::OsStr>,
+    extras: &[std::path::PathBuf],
+    exists: &dyn Fn(&std::path::Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    let names: Vec<String> = if cfg!(windows) {
+        vec![
+            format!("{name}.cmd"),
+            format!("{name}.exe"),
+            format!("{name}.bat"),
+        ]
+    } else {
+        vec![name.to_owned()]
+    };
+    let dirs: Vec<std::path::PathBuf> = path
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    dirs.iter()
+        .chain(extras.iter())
+        .find_map(|d| names.iter().map(|n| d.join(n)).find(|c| exists(c)))
+}
+
+/// Like [`locate_wrangler`], also looking in `extras` after the PATH.
+pub fn locate_wrangler_with(
+    env_override: Option<&str>,
+    path: Option<&std::ffi::OsStr>,
+    extras: &[std::path::PathBuf],
+    exists: &dyn Fn(&std::path::Path) -> bool,
+) -> Located {
     if let Some(c) = env_override.map(str::trim).filter(|c| !c.is_empty()) {
         return Located {
             cmd: c.split_whitespace().map(str::to_owned).collect(),
             how: Found::Env,
         };
     }
-    let names: &[&str] = if cfg!(windows) {
-        &["wrangler.cmd", "wrangler.exe", "wrangler.bat"]
-    } else {
-        &["wrangler"]
-    };
-    if let Some(path) = path {
-        for dir in std::env::split_paths(path) {
-            for name in names {
-                let candidate = dir.join(name);
-                if exists(&candidate) {
-                    let p = candidate.to_string_lossy().into_owned();
-                    return Located {
-                        cmd: vec![p.clone()],
-                        how: Found::OnPath(p),
-                    };
-                }
-            }
-        }
+    if let Some(found) = find_program("wrangler", path, extras, exists) {
+        let p = found.to_string_lossy().into_owned();
+        return Located {
+            cmd: vec![p.clone()],
+            how: Found::OnPath(p),
+        };
     }
+    let npx = find_program("npx", path, extras, exists)
+        .map_or_else(|| "npx".to_owned(), |p| p.to_string_lossy().into_owned());
     Located {
-        cmd: vec![
-            "npx".to_owned(),
-            "--yes".to_owned(),
-            "wrangler@4".to_owned(),
-        ],
+        cmd: vec![npx, "--yes".to_owned(), "wrangler@4".to_owned()],
         how: Found::Npx,
     }
 }
 
-fn is_executable_file(p: &std::path::Path) -> bool {
+pub fn is_executable_file(p: &std::path::Path) -> bool {
     let Ok(m) = std::fs::metadata(p) else {
         return false;
     };
@@ -200,16 +227,40 @@ fn is_executable_file(p: &std::path::Path) -> bool {
 
 /// Where this computer's Wrangler is, using the real environment.
 pub fn locate_wrangler_here() -> Located {
-    locate_wrangler(
+    locate_wrangler_with(
         std::env::var("OC_WRANGLER").ok().as_deref(),
         std::env::var_os("PATH").as_deref(),
+        &extra_dirs(home_dir().as_deref()),
         &is_executable_file,
     )
+}
+
+pub fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+/// The PATH children are started with: ours, plus the extra directories, so a program found in the mise shims can find
+/// `node` there too even when the app was started from a desktop menu.
+pub fn child_path() -> std::ffi::OsString {
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    for e in extra_dirs(home_dir().as_deref()) {
+        if !dirs.contains(&e) {
+            dirs.push(e);
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or_default()
 }
 
 /// The command that runs Wrangler: `OC_WRANGLER`, else `wrangler` on the PATH, else `npx --yes wrangler@4`.
 pub fn wrangler_command() -> Vec<String> {
     locate_wrangler_here().cmd
+}
+
+/// The text without terminal colour codes.
+pub fn strip_ansi_text(s: &str) -> String {
+    strip_ansi(s)
 }
 
 fn strip_ansi(s: &str) -> String {
@@ -282,10 +333,24 @@ fn run_lines_ex(
     on_line: &mut dyn FnMut(&str),
     on_silence: &mut dyn FnMut(),
 ) -> Result<bool, String> {
+    run_lines_env(cmd, extra, &[], silence, on_line, on_silence)
+}
+
+/// [`run_lines_ex`] with extra environment variables for the child only (for example a key setup needs).
+pub fn run_lines_env(
+    cmd: &[String],
+    extra: &[String],
+    envs: &[(String, String)],
+    silence: std::time::Duration,
+    on_line: &mut dyn FnMut(&str),
+    on_silence: &mut dyn FnMut(),
+) -> Result<bool, String> {
     let (program, rest) = cmd.split_first().ok_or("Wrangler was not found.")?;
     let mut child = Command::new(program)
         .args(rest)
         .args(extra)
+        .env("PATH", child_path())
+        .envs(envs.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -323,7 +388,7 @@ fn run_lines_ex(
     Ok(child.wait().map(|s| s.success()).unwrap_or(false))
 }
 
-fn run_lines(
+pub fn run_lines(
     cmd: &[String],
     extra: &[String],
     on_line: &mut dyn FnMut(&str),
@@ -807,6 +872,60 @@ mod tests {
                 .starts_with("Downloading Wrangler with npx")
         );
         assert!(env.describe(None).contains("OC_WRANGLER"));
+    }
+
+    #[test]
+    fn a_minimal_menu_path_still_finds_wrangler_and_npx_in_the_mise_shims_and_local_bin() {
+        let on = |files: &'static [&'static str]| {
+            move |p: &std::path::Path| files.contains(&p.to_string_lossy().as_ref())
+        };
+        let home = std::path::PathBuf::from("/home/u");
+        let extras = extra_dirs(Some(&home));
+        assert_eq!(
+            extras,
+            [
+                std::path::PathBuf::from("/home/u/.local/share/mise/shims"),
+                std::path::PathBuf::from("/home/u/.local/bin")
+            ]
+        );
+        let path = std::ffi::OsString::from("/usr/bin:/bin");
+        // Not on the menu's PATH, but in the mise shims.
+        let shim = locate_wrangler_with(
+            None,
+            Some(&path),
+            &extras,
+            &on(&["/home/u/.local/share/mise/shims/wrangler"]),
+        );
+        assert_eq!(shim.cmd, ["/home/u/.local/share/mise/shims/wrangler"]);
+        // Only npx exists (in ~/.local/bin): the download fallback uses its full path.
+        let npx =
+            locate_wrangler_with(None, Some(&path), &extras, &on(&["/home/u/.local/bin/npx"]));
+        assert_eq!(npx.cmd, ["/home/u/.local/bin/npx", "--yes", "wrangler@4"]);
+        // The PATH still wins over the extras, and OC_WRANGLER over both.
+        let both = locate_wrangler_with(
+            None,
+            Some(&path),
+            &extras,
+            &on(&["/usr/bin/wrangler", "/home/u/.local/bin/wrangler"]),
+        );
+        assert_eq!(both.cmd, ["/usr/bin/wrangler"]);
+        assert_eq!(
+            locate_wrangler_with(Some("mise x wrangler"), Some(&path), &extras, &on(&[])).how,
+            Found::Env
+        );
+        assert!(find_program("oc", Some(&path), &extras, &on(&[])).is_none());
+    }
+
+    #[test]
+    fn children_get_a_path_that_includes_the_extra_directories() {
+        let p = child_path();
+        let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&p).collect();
+        if let Some(h) = home_dir() {
+            assert!(
+                dirs.contains(&h.join(".local/bin"))
+                    && dirs.contains(&h.join(".local/share/mise/shims"))
+            );
+        }
     }
 
     #[test]

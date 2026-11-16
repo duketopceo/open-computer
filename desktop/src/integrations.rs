@@ -162,6 +162,7 @@ impl App {
             });
         }
         self.refresh_openrouter();
+        self.finish_onboarding_if_ready();
     }
 
     /// Loads key usage and limit, credits, models with prices and recent generation stats. A connected core answers through
