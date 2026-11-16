@@ -45,10 +45,17 @@ ALWAYS_HUMAN = (
 )
 
 # Verb stems that make an action a send even when the tool name does not
-# say so — matched as substrings over the whole (tool, arg) text, wordish.
+# say so. `_SEND` is word-bounded over the arg text; `_SEND_VERBS` holds
+# the same stems for token-split matching over tool names, where `\b`
+# cannot see a verb after an underscore (`records.read_and_send`).
 _SEND = re.compile(
     r"\b(send|submit|post|publish|purchase|pay|checkout|book|delete|remove|"
     r"transfer|reply|tweet|email|invite|follow|order)\b", re.I)
+_SEND_VERBS = frozenset({
+    "send", "submit", "post", "publish", "purchase", "pay", "checkout",
+    "book", "delete", "remove", "transfer", "reply", "tweet", "email",
+    "invite", "follow", "order",
+})
 
 # Tool-name tokens that declare observation, whatever the arg holds.
 _READ_NAMES = frozenset({
@@ -76,24 +83,30 @@ def classify(tool: str, arg: str = "") -> str:
     if always_human(arg):
         return "handoff"
     name = str(tool or "").lower()
-    text = f"{name} {arg or ''}"
-    # read-shaped tool names: the tool itself declares observation — but
-    # a send verb anywhere in the tool name or arg overrides the name
-    # (`find_and_send` must not read as `find`)
-    if not _SEND.search(name):
-        for token in re.split(r"[._\-\s]+", name):
-            if token in _READ_NAMES:
-                return "run"
-    if _SEND.search(text):
+    # send verbs first, over BOTH the tool name and the arg: `\b` does
+    # not cross `_`, so `records.read_and_send` must be caught by
+    # token-splitting the name, and an arg that names the send ("send
+    # the record") overrides an observation tool ("records.read")
+    name_tokens = re.split(r"[._\-\s]+", name)
+    if (_SEND.search(name) or any(t in _SEND_VERBS for t in name_tokens)
+            or _SEND.search(str(arg or ""))):
         return "ask"
+    # read-shaped tool names: the tool itself declares observation
+    if any(t in _READ_NAMES for t in name_tokens):
+        return "run"
     return "ask"
 
 
 def approval_detail(tool: str, arg: str) -> dict:
     """The detail dict an ask-class approval binds to. The payload hash
     over this dict is what the owner approves; a different arg is a
-    different approval."""
-    return {"tool": tool, "arg": str(arg or "")[:2000]}
+    different approval. Identity binds to the COMPLETE argument — the
+    hash consumes `arg` whole (so two long args sharing a prefix never
+    collide) while `arg_display` carries the truncated text the owner
+    actually reads."""
+    arg = str(arg or "")
+    return {"tool": tool, "arg": arg,
+            "arg_display": arg[:2000] + ("…" if len(arg) > 2000 else "")}
 
 
 def refusal(marker: str) -> str:

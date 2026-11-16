@@ -470,3 +470,23 @@ def test_grandchild_dies_with_the_worker(tmp_path, steps, timeout):
     while _alive(pid) and time.time() < deadline:
         time.sleep(0.05)
     assert not _alive(pid)
+
+
+def test_always_human_input_is_a_handoff_refusal_not_an_ask(tmp_path):
+    """An always-human marker in the permission input (CAPTCHA, paywall,
+    security warning) is refused as a handoff before any approval path
+    can ask: no ask card, and the marker-specific refusal lands in the
+    permissions record."""
+    cwd = tmp_path / "p"
+    cwd.mkdir()
+    w, _log = _worker(tmp_path, {"prompt": [
+        _perm({"title": "captcha", "kind": "execute", "rawInput": {"click": "verify you are human"}}),
+        _msg("stopped at the captcha"),
+    ]})
+    asked = []
+    res = w.run(WorkerTask("go", str(cwd), "fake/model-a"), lambda e, d: None,
+                lambda k, d: asked.append((k, d)) or False)
+    assert res.status == "done"
+    assert asked == []  # no approval card was raised
+    assert any("handoff" in p["verdict"] and "verify you are human" in p["verdict"]
+               for p in res.permissions)  # the marker text, from rawInput

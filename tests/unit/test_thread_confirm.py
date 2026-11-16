@@ -57,6 +57,23 @@ def test_refusal_names_the_marker_and_says_stop():
     assert "report" in out
 
 
-def test_long_args_are_capped_in_the_approval_detail():
+def test_long_args_are_capped_for_display_only():
     d = confirm.approval_detail("t", "x" * 5000)
-    assert len(d["arg"]) == 2000
+    # identity binds to the complete argument; only the display text caps
+    assert d["arg"] == "x" * 5000
+    assert len(d["arg_display"]) == 2001 and d["arg_display"].endswith("…")
+
+
+def test_two_long_args_sharing_a_prefix_hash_differently():
+    from services.gate.gate import payload_hash
+    a = confirm.approval_detail("browser.click", "x" * 2000 + "buy")
+    b = confirm.approval_detail("browser.click", "x" * 2000 + "cancel")
+    assert payload_hash(a) != payload_hash(b)
+
+
+def test_a_send_verb_inside_an_underscored_tool_name_asks():
+    assert confirm.classify("records.read_and_send", "record 7") == "ask"
+
+
+def test_a_send_verb_in_the_arg_overrides_a_read_tool_name():
+    assert confirm.classify("records.read", "send the record") == "ask"

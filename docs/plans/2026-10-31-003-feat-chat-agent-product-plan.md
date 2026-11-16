@@ -496,7 +496,7 @@ U3 and U4 can run in parallel; U5 (shell) needs U3's list endpoint, U19 and U22 
 - Collapse persists across reload; at 390 px the composer is visible without horizontal scroll and the drawer traps and returns focus.
 - Both modes pass axe contrast; reduced-motion removes the glow animation; reduced-transparency makes the sidebar opaque.
 - Account menu reaches Developer and the Settings placeholder; Artifacts and Plugins open their empty-state placeholders; the Computer board lists only running, waiting and paused threads; every old operator URL still resolves.
-- A thread that becomes `waiting` after a mock approval raises the bell within one poll.
+- A thread that becomes `waiting` after a mock approval sets the needs-you state the bell reads (U23 ships the visible bell and its popover; its test asserts the raise within one poll).
 **Delete:** `ui/src/components/Sidebar.tsx`, the duplicate nav in `ui/src/components/PageShell.tsx`, the `view === "agents"` branch in `ui/src/App.tsx`.
 
 ### U21. Home composer, mode toggle and the two model pickers (OC-088)
@@ -719,7 +719,7 @@ The right-hand activity panel projects real step and tool status, sources, artif
 
 ## Open decisions for Luke
 
-- D1. **Orchestrator default per effort level.** The landed catalog uses `deepseek/deepseek-v4-pro` for High. Grok 4.7 exceeds the current price ceiling and cannot be a preset under KTD14. Keep the landed preset or choose another permitted model; changing the ceiling is a separate owner decision.
+- D1. **Orchestrator default per effort level.** The landed catalog maps High to `z-ai/glm-5.3` (`services/router/model_catalog.json` presets); `deepseek/deepseek-v4-pro` is one of its fallbacks, not the preset. Grok 4.7 exceeds the current price ceiling and cannot be a preset under KTD14. Keep the landed preset or choose another permitted model; changing the ceiling is a separate owner decision.
 - D2. RESOLVED: a model above the Grok 4.7 ceiling may be added to the curated list, only by an explicit hand-edited `above_ceiling: true` entry; never a default; the picker shows its price; `tests/unit/test_spend_rule.py` enforces no above-ceiling default and that every above-ceiling entry is flagged (KTD14, U20). (session-settled: user-directed — chosen over never allowing one: the owner wants the option kept for hard tasks with no accidental path.)
 - D3. RESOLVED: `OC_DAILY_CAP` defaults to $5.00 per day, with each thread holding its own hard cap inside it; no separate "Long run" option (KTD5, U1, U13). (session-settled: user-directed — chosen over $25 per working day and over keeping $1.00 with per-thread overrides: $5.00 permits real work while thread caps bound each thread.) Open detail: the default per-thread cap value, set in Settings > Budgets.
 - D4. RESOLVED: local models stay opt-in; private content with local models off is held for the owner's inline approval, send to hosted or skip the step (KTD4, U1, U12). (session-settled: user-directed — chosen over refusing: the owner decides per step instead of losing the work.)

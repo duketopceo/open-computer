@@ -74,23 +74,61 @@ def test_memory_file_splices_last_and_survives_compaction(tdir):
     from services import compact as oc_compact
 
     t = threads.create("long research thread", PLAN)
-    # a thread long enough that fit() must compact it (budget 1 forces it)
+    # a thread long enough that fit() must compact it (budget 1 forces it);
+    # the LIVE user turn is appended last so tail=1 keeps it verbatim
     for i in range(4):
         threads.append(t["id"], "user", f"filler {i}: {'words ' * 60}")
         threads.append(t["id"], "assistant", f"reply {i}: {'notes ' * 60}")
+    threads.append(t["id"], "user", "the live question")
     d, started = deps(Script(decision("memory", "goal: survey the regolith papers"), decision("reply", "on it")))
     d.compact = oc_compact.Compactor(oc_compact.CompactConfig(budget=1, tail=1), lambda model, messages: '{"rel":1,"load":0.1}')
     threads.run_turn(t["id"], d)
     # the file was written beside the span store
     assert oc_compact.read_memory(t["id"]) == "goal: survey the regolith papers"
-    # the second pass (the one that produced the reply) saw the memory file last, after the compacted block
+    # the second pass (the one that produced the reply) saw the memory
+    # immediately before the live user turn, after the compacted block
     second = d.engine.seen[1] if hasattr(d.engine, "seen") else d.engine.calls[1]
-    assert second[-1]["content"].startswith(oc_compact.MEMORY_HEADER)
-    assert "goal: survey the regolith papers" in second[-1]["content"]
-    # and the compacted summary block sat before it, not after
-    assert any(oc_compact.HEADER in m["content"] for m in second[:-1])
+    mem_idx = next(i for i, m in enumerate(second)
+                   if m["content"].startswith(oc_compact.MEMORY_HEADER))
+    assert "goal: survey the regolith papers" in second[mem_idx]["content"]
+    # the message right after the memory is the live user turn (or the
+    # final note on the last pass); the compacted block sat before it
+    assert any(oc_compact.HEADER in m["content"] for m in second[:mem_idx])
+    assert mem_idx + 1 < len(second)  # the live turn follows the memory
     # the memory write cost no run
     assert started == []
+
+
+def test_memory_write_is_bounded_per_turn(tdir):
+    """A model that only ever writes memory would loop unboundedly: each
+    successful save `continue`s without advancing the pass counter.
+    MAX_MEMORY_WRITES bounds it, and the stop is a user-visible reply."""
+    from services import compact as oc_compact
+
+    t = threads.create("loopy", PLAN)
+    answers = [decision("memory", f"goal v{i}") for i in range(6)]
+    d, started = deps(Script(*answers, decision("reply", "finally")))
+    threads.run_turn(t["id"], d)
+    # writes stopped at the bound; the turn ended with a visible reply
+    assert oc_compact.read_memory(t["id"]).startswith("goal v1")  # last accepted write
+    last = threads.get(t["id"])["messages"][-1]
+    assert last["role"] == "assistant" and "too many memory saves" in last["text"]
+    # the loop did not spin: bounded engine calls (writes + the final reply)
+    assert len(d.engine.seen) <= threads.MAX_MEMORY_WRITES + 2
+
+
+def test_memory_write_works_without_a_compactor(tdir):
+    """OC_COMPACT=off (d.compact None) must not turn every memory
+    decision into a failure note: the write path does not need the
+    compactor, and the read path already injects without checking."""
+    from services import compact as oc_compact
+
+    t = threads.create("no compaction", PLAN)
+    d, _ = deps(Script(decision("memory", "goal: keep this"), decision("reply", "done")))
+    threads.run_turn(t["id"], d)
+    assert oc_compact.read_memory(t["id"]) == "goal: keep this"
+    last = threads.get(t["id"])["messages"][-1]
+    assert last["role"] == "assistant" and last["text"] == "done"
 
 
 def test_no_memory_file_splices_nothing(tdir):
@@ -105,8 +143,12 @@ def oc_compact_read(tid):
     return oc_compact.read_memory(tid)
 
 
-def test_memory_write_without_a_compactor_replies_with_a_failure_note(tdir):
+def test_memory_write_failure_with_a_broken_compact_root_replies_with_a_note(tdir, monkeypatch):
+    """A write that fails (unwritable compact root) still degrades to a
+    user-visible note, not a crash."""
+    from services import compact as oc_compact
     t = threads.create("hello", PLAN)
+    monkeypatch.setattr(oc_compact, "write_memory", lambda tid, text, root=None: False)
     d, _ = deps(Script(decision("memory", "goal: x"), decision("reply", "hi")))
     threads.run_turn(t["id"], d)
     msgs = threads.get(t["id"])["messages"]

@@ -247,6 +247,10 @@ _STOP_NOTES = {
 
 
 MAX_RESTORES = 2  # restored spans per user message; bounds a model that keeps asking
+MAX_MEMORY_WRITES = 2  # memory saves per user message, outside the pass count like
+                       # restores; bounds a model that only ever writes memory (each
+                       # successful write `continue`s without n += 1, so the pass
+                       # guard alone would let it loop unboundedly)
 
 
 def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES, waiting_on: str | None = None) -> None:
@@ -269,6 +273,7 @@ def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES, waiting_on: s
         block = oc_memory.render_block(hits)
         last_run: str | None = waiting_on
         restored: list[dict] = []  # this turn's restored spans, shown after the thread on every later call
+        saves = 0  # successful memory writes this turn, bounded by MAX_MEMORY_WRITES
         n = 0
         while n <= max_passes:
             t = _read(tid)
@@ -279,18 +284,34 @@ def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES, waiting_on: s
             msgs = chat.build_messages(t, runs, final=final, memory=block)
             if d.compact is not None:
                 msgs = d.compact.fit(tid, msgs).messages
-            # the thread's own memory file rides last, right before the
-            # live turn: a disk read at injection time, never part of the
-            # compacted block, so what the model wrote survives it whole
+            # the thread's own memory file sits between the history and
+            # the live user turn: a disk read at injection time, never
+            # part of the compacted block, so what the model wrote
+            # survives it whole. FINAL_NOTE (appended by build_messages)
+            # stays after the live turn; the memory moves ahead of both.
             mem = oc_compact.memory_message(tid)
             if mem is not None:
-                msgs.append(mem)
+                # immediately before the LAST user message with the live
+                # text: an earlier message could repeat the same words
+                # verbatim, and the memory belongs beside the live turn
+                # only. FINAL_NOTE, appended after it by build_messages,
+                # stays the last thing in context.
+                cut = len(msgs)
+                if user:
+                    for i, m in enumerate(msgs):
+                        if m["role"] == "user" and m.get("content") == user.get("text"):
+                            cut = i
+                msgs.insert(cut, mem)
             dec = chat.parse_decision(d.engine(msgs + restored))
             if dec.action == "memory":
-                if d.compact is not None and oc_compact.write_memory(tid, dec.text):
+                if saves >= MAX_MEMORY_WRITES:
+                    dec = chat.Decision("reply", "I could not finish that: too many memory saves in one turn.")
+                elif oc_compact.write_memory(tid, dec.text):
+                    saves += 1
                     trace(tid, "memory_write", {"chars": len(dec.text)})
                     continue  # writing memory is not a pass: the model answers again with it saved
-                dec = chat.Decision("reply", "I could not save my memory file.")
+                else:
+                    dec = chat.Decision("reply", "I could not save my memory file.")
             if dec.action == "restore":
                 text = d.compact.restore(tid, dec.spans) if d.compact is not None else None
                 if len(restored) < MAX_RESTORES:

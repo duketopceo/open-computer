@@ -5,6 +5,7 @@ spliced back as a user-role message immediately before the live turn."""
 
 from __future__ import annotations
 
+import pathlib
 
 from services import compact as c
 
@@ -70,3 +71,24 @@ def test_fit_leaves_the_memory_file_out_of_the_compacted_block(tmp_path):
     assert out.compacted
     sent = "\n".join(str(m["content"]) for m in out.messages)
     assert "goal: the lidar fix" not in sent  # the model's memory was never an input
+
+
+def test_a_failed_write_preserves_the_previous_file(tmp_path, monkeypatch):
+    """A disk-full mid-write must not truncate or half-replace the
+    existing memory: the write is atomic (complete temp file, replace)."""
+    c.write_memory("th1", "goal: the good version", tmp_path)
+    before = c.read_memory("th1", tmp_path)
+
+    real_write_text = pathlib.Path.write_text
+
+    def exploding(self, data, *a, **kw):
+        if self.suffix == ".tmp":
+            raise OSError(28, "No space left on device")
+        return real_write_text(self, data, *a, **kw)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", exploding)
+    assert c.write_memory("th1", "goal: the new version", tmp_path) is False
+    monkeypatch.undo()
+    assert c.read_memory("th1", tmp_path) == before
+    # no temp litter left behind
+    assert not list((tmp_path / "_compact" / "th1").glob("*.tmp"))

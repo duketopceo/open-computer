@@ -109,14 +109,22 @@ def write_memory(tid: str, text: str, root_dir: Path | None = None) -> bool:
     """Replace the memory file with the model's text. The model may only
     replace it whole — no appends, no deletes — so the file is always
     exactly what the model believes, and a hallucinated merge cannot
-    leave a stale rule standing."""
+    leave a stale rule standing. The write is atomic (complete temp
+    file, then replace): a disk-full mid-write preserves the previous
+    file instead of leaving it truncated or half-replaced."""
     if not text or not text.strip():
         return False
     p = memory_path(tid, root_dir)
+    tmp = p.parent / f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text.strip()[:MEMORY_MAX_CHARS], encoding="utf-8")
+        tmp.write_text(text.strip()[:MEMORY_MAX_CHARS], encoding="utf-8")
+        os.replace(tmp, p)
     except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         return False
     return True
 
