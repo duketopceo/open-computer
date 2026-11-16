@@ -331,9 +331,12 @@ pub struct Started {
     pub session_id: String,
 }
 
+/// What a 401 from the core is called on screen.
+pub const REFUSED: &str = "The core refused the access token.";
+
 fn plain(status: u16) -> String {
     match status {
-        401 => "The core refused the access token.".to_owned(),
+        401 => REFUSED.to_owned(),
         403 => "Your IT policy does not allow that.".to_owned(),
         409 => "A task is already running in this session.".to_owned(),
         s if s >= 500 => "The core had an error. Try again.".to_owned(),

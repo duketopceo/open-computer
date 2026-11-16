@@ -143,6 +143,17 @@ pub fn adopt_saved_core(core: SavedCore, store: &dyn SecretStore) -> Result<Stri
     }
 }
 
+/// A 401 with the token the keyring holds: does the saved connection file name the same core with a different token? Compares
+/// without showing either token. False when the file is missing, unusable, for another core, or holds the same token.
+pub fn saved_token_differs(path: &Path, url: &str, current_token: &str) -> bool {
+    let norm = |u: &str| u.trim().trim_end_matches('/').to_ascii_lowercase();
+    read_saved_core(path).is_some_and(|c| norm(&c.url) == norm(url) && c.token != current_token)
+}
+
+/// What to say when the core refuses the token and the saved file cannot replace it.
+pub const REFUSED_SAVED: &str =
+    "The core refused the saved token. Run setup or paste the token under Advanced.";
+
 impl SavedCore {
     /// Takes the token for this session only (never the keyring): used when the person agrees to use the saved file instead.
     pub fn use_for_session(self, store: &dyn SecretStore) -> Result<String, String> {

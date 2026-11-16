@@ -361,3 +361,55 @@ fn each_local_agent_can_use_open_computers_model_or_its_own_default_and_the_choi
     assert!(has(&rt, "--provider openrouter") && has(&rt, "openrouter/<model>"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_refused_keyring_token_is_replaced_from_the_saved_file_once_and_never_shown() {
+    let store = Arc::new(InMemorySecrets::new());
+    store.set(Slot::CloudAccess, "stale-old-paste").unwrap();
+    let (mut app, dir) = app_with_saved_core(store.clone(), "stale");
+    app.onboarding.set_cloud_url("http://127.0.0.1:9");
+    app.readopt_saved_token();
+    assert!(app.readopt_tried);
+    assert_eq!(
+        store.get(Slot::CloudAccess).unwrap().as_deref(),
+        Some(TOKEN),
+        "the file's token replaced the stale one in the keyring"
+    );
+    assert!(!format!("{:?} {:?}", app.core_line, app.keyring_problem).contains("stale-old-paste"));
+    // Only the saved file's token for the same core qualifies; nothing else is ever offered.
+    assert!(shell_core::autoconnect::saved_token_differs(
+        &dir.join("cloud.json"),
+        "http://127.0.0.1:9/",
+        "stale-old-paste"
+    ));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn when_the_keyring_refuses_the_replacement_the_person_is_asked_and_a_second_401_says_what_to_do() {
+    let store = Arc::new(shell_core::secrets::ResilientSecrets::new(Box::new(
+        Refusing,
+    )));
+    let (mut app, dir) = app_with_saved_core(store, "stale2");
+    app.onboarding.set_cloud_url("http://127.0.0.1:9");
+    app.readopt_saved_token();
+    assert!(
+        app.file_token_offer,
+        "the saved file is offered, not used behind the person's back"
+    );
+    assert!(
+        app.keyring_problem
+            .as_deref()
+            .unwrap()
+            .contains("refused to save")
+    );
+    // A refusal that cannot be repaired says what to do.
+    app.on_core_checked(Err(shell_core::autoconnect::REFUSED_SAVED.to_owned()));
+    assert_eq!(
+        app.core_check,
+        CoreCheck::Failed(
+            "The core refused the saved token. Run setup or paste the token under Advanced.".into()
+        )
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

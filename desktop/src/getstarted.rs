@@ -187,10 +187,62 @@ impl App {
         };
         self.core_check = CoreCheck::Checking;
         let (tx, waker) = (self.tx(), self.waker());
+        let saved_path = self.saved_core_path.clone();
+        let tried = self.readopt_tried;
         std::thread::spawn(move || {
-            let r = Endpoint::new(&url, &token).bindings().map(|_| ());
-            notify(&tx, &waker, Msg::CoreChecked(r));
+            let msg = match Endpoint::new(&url, &token).bindings() {
+                Ok(_) => Msg::CoreChecked(Ok(())),
+                // A refused keyring token with a different one in the saved file for this core: replace it (once).
+                Err(e) if e == shell_core::chat::REFUSED => {
+                    if !tried && autoconnect::saved_token_differs(&saved_path, &url, &token) {
+                        Msg::StaleToken
+                    } else {
+                        Msg::CoreChecked(Err(autoconnect::REFUSED_SAVED.to_owned()))
+                    }
+                }
+                Err(e) => Msg::CoreChecked(Err(e)),
+            };
+            notify(&tx, &waker, msg);
         });
+    }
+
+    /// The keyring's token was refused and the saved file holds another for the same core: put the file's token in the keyring in
+    /// place of the old one and check again, once.
+    pub fn readopt_saved_token(&mut self) {
+        self.readopt_tried = true;
+        shell_core::log_warn!(
+            "connect",
+            "the core refused the keyring token; re-adopting the token from the saved connection file"
+        );
+        let Some(core) = autoconnect::read_saved_core(&self.saved_core_path.clone()) else {
+            self.on_core_checked(Err(autoconnect::REFUSED_SAVED.to_owned()));
+            return;
+        };
+        match autoconnect::adopt_saved_core(core, &*self.store) {
+            Ok(url) => {
+                shell_core::log_info!(
+                    "connect",
+                    "replaced the keyring token with the saved file's for {url}; checking again"
+                );
+                self.keyring_problem = None;
+                self.onboarding.sync_secrets(&*self.store);
+                self.verify_core();
+            }
+            Err(reason) => {
+                // The keyring would not take the new token. With the person's earlier yes, use the file for this session.
+                self.keyring_problem = Some(reason.clone());
+                if config::load(&self.config_path.clone()).file_token_ok
+                    && self.use_saved_token_inner(&reason)
+                {
+                    return;
+                }
+                self.file_token_offer = true;
+                self.core_check = CoreCheck::Failed(autoconnect::REFUSED_SAVED.to_owned());
+                self.core_line = Some(format!(
+                    "The core refused the keyring's token. {reason} The saved file has a newer one you can use for now."
+                ));
+            }
+        }
     }
 
     pub fn on_core_checked(&mut self, r: Result<(), String>) {

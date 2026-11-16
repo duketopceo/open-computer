@@ -38,6 +38,8 @@ pub(crate) enum DataMsg {
 }
 
 pub(crate) enum Msg {
+    /// The core refused the keyring's token while the saved connection file holds a different one for the same core.
+    StaleToken,
     /// The answer of a real request to the core (`/v1/diag/bindings`).
     CoreChecked(Result<(), String>),
     TestDone(Result<TestConnection, String>),
@@ -148,6 +150,8 @@ pub struct App {
     pub models_sort: (shell_core::settings_data::ModelSort, bool),
     /// Whether the core answered a real request, for the sidebar chip.
     pub core_check: CoreCheck,
+    /// A stale keyring token was already replaced from the saved file once this run; a second 401 is reported, not retried.
+    pub readopt_tried: bool,
     /// Why the keyring could not hold a secret, in words (from the keyring's own error), shown until a save works.
     pub keyring_problem: Option<String>,
     /// The keyring refused the saved token: offer to use `cloud.json` for this session instead (needs the person's yes).
@@ -249,6 +253,7 @@ impl App {
             models_query: TextEdit::new(""),
             models_sort: (shell_core::settings_data::ModelSort::Prompt, true),
             core_check: CoreCheck::Unknown,
+            readopt_tried: false,
             keyring_problem: None,
             file_token_offer: false,
             history_dir: None,
@@ -330,6 +335,7 @@ impl App {
                 }
                 Msg::DiagDone => self.diag_running = false,
                 Msg::CoreChecked(r) => self.on_core_checked(r),
+                Msg::StaleToken => self.readopt_saved_token(),
                 Msg::ChatEvent(sid, e) => {
                     if let Some(dir) = &self.history_dir {
                         shell_core::history::append(dir, &sid, &e);

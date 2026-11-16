@@ -174,6 +174,58 @@ fn endpoint(t: &Targets) -> Result<(Endpoint, &'static str), String> {
     Ok((Endpoint::new(&saved.cloud_url, &token), "keyring"))
 }
 
+/// The token the keyring holds, tried on the core: a stale one (an old paste) makes every call fail with 401 while the saved file's
+/// token works, and the app must not hide that.
+fn keyring_token_line(t: &Targets) -> Line {
+    const NAME: &str = "core accepts the keyring token";
+    let token = match t.real_store.get(Slot::CloudAccess) {
+        Ok(Some(v)) if !v.is_empty() => v,
+        Ok(_) => return Line::new(NAME, Verdict::Skip, "the keyring holds no access token"),
+        Err(e) => {
+            return Line::new(
+                NAME,
+                Verdict::Fail,
+                format!("the keyring could not be read: {}", e.0),
+            );
+        }
+    };
+    let saved = crate::config::load(&t.config_path);
+    let from_file = autoconnect::read_saved_core(&t.cloud_json).map(|c| c.url);
+    let Some(url) = Some(saved.cloud_url)
+        .filter(|u| !u.is_empty())
+        .or(from_file)
+    else {
+        return Line::new(
+            NAME,
+            Verdict::Fail,
+            "a token is in the keyring but no core address is saved to try it on",
+        );
+    };
+    match Endpoint::new(&url, &token).bindings() {
+        Ok(_) => Line::new(
+            NAME,
+            Verdict::Pass,
+            format!("{url} accepted the keyring's token"),
+        ),
+        Err(e) if e == crate::chat::REFUSED => {
+            let better = autoconnect::saved_token_differs(&t.cloud_json, &url, &token);
+            Line::new(
+                NAME,
+                Verdict::Fail,
+                format!(
+                    "{e} The keyring's token is stale.{}",
+                    if better {
+                        " cloud.json holds a different token for this core; the app will replace the keyring's with it on start."
+                    } else {
+                        " Run setup or paste the token under Advanced."
+                    }
+                ),
+            )
+        }
+        Err(e) => Line::new(NAME, Verdict::Fail, e),
+    }
+}
+
 /// What is saved right now: the address in `desktop.json` and the token in the keyring (or the consent to use `cloud.json`).
 fn persisted_line(t: &Targets) -> Line {
     const NAME: &str = "persisted connection (what survives a restart)";
@@ -368,6 +420,8 @@ pub fn run(t: &Targets) -> Vec<Line> {
         }
     }
 
+    out.push(keyring_token_line(t));
+
     out.push(match signin::whoami_with(&t.wrangler) {
         Ok(s) if s.signed_in => Line::new(
             "wrangler whoami",
@@ -484,7 +538,9 @@ mod tests {
                 let n = s.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let first = req.lines().next().unwrap_or("").to_owned();
-                let (code, body) = if first.contains("/v1/diag/bindings") {
+                let (code, body) = if req.contains("stale-token-xyz") {
+                    (401, r#"{"error":{"message":"bad token"}}"#)
+                } else if first.contains("/v1/diag/bindings") {
                     (
                         200,
                         r#"{"d1":true,"r2":true,"durable_objects":true,"container":true,"model_key":true}"#,
@@ -690,5 +746,78 @@ mod tests {
         assert!(r.unwrap_err().contains("could not be started"));
         let r = run_bounded("sh", &["-c", "sleep 5"], Duration::from_millis(150));
         assert!(r.unwrap_err().contains("did not answer"));
+    }
+
+    #[test]
+    fn a_stale_keyring_token_fails_its_own_line_and_says_the_file_can_replace_it() {
+        let url = fake_core();
+        let f = temp_file(
+            "stale.json",
+            &format!(r#"{{"url":"{url}","token":"{TOKEN}"}}"#),
+        );
+        let mut t = targets(f.clone(), Box::new(InMemorySecrets::new()));
+        std::fs::create_dir_all(t.config_path.parent().unwrap()).unwrap();
+        crate::config::save(
+            &t.config_path,
+            &crate::config::Saved {
+                cloud_url: url.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let real = InMemorySecrets::new();
+        real.set(Slot::CloudAccess, "stale-token-xyz").unwrap();
+        t.real_store = Box::new(real);
+        let lines = run(&t);
+        let line = by_name(&lines, "core accepts the keyring token");
+        assert_eq!(line.verdict, Verdict::Fail, "{}", render(&lines));
+        assert!(
+            line.detail.contains("stale")
+                && line.detail.contains("cloud.json holds a different token"),
+            "{}",
+            line.detail
+        );
+        assert!(
+            !render(&lines).contains("stale-token-xyz"),
+            "the stale token is never printed"
+        );
+        // The saved file's own token still works against the same core.
+        assert_eq!(by_name(&lines, "core /v1/diag").verdict, Verdict::Pass);
+        // A good keyring token passes.
+        let real = InMemorySecrets::new();
+        real.set(Slot::CloudAccess, TOKEN).unwrap();
+        t.real_store = Box::new(real);
+        assert_eq!(
+            by_name(&run(&t), "core accepts the keyring token").verdict,
+            Verdict::Pass
+        );
+        let _ = std::fs::remove_file(f);
+    }
+
+    #[test]
+    fn the_saved_file_is_compared_by_core_and_token_without_showing_either_token() {
+        let f = temp_file(
+            "cmp.json",
+            r#"{"url":"https://Core.Example/","token":"file-token-1"}"#,
+        );
+        assert!(autoconnect::saved_token_differs(
+            &f,
+            "https://core.example",
+            "keyring-token"
+        ));
+        assert!(
+            !autoconnect::saved_token_differs(&f, "https://core.example", "file-token-1"),
+            "same token"
+        );
+        assert!(
+            !autoconnect::saved_token_differs(&f, "https://other.example", "keyring-token"),
+            "another core"
+        );
+        assert!(!autoconnect::saved_token_differs(
+            std::path::Path::new("/nonexistent"),
+            "https://core.example",
+            "x"
+        ));
+        let _ = std::fs::remove_file(f);
     }
 }
