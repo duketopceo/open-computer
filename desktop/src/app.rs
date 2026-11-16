@@ -23,8 +23,11 @@ pub(crate) enum Msg {
     TestDone(Result<TestConnection, String>),
     DiagRows(Vec<Row>),
     DiagDone,
-    ChatEvent(serde_json::Value),
-    ChatEnd,
+    /// An event from the task of the session named first.
+    ChatEvent(String, serde_json::Value),
+    ChatEnd(String),
+    /// The task of that session could not start or its stream broke.
+    ChatFailed(String, String),
     ChatError(String),
     Settings(Result<serde_json::Value, String>),
     LocalReady(Result<(CoreProcess, shell_core::chat::Endpoint), String>),
@@ -236,9 +239,9 @@ impl App {
                     self.diag_rows = rows;
                 }
                 Msg::DiagDone => self.diag_running = false,
-                Msg::ChatEvent(e) => {
-                    if let Some(m) = self.main.as_mut() {
-                        m.chat.apply(&e);
+                Msg::ChatEvent(sid, e) => {
+                    if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid)) {
+                        chat.apply(&e);
                     }
                 }
                 Msg::SignedIn(r) => {
@@ -286,7 +289,22 @@ impl App {
                     self.or_busy = false;
                     self.or_account = Some(a);
                 }
-                Msg::ChatEnd => self.harness_running = false,
+                Msg::ChatEnd(sid) => {
+                    self.harness_running = false;
+                    // A stream that ends without ever saying how the run went counts as done.
+                    if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid))
+                        && chat.status.is_empty()
+                    {
+                        chat.status = "done".to_owned();
+                    }
+                }
+                Msg::ChatFailed(sid, words) => {
+                    self.harness_running = false;
+                    self.notice = Some(words);
+                    if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid)) {
+                        chat.status = "failed".to_owned();
+                    }
+                }
                 Msg::ChatError(words) => {
                     self.notice = Some(words);
                     if let Some(m) = self.main.as_mut() {

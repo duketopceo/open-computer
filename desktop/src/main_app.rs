@@ -18,11 +18,75 @@ pub enum Tab {
     Diagnostics,
 }
 
+/// An earlier task: its own conversation and session. The task on screen is `Main::chat`; opening an earlier one swaps them.
+pub struct Thread {
+    pub session_id: String,
+    pub chat: Chat,
+    pub began: std::time::SystemTime,
+}
+
+/// The sidebar groups threads by when they began.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    Today,
+    Earlier,
+}
+
+/// Today means the same UTC day as `now`; anything before is Earlier.
+pub fn group_for(began: std::time::SystemTime, now: std::time::SystemTime) -> Group {
+    let day = |t: std::time::SystemTime| {
+        t.duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() / 86_400)
+    };
+    if day(began) == day(now) {
+        Group::Today
+    } else {
+        Group::Earlier
+    }
+}
+
+/// "now", "5 min", "3 h", "2 d".
+pub fn relative_time(began: std::time::SystemTime, now: std::time::SystemTime) -> String {
+    let s = now.duration_since(began).map_or(0, |d| d.as_secs());
+    match s {
+        0..=44 => "now".to_owned(),
+        45..=3_599 => format!("{} min", (s / 60).max(1)),
+        3_600..=86_399 => format!("{} h", s / 3_600),
+        _ => format!("{} d", s / 86_400),
+    }
+}
+
+/// A thread's title: its first message, shortened.
+pub fn title_of(chat: &Chat) -> String {
+    let first = chat.items.iter().find_map(|i| match i {
+        shell_core::chat::Item::User(t) => Some(t.trim().replace('\n', " ")),
+        _ => None,
+    });
+    match first {
+        Some(t) if t.chars().count() > 44 => {
+            format!("{}...", t.chars().take(44).collect::<String>())
+        }
+        Some(t) if !t.is_empty() => t,
+        _ => "New task".to_owned(),
+    }
+}
+
 /// Everything the main screens read.
 pub struct Main {
     pub tab: Tab,
     pub chat: Chat,
     pub session_id: String,
+    /// Earlier tasks (not the one on screen).
+    pub threads: Vec<Thread>,
+    /// When the task on screen began.
+    pub began: std::time::SystemTime,
+    pub next_session: u32,
+    /// The sidebar and the Computer panel. The panel follows the task (open while it runs) until the person toggles it.
+    pub sidebar_open: bool,
+    pub panel_user: Option<bool>,
+    /// The step shown in the Computer panel (an index into the chat items); the last step by default.
+    pub selected_step: Option<usize>,
+    pub harness_menu: bool,
     pub endpoint: Option<Endpoint>,
     pub settings: Option<Value>,
     pub local: Option<CoreProcess>,
@@ -36,11 +100,70 @@ impl Main {
         self.started.map_or(0, |t| t.elapsed().as_secs())
     }
 
+    /// The conversation of the session that sent an event: the one on screen or an earlier one.
+    pub fn chat_for(&mut self, session: &str) -> Option<&mut Chat> {
+        if self.session_id == session {
+            Some(&mut self.chat)
+        } else {
+            self.threads
+                .iter_mut()
+                .find(|t| t.session_id == session)
+                .map(|t| &mut t.chat)
+        }
+    }
+
+    /// Whether the Computer panel is showing: the person's choice, else open while the task runs.
+    pub fn panel_open(&self) -> bool {
+        self.panel_user.unwrap_or_else(|| self.chat.is_busy())
+    }
+
+    /// Starts a fresh task. The one on screen goes to the sidebar list (it keeps running if it is).
+    pub fn new_task(&mut self) {
+        self.tab = Tab::Chat;
+        self.selected_step = None;
+        self.panel_user = None;
+        if self.chat.items.is_empty() {
+            return;
+        }
+        let old = Thread {
+            session_id: std::mem::replace(
+                &mut self.session_id,
+                format!("app-{}-{}", std::process::id(), self.next_session),
+            ),
+            chat: std::mem::take(&mut self.chat),
+            began: std::mem::replace(&mut self.began, std::time::SystemTime::now()),
+        };
+        self.next_session += 1;
+        self.threads.push(old);
+        self.started = None;
+    }
+
+    /// Opens an earlier task by swapping it with the one on screen.
+    pub fn open_thread(&mut self, index: usize) {
+        self.tab = Tab::Chat;
+        self.selected_step = None;
+        self.panel_user = None;
+        if index >= self.threads.len() {
+            return;
+        }
+        let t = &mut self.threads[index];
+        std::mem::swap(&mut self.session_id, &mut t.session_id);
+        std::mem::swap(&mut self.chat, &mut t.chat);
+        std::mem::swap(&mut self.began, &mut t.began);
+    }
+
     pub fn new() -> Self {
         Main {
             tab: Tab::Chat,
             chat: Chat::default(),
             session_id: format!("app-{}", std::process::id()),
+            threads: Vec::new(),
+            began: std::time::SystemTime::now(),
+            next_session: 1,
+            sidebar_open: true,
+            panel_user: None,
+            selected_step: None,
+            harness_menu: false,
             endpoint: None,
             settings: None,
             local: None,
@@ -241,17 +364,19 @@ impl App {
         m.chat.push_user(&goal);
         m.started = Some(std::time::Instant::now());
         let session = m.session_id.clone();
+        m.selected_step = None;
         self.composer.replace_text("");
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || match ep.start_task(&goal, &session) {
-            Err(e) => notify(&tx, &waker, Msg::ChatError(e)),
+            Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
             Ok(started) => {
+                let sid = started.session_id.clone();
                 let r = ep.stream_events(&started.session_id, |ev| {
-                    notify(&tx, &waker, Msg::ChatEvent(ev.clone()))
+                    notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev.clone()))
                 });
                 match r {
-                    Ok(()) => notify(&tx, &waker, Msg::ChatEnd),
-                    Err(e) => notify(&tx, &waker, Msg::ChatError(e)),
+                    Ok(()) => notify(&tx, &waker, Msg::ChatEnd(session.clone())),
+                    Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
                 }
             }
         });
@@ -303,6 +428,51 @@ impl App {
 }
 
 impl App {
+    pub fn new_task(&mut self) {
+        if let Some(m) = self.main.as_mut() {
+            m.new_task();
+        }
+    }
+
+    pub fn open_thread(&mut self, index: usize) {
+        if let Some(m) = self.main.as_mut() {
+            m.open_thread(index);
+        }
+    }
+
+    pub fn toggle_sidebar(&mut self) {
+        if let Some(m) = self.main.as_mut() {
+            m.sidebar_open = !m.sidebar_open;
+        }
+    }
+
+    pub fn toggle_panel(&mut self) {
+        if let Some(m) = self.main.as_mut() {
+            let now = m.panel_open();
+            m.panel_user = Some(!now);
+        }
+    }
+
+    pub fn select_step(&mut self, item: usize) {
+        if let Some(m) = self.main.as_mut() {
+            m.selected_step = Some(item);
+            m.panel_user = Some(true);
+        }
+    }
+
+    pub fn toggle_harness_menu(&mut self) {
+        if let Some(m) = self.main.as_mut() {
+            m.harness_menu = !m.harness_menu;
+        }
+    }
+
+    pub fn pick_harness(&mut self, h: shell_core::harness::Harness) {
+        self.set_harness(h);
+        if let Some(m) = self.main.as_mut() {
+            m.harness_menu = false;
+        }
+    }
+
     /// Fills the composer with an example task.
     pub fn use_example(&mut self, text: &str) {
         self.composer.replace_text(text);

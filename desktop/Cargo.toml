@@ -24,7 +24,7 @@ color-eyre = "0.6.5"
 serde_json = "1.0.151"
 # Same pinned Rune revision as Hex.
 rune = { git = "https://github.com/anomalyco/rune.git", rev = "c8f2888e768dc41747e1b8656b06631b8c47fdab" }
-rune-kit = { git = "https://github.com/anomalyco/rune.git", rev = "c8f2888e768dc41747e1b8656b06631b8c47fdab" }
+rune-kit = { git = "https://github.com/anomalyco/rune.git", rev = "c8f2888e768dc41747e1b8656b06631b8c47fdab", features = ["markdown"] }
 rune-theme-opencode = { git = "https://github.com/anomalyco/rune.git", rev = "c8f2888e768dc41747e1b8656b06631b8c47fdab" }
 
 [workspace.lints.rust]
