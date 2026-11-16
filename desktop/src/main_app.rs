@@ -259,11 +259,84 @@ impl App {
             return;
         };
         let session = m.session_id.clone();
+        let note = self.approval_note.text.clone();
+        self.approval_note.replace_text("");
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || {
-            if let Err(e) = ep.decide(&session, &a.id, &a.hash, approved) {
+            if let Err(e) = ep.decide(&session, &a.id, &a.hash, approved, &note) {
                 notify(&tx, &waker, Msg::ChatError(e));
             }
         });
+    }
+}
+
+impl App {
+    /// Fills the composer with an example task.
+    pub fn use_example(&mut self, text: &str) {
+        self.composer.replace_text(text);
+    }
+
+    /// Saves the model names and custom endpoint, and hands any typed key to the core. Typed keys are cleared right away
+    /// and are never shown again; the screen only learns "set" or "not set".
+    pub fn save_model_settings(&mut self) {
+        let Some(ep) = self.main.as_ref().and_then(|m| m.endpoint.clone()) else {
+            self.notice = Some("Not connected to a core yet.".to_owned());
+            return;
+        };
+        let mut changes = serde_json::Map::new();
+        for (name, edit) in [
+            ("default_model", &self.set_default_model),
+            ("worker_model", &self.set_worker_model),
+            ("custom_endpoint_url", &self.set_custom_url),
+            ("custom_endpoint_model", &self.set_custom_model),
+        ] {
+            let t = edit.text.trim();
+            if !t.is_empty() {
+                changes.insert(name.to_owned(), serde_json::Value::String(t.to_owned()));
+            }
+        }
+        let keys: Vec<(&'static str, String)> = [
+            ("model_key", &self.set_model_key),
+            ("custom_key", &self.set_custom_key),
+        ]
+        .into_iter()
+        .filter(|(_, e)| !e.text.is_empty())
+        .map(|(slot, e)| (slot, e.text.clone()))
+        .collect();
+        self.set_model_key.replace_text("");
+        self.set_custom_key.replace_text("");
+        let (tx, waker) = (self.tx(), self.waker());
+        std::thread::spawn(move || {
+            let mut last = ep.settings();
+            if !changes.is_empty() {
+                last = ep.put_settings(&serde_json::Value::Object(changes));
+            }
+            for (slot, value) in keys {
+                if let Err(e) = ep.load_secret(slot, &value) {
+                    last = Err(e);
+                }
+            }
+            if last.is_ok() {
+                last = ep.settings();
+            }
+            notify(&tx, &waker, Msg::Settings(last));
+        });
+    }
+
+    /// Opens the Codex app if it is installed on this computer.
+    pub fn launch_codex(&mut self) {
+        match std::process::Command::new("codex")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => self.notice = Some("Opened Codex.".to_owned()),
+            Err(_) => {
+                self.notice = Some(
+                    "Codex was not found on this computer. Install it, then try again.".to_owned(),
+                )
+            }
+        }
     }
 }

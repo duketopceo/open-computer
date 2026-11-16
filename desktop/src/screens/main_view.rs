@@ -1,7 +1,7 @@
 //! The app after setup: Chat, Settings and Diagnostics, in one black and white frame.
 
 use rune::{El, ScrollSpec, col, row, text};
-use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, Kit, TextInput};
+use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, Field, Kit, TextInput};
 use shell_core::chat::{ApprovalCard, Item, ToolCard, write_diff};
 use shell_core::defaults;
 
@@ -55,6 +55,22 @@ pub fn view(s: &App, k: &Kit, m: &Main) -> El {
     page
 }
 
+/// Three things worth asking first, one per capability: run something, remember something, look something up.
+const EXAMPLES: [(&str, &str); 3] = [
+    (
+        "Run a command in the sandbox",
+        "Run the command `uname -a` in your sandbox and tell me what it printed.",
+    ),
+    (
+        "Write and check a file",
+        "Write a file named notes.txt that says hello, then read it back to me.",
+    ),
+    (
+        "Look something up",
+        "Use web search to find the current stable version of Node.js and answer in one sentence.",
+    ),
+];
+
 fn card(k: &Kit, key: String) -> El {
     col()
         .key(key)
@@ -76,9 +92,29 @@ fn chat(s: &App, k: &Kit, m: &Main) -> El {
             "Not connected to a core yet. Open Settings."
         };
         list = list.child(caption(k, hint));
+        for (i, (label, task)) in EXAMPLES.iter().enumerate() {
+            let task: &'static str = task;
+            list = list.child(
+                col()
+                    .key(format!("example-{i}"))
+                    .gap(2.0)
+                    .w_full()
+                    .padding(10.0)
+                    .radius(8.0)
+                    .border(1.0, k.c.border_strong)
+                    .child(text(*label).font(k.ty.ui_medium).color(k.c.text_strong))
+                    .child(text(task).font(k.ty.caption()).color(k.c.text_muted))
+                    .child(
+                        Button::new("Use this")
+                            .variant(ButtonVariant::Ghost)
+                            .on_press(move |s: &mut App| s.use_example(task))
+                            .build(k),
+                    ),
+            );
+        }
     }
     for (i, item) in m.chat.items.iter().enumerate() {
-        list = list.child(item_view(k, m, i, item));
+        list = list.child(item_view(k, s, m, i, item));
     }
     if m.chat.is_busy() && !m.chat.has_reasoning() {
         list = list.child(
@@ -100,6 +136,7 @@ fn chat(s: &App, k: &Kit, m: &Main) -> El {
         .placeholder("What should Open Computer do?")
         .on_edit(|s: &mut App| &mut s.composer)
         .on_submit(|s: &mut App, _| s.send())
+        .width(None)
         .build(k);
     let send = Button::new(if busy { "Working" } else { "Send" })
         .variant(if busy {
@@ -115,7 +152,7 @@ fn chat(s: &App, k: &Kit, m: &Main) -> El {
         .gap(8.0)
         .center_y()
         .w_full()
-        .child(composer)
+        .child(col().key("composer-fill").grow(1.0).child(composer))
         .child(send);
     if busy {
         bar = bar.child(
@@ -167,7 +204,7 @@ fn footer(k: &Kit, m: &Main) -> El {
     .color(k.c.text_muted)
 }
 
-fn item_view(k: &Kit, m: &Main, i: usize, item: &Item) -> El {
+fn item_view(k: &Kit, s: &App, m: &Main, i: usize, item: &Item) -> El {
     let key = format!("item-{i}");
     match item {
         Item::User(t) => card(k, key)
@@ -207,7 +244,7 @@ fn item_view(k: &Kit, m: &Main, i: usize, item: &Item) -> El {
             )
             .child(text(t.clone()).font(k.ty.ui).color(k.c.text_strong)),
         Item::Tool(t) => tool_card(k, m, i, key, t),
-        Item::Approval(a) => approval_card(k, key, a),
+        Item::Approval(a) => approval_card(k, s, key, a),
         Item::Step {
             step,
             prompt,
@@ -235,7 +272,7 @@ fn item_view(k: &Kit, m: &Main, i: usize, item: &Item) -> El {
     }
 }
 
-fn approval_card(k: &Kit, key: String, a: &ApprovalCard) -> El {
+fn approval_card(k: &Kit, s: &App, key: String, a: &ApprovalCard) -> El {
     let word = match a.state.as_str() {
         "requested" => "Needs your decision",
         "approved" => "Approved",
@@ -252,6 +289,13 @@ fn approval_card(k: &Kit, key: String, a: &ApprovalCard) -> El {
         )
         .child(text(a.summary.clone()).font(k.ty.ui).color(k.c.text_base));
     if a.state == "requested" {
+        c = c.child(
+            TextInput::new(&s.approval_note)
+                .placeholder("Add a note (optional). It is kept in the audit log.")
+                .on_edit(|s: &mut App| &mut s.approval_note)
+                .width(None)
+                .build(k),
+        );
         c = c.child(
             row()
                 .gap(8.0)
@@ -354,30 +398,53 @@ fn settings(s: &App, k: &Kit, m: &Main) -> El {
     let policy_max = num("policy_max_daily_cap_usd");
     let on = |b: bool| if b { "on" } else { "off" };
 
+    let field = |label: &str,
+                 edit: &rune::TextEdit,
+                 secure_hint: &str,
+                 on: fn(&mut App) -> &mut rune::TextEdit| {
+        Field::new()
+            .label(label.to_owned())
+            .control(
+                TextInput::new(edit)
+                    .placeholder(secure_hint.to_owned())
+                    .on_edit(on)
+                    .width(None)
+                    .build(k),
+            )
+            .build(k)
+    };
+    let flag = |on: bool| if on { "set" } else { "not set" };
+    let saved = |key: &str, fallback: String| {
+        st.and_then(|v| v.get(key))
+            .and_then(|v| v.as_str())
+            .map_or(fallback, str::to_owned)
+    };
+    let secrets = st.and_then(|v| v.get("secrets_set"));
+    let key_set = |name: &str, local: bool| {
+        secrets
+            .and_then(|v| v.get(name))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(local)
+    };
     let models = section("Models and keys", "set-models")
-        .child(line(
-            k,
-            format!("Default model: {}", defaults::default_model()),
-        ))
-        .child(line(
-            k,
-            format!("Worker model: {}", defaults::worker_model()),
-        ))
-        .child(line(
-            k,
-            format!(
-                "OpenRouter key: {}",
-                if s.onboarding.secrets_set().model_key {
-                    "stored"
-                } else {
-                    "not set"
-                }
-            ),
-        ))
-        .child(note(
-            k,
-            "Custom OpenAI-compatible endpoint and the Codex app: not available in this release.",
-        ));
+        .child(line(k, format!("Default model: {}", saved("default_model", defaults::default_model()))))
+        .child(line(k, format!("Worker model: {}", saved("worker_model", defaults::worker_model()))))
+        .child(field("Default model", &s.set_default_model, "vendor/model (leave empty to keep)", |s| &mut s.set_default_model))
+        .child(field("Worker model", &s.set_worker_model, "vendor/model (leave empty to keep)", |s| &mut s.set_worker_model))
+        .child(line(k, format!("OpenRouter key: {}", flag(key_set("model_key", s.onboarding.secrets_set().model_key)))))
+        .child(field("Replace the OpenRouter key", &s.set_model_key, "Paste a new key (never shown again)", |s| &mut s.set_model_key))
+        .child(line(k, format!("Custom endpoint: {}", saved("custom_endpoint_url", "not set".to_owned()))))
+        .child(field("Custom OpenAI-compatible address", &s.set_custom_url, "https://llm.example.com/v1", |s| &mut s.set_custom_url))
+        .child(field("Custom endpoint model", &s.set_custom_model, "the model name it expects", |s| &mut s.set_custom_model))
+        .child(line(k, format!("Custom endpoint key: {}", flag(key_set("custom_key", false)))))
+        .child(field("Custom endpoint key", &s.set_custom_key, "Paste its key (never shown again)", |s| &mut s.set_custom_key))
+        .child(note(k, "Choose the custom endpoint for a task by naming the model \"custom\". A cloud core keeps its keys in its own secret store; use `oc setup` there."))
+        .child(
+            row()
+                .gap(8.0)
+                .child(Button::new("Save").variant(ButtonVariant::Submit).on_press(|s: &mut App| s.save_model_settings()).build(k))
+                .child(Button::new("Open Codex").variant(ButtonVariant::Neutral).on_press(|s: &mut App| s.launch_codex()).build(k)),
+        );
 
     let routing = section("Routing", "set-routing")
         .child(line(

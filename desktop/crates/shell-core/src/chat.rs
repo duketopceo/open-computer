@@ -398,11 +398,16 @@ impl Endpoint {
         approval_id: &str,
         hash: &str,
         approved: bool,
+        note: &str,
     ) -> Result<(), String> {
+        let mut payload = serde_json::json!({ "hash": hash, "approved": approved });
+        if !note.trim().is_empty() {
+            payload["note"] = Value::String(note.trim().chars().take(500).collect());
+        }
         let (status, body) = self.json(
             "POST",
             &format!("/v1/sessions/{session_id}/approvals/{approval_id}"),
-            Some(&serde_json::json!({ "hash": hash, "approved": approved })),
+            Some(&payload),
         )?;
         if status == 200 {
             Ok(())
@@ -410,6 +415,32 @@ impl Endpoint {
             Err(body["error"]["message"]
                 .as_str()
                 .map_or_else(|| plain(status), str::to_owned))
+        }
+    }
+
+    /// Saves non-secret settings (model names, the custom endpoint address). Returns the settings as the core now holds them.
+    pub fn put_settings(&self, changes: &Value) -> Result<Value, String> {
+        let (status, body) = self.json("PUT", "/v1/settings", Some(changes))?;
+        if status == 200 {
+            Ok(body)
+        } else {
+            Err(body["error"]["message"]
+                .as_str()
+                .map_or_else(|| plain(status), str::to_owned))
+        }
+    }
+
+    /// Hands a key to a self-hosted or local core, which keeps it in memory. A cloud core has no such route.
+    pub fn load_secret(&self, slot: &str, value: &str) -> Result<(), String> {
+        let (status, _) = self.json(
+            "POST",
+            "/v1/secrets/load",
+            Some(&serde_json::json!({ "secrets": { slot: value } })),
+        )?;
+        match status {
+            200 => Ok(()),
+            404 => Err("A cloud core keeps its keys in its own secret store. Replace them with `oc setup`.".to_owned()),
+            s => Err(plain(s)),
         }
     }
 

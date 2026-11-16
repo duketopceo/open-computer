@@ -12,7 +12,7 @@ import type { LocalStore } from "./runtime/store.ts";
 
 export const VERSION = "0.1.0";
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
-const SECRET_SLOTS = ["cloud_access", "model_key"] as const;
+const SECRET_SLOTS = ["cloud_access", "model_key", "custom_key"] as const;
 type SecretSlot = (typeof SECRET_SLOTS)[number];
 
 export interface Settings {
@@ -109,6 +109,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
           if (!k) throw new ProviderError("key_missing", "No model key is stored on this core yet.");
           return k;
         },
+        customKey: () => secrets.get("custom_key") ?? null,
         ...(options.runtime.baseUrl ? { baseUrl: options.runtime.baseUrl } : {}),
         sandbox: options.runtime.sandbox,
         ...(options.runtime.policyJson ? { policyJson: options.runtime.policyJson } : {}),
@@ -123,7 +124,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
     model: settings.model,
     memory_enabled: settings.memory_enabled,
     secrets_set: Object.fromEntries(SECRET_SLOTS.map((slot) => [slot, secrets.has(slot)])),
-    ...(runtime ? { daily_cap_usd: runtime.caps().user, effective_daily_cap_usd: runtime.caps().effective } : {}),
+    ...(runtime ? { daily_cap_usd: runtime.caps().user, effective_daily_cap_usd: runtime.caps().effective, policy_max_daily_cap_usd: runtime.caps().policyMax, ...runtime.userSettings() } : {}),
   });
 
   const server = createServer(async (req, res) => {
@@ -138,7 +139,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
       if (method === "GET" && path === "/v1/settings") return send(res, 200, settingsBody());
       if (method === "PUT" && path === "/v1/settings") {
         const body = (await readJson(req)) as Record<string, unknown>;
-        const allowed = new Set(["cloud_url", "model", "memory_enabled", ...(runtime ? ["daily_cap_usd"] : [])]);
+        const allowed = new Set(["cloud_url", "model", "memory_enabled", ...(runtime ? ["daily_cap_usd", "default_model", "worker_model", "custom_endpoint_url", "custom_endpoint_model"] : [])]);
         for (const k of Object.keys(body)) if (!allowed.has(k)) return err(res, 400, "bad_request", `Unknown setting "${k}".`);
         if ("memory_enabled" in body && typeof body.memory_enabled !== "boolean") {
           return err(res, 400, "bad_request", "memory_enabled must be true or false.");
@@ -155,6 +156,24 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
           for (const k of Object.keys(body)) {
             const locked = settingRefusal(policy, k);
             if (locked) return err(res, 403, "policy_locked", locked);
+          }
+        }
+        if (runtime) {
+          const MODEL = /^[A-Za-z0-9._:/-]{1,100}$/;
+          for (const k of ["default_model", "worker_model", "custom_endpoint_model"] as const) {
+            if (!(k in body)) continue;
+            const v = body[k];
+            if (v === null || v === "") runtime.store.setSetting(k, null);
+            else if (typeof v === "string" && MODEL.test(v)) runtime.store.setSetting(k, v);
+            else return err(res, 400, "bad_request", `${k} must be a model name such as vendor/model.`);
+            delete body[k];
+          }
+          if ("custom_endpoint_url" in body) {
+            const v = body.custom_endpoint_url;
+            if (v === null || v === "") runtime.store.setSetting("custom_endpoint_url", null);
+            else if (isAllowedCloudUrl(v)) runtime.store.setSetting("custom_endpoint_url", String(v).replace(/\/+$/, ""));
+            else return err(res, 400, "bad_request", "custom_endpoint_url must be an https address, or http on this computer.");
+            delete body.custom_endpoint_url;
           }
         }
         if (runtime && "daily_cap_usd" in body) {

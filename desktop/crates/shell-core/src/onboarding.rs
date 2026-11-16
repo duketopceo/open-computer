@@ -631,7 +631,8 @@ mod tests {
             o.secrets_set(),
             SecretsSet {
                 cloud_access: true,
-                model_key: true
+                model_key: true,
+                custom_key: false
             }
         );
 

@@ -106,16 +106,17 @@ export async function handleRuntimeRoutes(c: RuntimeRouteContext, req: IncomingM
     }
     const approval = /^approvals\/([^/]+)$/.exec(rest);
     if (method === "POST" && approval) {
-      let body: { hash?: unknown; approved?: unknown };
+      let body: { hash?: unknown; approved?: unknown; note?: unknown };
       try {
         body = (await h.readJson(req)) as typeof body;
       } catch {
         return h.err(res, 400, "bad_request", "The body must be JSON."), true;
       }
       if (typeof body.hash !== "string" || typeof body.approved !== "boolean") return h.err(res, 400, "bad_request", "hash and approved are required."), true;
+      if (body.note !== undefined && (typeof body.note !== "string" || body.note.length > 500)) return h.err(res, 400, "bad_request", "note must be text of at most 500 characters."), true;
       const r = rt.decide(approval[1] as string, { hash: body.hash, approved: body.approved });
       if (r.ok) {
-        await rt.store.appendAudit("approval.decided", r.record.taskId, { approval_id: r.record.id, kind: r.record.kind, outcome: body.approved ? "approved" : "denied" });
+        await rt.store.appendAudit("approval.decided", r.record.taskId, { approval_id: r.record.id, kind: r.record.kind, outcome: body.approved ? "approved" : "denied", ...(typeof body.note === "string" && body.note !== "" ? { note: body.note } : {}) });
         return h.send(res, 200, { ok: true, outcome: body.approved ? "approved" : "denied" }), true;
       }
       return h.err(res, r.reason === "unknown" ? 404 : 409, r.reason, `The approval was not recorded: ${r.reason.replace("_", " ")}.`), true;

@@ -47,7 +47,16 @@ async function loadDailyCaps(env: Env, policy: Policy): Promise<DailyCaps> {
   return resolveDailyCaps(stored !== null && Number.isFinite(stored) ? stored : null, policy);
 }
 
-const settingsBody = (caps: DailyCaps) => ({
+const MODEL_NAME = /^[A-Za-z0-9._:/-]{1,100}$/;
+
+async function savedModels(env: Env): Promise<{ default_model: string; worker_model: string }> {
+  const rows = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN ('default_model', 'worker_model')").all<{ key: string; value: string }>();
+  const get = (k: string): string | undefined => rows.results.find((r) => r.key === k)?.value;
+  return { default_model: get("default_model") ?? defaults.default_model, worker_model: get("worker_model") ?? defaults.worker_model };
+}
+
+const settingsBody = (caps: DailyCaps, models: { default_model: string; worker_model: string }) => ({
+  ...models,
   daily_cap_usd: caps.user,
   default_daily_cap_usd: defaults.daily_cap_usd,
   max_daily_cap_usd: defaults.max_daily_cap_usd,
@@ -107,10 +116,25 @@ export function createHandler(deps: {
           } catch {
             return problem(400, "bad_request", "The body must be JSON.");
           }
-          for (const k of Object.keys(body)) if (k !== "daily_cap_usd") return problem(400, "bad_request", `Unknown setting "${k}".`);
-          const locked = settingRefusal(policy, "daily_cap_usd");
-          if (locked) return problem(403, "policy_locked", locked);
-          if (!("daily_cap_usd" in body)) return problem(400, "bad_request", "daily_cap_usd is required (a number, or null to use the default).");
+          const KNOWN = ["daily_cap_usd", "default_model", "worker_model"];
+          for (const k of Object.keys(body)) {
+            if (k === "custom_endpoint_url" || k === "custom_endpoint_model") return problem(400, "bad_request", "A custom endpoint needs its own key, which a cloud core cannot hold yet. Use a self-hosted or local core for it.");
+            if (!KNOWN.includes(k)) return problem(400, "bad_request", `Unknown setting "${k}".`);
+            const locked = settingRefusal(policy, k);
+            if (locked) return problem(403, "policy_locked", locked);
+          }
+          if (Object.keys(body).length === 0) return problem(400, "bad_request", "Send at least one setting.");
+          for (const k of ["default_model", "worker_model"] as const) {
+            if (!(k in body)) continue;
+            const v = body[k];
+            if (v === null || v === "") await env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(k).run();
+            else if (typeof v === "string" && MODEL_NAME.test(v)) {
+              const refused = k === "default_model" ? modelRefusal(policy, v) : null;
+              if (refused) return problem(403, "policy_model", refused);
+              await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(k, v).run();
+            } else return problem(400, "bad_request", `${k} must be a model name such as vendor/model.`);
+          }
+          if (!("daily_cap_usd" in body)) return json(settingsBody(await loadDailyCaps(env, policy), await savedModels(env)));
           if (body.daily_cap_usd === null) {
             await env.DB.prepare("DELETE FROM settings WHERE key = 'daily_cap_usd'").run();
           } else {
@@ -121,7 +145,7 @@ export function createHandler(deps: {
               .run();
           }
         }
-        return json(settingsBody(await loadDailyCaps(env, policy)));
+        return json(settingsBody(await loadDailyCaps(env, policy), await savedModels(env)));
       }
 
       if (method === "GET" && path === "/v1/health") return json({ ok: true, version: VERSION });
@@ -175,7 +199,7 @@ export function createHandler(deps: {
         const askedDayCap = body.day_cap === undefined || body.day_cap === null ? caps.effective : Number(body.day_cap);
         if (!Number.isFinite(askedDayCap) || askedDayCap <= 0) return problem(400, "bad_request", "day_cap must be above 0.");
         const dayCap = Math.min(askedDayCap, caps.effective);
-        const model = typeof body.model === "string" && body.model !== "" ? body.model : defaults.default_model;
+        const model = typeof body.model === "string" && body.model !== "" ? body.model : (await savedModels(env)).default_model;
         const refused = modelRefusal(policy, model);
         if (refused) return problem(403, "policy_model", refused);
         const taskId = crypto.randomUUID();

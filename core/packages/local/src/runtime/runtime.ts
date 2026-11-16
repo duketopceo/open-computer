@@ -7,6 +7,7 @@ import {
   EventSequencer,
   Memory,
   OPENROUTER_BASE_URL,
+  ProviderError,
   SandboxManager,
   ToolRegistry,
   createState,
@@ -45,6 +46,8 @@ export interface RuntimeOptions {
   /** Optional OTLP/HTTP traces endpoint; the policy's otlp_endpoint takes precedence. */
   otlpEndpoint?: string;
   now?: () => number;
+  /** The key for the custom OpenAI-compatible endpoint, or null when none is stored. */
+  customKey?: () => string | null;
   /** Test hook: replaces the OpenRouter provider. */
   provider?: Provider;
   approvalTtlMs?: number;
@@ -116,11 +119,40 @@ export class Runtime {
     return priceBookFromTable(table);
   }
 
-  provider(): Provider {
-    return (
-      this.opts.provider ??
-      openRouterProvider({ fetch: this.opts.fetch, baseUrl: this.opts.baseUrl ?? OPENROUTER_BASE_URL, apiKey: this.opts.apiKey, timeouts: DEFAULT_PROVIDER_TIMEOUTS })
-    );
+  /** The user's model choices and custom endpoint, as saved. Keys are never part of this. */
+  userSettings(): { default_model: string; worker_model: string; custom_endpoint_url: string | null; custom_endpoint_model: string | null } {
+    return {
+      default_model: this.store.getSetting("default_model") ?? defaults.default_model,
+      worker_model: this.store.getSetting("worker_model") ?? defaults.worker_model,
+      custom_endpoint_url: this.store.getSetting("custom_endpoint_url"),
+      custom_endpoint_model: this.store.getSetting("custom_endpoint_model"),
+    };
+  }
+
+  /** The provider for a model. The model id "custom" goes to the saved OpenAI-compatible endpoint with its own key. */
+  provider(model?: string): Provider {
+    if (this.opts.provider) return this.opts.provider;
+    if (model === "custom") {
+      const u = this.userSettings();
+      if (!u.custom_endpoint_url || !u.custom_endpoint_model) {
+        return async function* () {
+          yield { t: "error", code: "provider_http_error", message: "Set the custom endpoint address and model in Settings first.", retryable: false };
+        };
+      }
+      const base = openRouterProvider({
+        fetch: this.opts.fetch,
+        baseUrl: u.custom_endpoint_url,
+        apiKey: () => {
+          const k = this.opts.customKey?.() ?? null;
+          if (!k) throw new ProviderError("key_missing", "No key is stored for the custom endpoint yet.");
+          return k;
+        },
+        timeouts: DEFAULT_PROVIDER_TIMEOUTS,
+      });
+      const target = u.custom_endpoint_model;
+      return (request, signal) => base({ ...request, model: target }, signal);
+    }
+    return openRouterProvider({ fetch: this.opts.fetch, baseUrl: this.opts.baseUrl ?? OPENROUTER_BASE_URL, apiKey: this.opts.apiKey, timeouts: DEFAULT_PROVIDER_TIMEOUTS });
   }
 
   subscribe(sessionId: string, afterId: number, sub: Subscriber): () => void {
@@ -143,7 +175,7 @@ export class Runtime {
 
   async startTask(input: StartTaskInput): Promise<{ taskId: string; sessionId: string; dayCap: number } | { busy: true }> {
     if (this.store.activeTaskInSession(input.sessionId) !== null) return { busy: true };
-    const refused = modelRefusal(parseItPolicy(this.opts.policyJson), input.model ?? defaults.default_model);
+    const refused = modelRefusal(parseItPolicy(this.opts.policyJson), input.model ?? this.userSettings().default_model);
     if (refused) throw new PolicyRefusal(refused);
     const caps = this.caps();
     const dayCap = Math.min(input.dayCap ?? caps.effective, caps.effective);
@@ -152,7 +184,7 @@ export class Runtime {
     const memory = new Memory({ store: this.store.memory, enabled: input.memory !== false });
     const prepared = await memory.prepare(input.goal);
     const system = prepared.section ? `${BASE_SYSTEM_PROMPT}\n\n${prepared.section}` : BASE_SYSTEM_PROMPT;
-    const state = createState({ taskId, model: input.model ?? defaults.default_model, system, goal: input.goal, sandboxId: taskId, startedAtMs: this.now() });
+    const state = createState({ taskId, model: input.model ?? this.userSettings().default_model, system, goal: input.goal, sandboxId: taskId, startedAtMs: this.now() });
     this.store.insertTask({ taskId, sessionId: input.sessionId, goal: input.goal });
     const job = this.execute({ taskId, sessionId: input.sessionId, goal: input.goal, taskCap, dayCap, memory, state, recalled: prepared.recalled });
     this.running.add(job);
@@ -193,7 +225,7 @@ export class Runtime {
       const result = await runLoop(
         j.state,
         {
-          provider: this.provider(),
+          provider: this.provider(j.state.model),
           tools,
           policy: createPolicy(it.risk, it.denyTools),
           approvals: this.approvals.requester,

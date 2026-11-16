@@ -24,6 +24,8 @@ describe("the default daily cap", () => {
   it("is five dollars from the shared defaults file, and a user who set nothing gets it", async () => {
     expect(defaults.daily_cap_usd).toBe(5);
     expect(await getSettings()).toEqual({
+      default_model: "z-ai/glm-5.3",
+      worker_model: "z-ai/glm-5.3-flash",
       daily_cap_usd: null,
       default_daily_cap_usd: 5,
       max_daily_cap_usd: 1000,

@@ -20,6 +20,8 @@ pub struct Health {
 pub struct SecretsSet {
     pub cloud_access: bool,
     pub model_key: bool,
+    #[serde(default)]
+    pub custom_key: bool,
 }
 
 /// `GET /v1/settings` and the `PUT` response.
