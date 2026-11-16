@@ -43,6 +43,23 @@ The Test connection button launches the local core named by `OC_CORE_BIN` (same 
 above), hands it the saved secrets and settings in memory, and shows backend, model and
 memory results. Secrets live in the OS keyring; screens show only set or not set.
 
+## When something does not work
+
+- **Log:** the app writes `~/.local/state/open-computer/desktop.log` (rotated at 1 MB, `RUST_LOG=debug` for more).
+  Every connection, keyring, Wrangler and agent call is logged with its outcome and error, never a secret.
+  Settings > About > Copy diagnostics copies the last 200 lines, redacted.
+- **Self-test:** `open-computer --self-test` runs the checks the app depends on without a window and prints one
+  `PASS`/`FAIL`/`SKIP` line each: keyring write/read/delete of a dummy entry, the saved connection (dry run, never
+  prints the token), the core's `/v1/diag/bindings`, the OpenRouter key through the core, `wrangler whoami`, and
+  `hermes --version` / `opencode --version`. Exit code 1 if anything failed.
+- **Keyring refuses or hangs:** the reason is shown on Get started. The core address is saved either way. You can choose
+  to use the token in `~/.config/open-computer/cloud.json` instead; the choice is remembered and the token is read from
+  that file each time, never copied.
+- **Hermes or OpenCode fails:** the chat shows what the program printed to stderr and the documented fix
+  (`hermes setup`, `opencode auth login`). With a real OpenRouter key on this computer you can hand it to them
+  (`OPENROUTER_API_KEY`) under Settings > Agent harness.
+- **Task history** is kept under `~/.local/state/open-computer/threads/` (newest 100) and restored on start.
+
 ## Build requirements
 
 Linux needs the usual windowing and GPU libraries for Rune (X11 or Wayland, Vulkan,

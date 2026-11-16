@@ -19,6 +19,16 @@ use shell_core::secrets::{KeyringSecrets, SecretStore, Slot};
 /// Names the local core binary, or `node <script>`. Packaging (a later unit) bundles it.
 const CORE_BIN_ENV: &str = "OC_CORE_BIN";
 
+/// Whether the core answered a real request just now. The sidebar chip says "core connected" only for `Ok`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CoreCheck {
+    #[default]
+    Unknown,
+    Checking,
+    Ok,
+    Failed(String),
+}
+
 pub(crate) enum DataMsg {
     Bindings(Result<serde_json::Value, String>),
     CoreInfo(Result<shell_core::settings_data::CoreInfo, String>),
@@ -28,6 +38,8 @@ pub(crate) enum DataMsg {
 }
 
 pub(crate) enum Msg {
+    /// The answer of a real request to the core (`/v1/diag/bindings`).
+    CoreChecked(Result<(), String>),
     TestDone(Result<TestConnection, String>),
     DiagRows(Vec<Row>),
     DiagDone,
@@ -134,6 +146,22 @@ pub struct App {
     pub confirm_clear: bool,
     pub models_query: TextEdit,
     pub models_sort: (shell_core::settings_data::ModelSort, bool),
+    /// Whether the core answered a real request, for the sidebar chip.
+    pub core_check: CoreCheck,
+    /// Why the keyring could not hold a secret, in words (from the keyring's own error), shown until a save works.
+    pub keyring_problem: Option<String>,
+    /// The keyring refused the saved token: offer to use `cloud.json` for this session instead (needs the person's yes).
+    pub file_token_offer: bool,
+    /// Where finished conversations are kept (none in tests and screenshots).
+    pub history_dir: Option<std::path::PathBuf>,
+    /// The person agreed to hand their OpenRouter key to Hermes and OpenCode.
+    pub harness_key: bool,
+    /// Text for the clipboard, sent on the next poll (the clipboard belongs to the window).
+    pub copy_request: Option<String>,
+    pub diag_copied: bool,
+    /// `desktop.json` and the saved connection `cloud.json`; tests point these at a temporary folder.
+    pub config_path: std::path::PathBuf,
+    pub saved_core_path: std::path::PathBuf,
     last_tick: u64,
     waker: Option<Waker>,
     tx: Sender<Msg>,
@@ -150,7 +178,14 @@ impl App {
                 KeyringSecrets::new(),
             )))
         };
-        Self::with_store(store)
+        let mut app = Self::with_store(store);
+        // Screenshot runs keep no history on the real disk either.
+        if std::env::var_os("OC_SCREEN_START").is_none()
+            && std::env::var_os("OC_SCREEN_FIXTURE").is_none()
+        {
+            app.history_dir = Some(shell_core::history::default_dir());
+        }
+        app
     }
 
     /// The app over a given secret store (the keyring in the app, memory in tests).
@@ -211,6 +246,28 @@ impl App {
             confirm_clear: false,
             models_query: TextEdit::new(""),
             models_sort: (shell_core::settings_data::ModelSort::Prompt, true),
+            core_check: CoreCheck::Unknown,
+            keyring_problem: None,
+            file_token_offer: false,
+            history_dir: None,
+            harness_key: false,
+            copy_request: None,
+            diag_copied: false,
+            // Tests never touch the person's real configuration.
+            config_path: if cfg!(test) {
+                std::env::temp_dir()
+                    .join(format!("oc-test-{}", std::process::id()))
+                    .join("desktop.json")
+            } else {
+                shell_core::config::default_path()
+            },
+            saved_core_path: if cfg!(test) {
+                std::env::temp_dir()
+                    .join(format!("oc-test-{}", std::process::id()))
+                    .join("cloud.json")
+            } else {
+                shell_core::autoconnect::default_state_path()
+            },
             last_tick: 0,
             waker: None,
             tx,
@@ -227,6 +284,7 @@ impl App {
     }
 
     pub fn setup(&mut self, waker: Waker) {
+        shell_core::log_info!("app", "started, version {}", env!("CARGO_PKG_VERSION"));
         self.waker = Some(waker);
         self.resume_from_config();
         self.auto_connect_on_start();
@@ -240,6 +298,10 @@ impl App {
             || self.diag_running)
             && tick != self.last_tick;
         self.last_tick = tick;
+        if let Some(text) = self.copy_request.take() {
+            tx.copy(text);
+            changed = true;
+        }
         while let Ok(msg) = self.rx.try_recv() {
             changed = true;
             match msg {
@@ -264,7 +326,11 @@ impl App {
                     self.diag_rows = rows;
                 }
                 Msg::DiagDone => self.diag_running = false,
+                Msg::CoreChecked(r) => self.on_core_checked(r),
                 Msg::ChatEvent(sid, e) => {
+                    if let Some(dir) = &self.history_dir {
+                        shell_core::history::append(dir, &sid, &e);
+                    }
                     if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid)) {
                         chat.apply(&e);
                     }

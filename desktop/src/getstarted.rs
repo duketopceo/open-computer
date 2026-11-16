@@ -10,7 +10,9 @@ use shell_core::onboarding::Step;
 use shell_core::secrets::Slot;
 use shell_core::signin;
 
-use crate::app::{App, Msg};
+use shell_core::config;
+
+use crate::app::{App, CoreCheck, Msg};
 use crate::main_app::notify;
 
 /// The placeholder kept in the keyring when the core holds the OpenRouter key itself.
@@ -66,30 +68,148 @@ impl App {
     }
 
     /// (a) Reads what `oc setup` saved, in this process only; the token goes into the keyring and is never shown. The file stays,
-    /// because the `oc` command line reads it too.
+    /// because the `oc` command line reads it too. The address is saved to `desktop.json` whatever the keyring says. When the
+    /// keyring refuses the token the reason is shown and the saved token can be used for this session if the person agrees.
     pub fn auto_connect_saved(&mut self) -> bool {
         if self.onboarding.step() != Step::Connect {
             return false;
         }
         if self.core_connected() {
+            self.verify_core();
             self.check_core_model_key();
             return true;
         }
-        let Some(core) = autoconnect::read_saved_core(&autoconnect::default_state_path()) else {
+        let path = self.saved_core_path.clone();
+        let Some(core) = autoconnect::read_saved_core(&path) else {
             return false;
         };
+        let url = core.url.clone();
+        self.remember_core_address(&url);
         match autoconnect::adopt_saved_core(core, &*self.store) {
             Ok(url) => {
-                self.onboarding.set_cloud_url(url.clone());
-                self.cloud_url.replace_text(&url);
+                self.keyring_problem = None;
+                self.file_token_offer = false;
                 self.onboarding.sync_secrets(&*self.store);
-                self.core_line = Some(format!("Connected to {url}."));
+                self.core_line = Some(format!("Found your core at {url}. Checking it..."));
+                self.verify_core();
+                self.check_core_model_key();
+                true
+            }
+            Err(reason) => {
+                self.keyring_problem = Some(reason.clone());
+                if config::load(&self.config_path.clone()).file_token_ok {
+                    return self.use_saved_token_inner(&reason);
+                }
+                self.file_token_offer = true;
+                self.core_line = Some(format!(
+                    "{reason} The token is still in {}. You can use it from there for now.",
+                    path.display()
+                ));
+                false
+            }
+        }
+    }
+
+    /// The address goes into `desktop.json` as soon as it is known, so a keyring that refuses never loses it.
+    fn remember_core_address(&mut self, url: &str) {
+        self.onboarding.set_cloud_url(url.to_owned());
+        self.cloud_url.replace_text(url);
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        if saved.cloud_url != url {
+            saved.cloud_url = url.to_owned();
+            match config::save(&path, &saved) {
+                Ok(()) => {
+                    shell_core::log_info!("connect", "saved the core address {url} to desktop.json")
+                }
+                Err(e) => shell_core::log_warn!("connect", "could not save desktop.json: {e}"),
+            }
+        }
+    }
+
+    /// "Use the saved token": the person agrees to read the token from `cloud.json` each time instead of the keyring.
+    pub fn use_saved_token(&mut self) {
+        let reason = self.keyring_problem.clone().unwrap_or_default();
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.file_token_ok = true;
+        if let Err(e) = config::save(&path, &saved) {
+            shell_core::log_warn!("connect", "could not save the choice: {e}");
+        }
+        self.file_token_offer = false;
+        self.use_saved_token_inner(&reason);
+    }
+
+    fn use_saved_token_inner(&mut self, reason: &str) -> bool {
+        let Some(core) = autoconnect::read_saved_core(&self.saved_core_path.clone()) else {
+            self.core_line = Some("The saved connection file is no longer usable.".to_owned());
+            return false;
+        };
+        match core.use_for_session(&*self.store) {
+            Ok(url) => {
+                self.onboarding.sync_secrets(&*self.store);
+                self.core_line = Some(format!(
+                    "Using the saved token from the connection file because your keyring refused it ({}). Found your core at {url}. Checking it...",
+                    reason.trim_end_matches('.')
+                ));
+                self.verify_core();
                 self.check_core_model_key();
                 true
             }
             Err(e) => {
                 self.core_line = Some(e);
                 false
+            }
+        }
+    }
+
+    /// Asks the core a real question (`/v1/diag/bindings`); the sidebar chip follows the answer.
+    pub fn verify_core(&mut self) {
+        if std::env::var_os("OC_SCREEN_FIXTURE").is_some() {
+            self.core_check = CoreCheck::Ok;
+            return;
+        }
+        if self.onboarding.local_only() {
+            self.core_check = if self.main.as_ref().is_some_and(|m| m.endpoint.is_some()) {
+                CoreCheck::Ok
+            } else {
+                CoreCheck::Unknown
+            };
+            return;
+        }
+        let url = self.onboarding.cloud_url().to_owned();
+        let token = self.store.get(Slot::CloudAccess).ok().flatten();
+        let Some(token) = token.filter(|t| !t.is_empty() && !url.is_empty()) else {
+            self.core_check = CoreCheck::Failed(
+                "no access token is available on this computer to check it with".to_owned(),
+            );
+            return;
+        };
+        self.core_check = CoreCheck::Checking;
+        let (tx, waker) = (self.tx(), self.waker());
+        std::thread::spawn(move || {
+            let r = Endpoint::new(&url, &token).bindings().map(|_| ());
+            notify(&tx, &waker, Msg::CoreChecked(r));
+        });
+    }
+
+    pub fn on_core_checked(&mut self, r: Result<(), String>) {
+        match r {
+            Ok(()) => {
+                shell_core::log_info!("connect", "the core answered /v1/diag/bindings");
+                self.core_check = CoreCheck::Ok;
+                if self.main.is_none() {
+                    let url = self.onboarding.cloud_url().to_owned();
+                    self.core_line = Some(format!("Connected to {url}."));
+                }
+            }
+            Err(e) => {
+                shell_core::log_warn!("connect", "the core did not answer: {e}");
+                self.core_line = Some(format!("The core did not answer: {e}"));
+                if self.main.is_some() {
+                    self.notice = Some(format!("The core did not answer: {e}"));
+                }
+                self.core_check = CoreCheck::Failed(e);
             }
         }
     }
@@ -226,6 +346,12 @@ impl App {
                     "https://open-computer-core.you.workers.dev",
                     "0",
                 ));
+            }
+            "keyring" => {
+                self.cf_hint_signed_in = true;
+                self.keyring_problem = Some("Your system keyring refused to save the access token: no answer after 8 s; the keyring may be locked or waiting for you to approve a prompt.".to_owned());
+                self.file_token_offer = true;
+                self.core_line = Some("The token is still in ~/.config/open-computer/cloud.json. You can use it from there for now.".to_owned());
             }
             "ready" => {
                 self.cf_hint_signed_in = true;

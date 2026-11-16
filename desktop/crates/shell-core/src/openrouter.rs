@@ -159,7 +159,7 @@ pub fn exchange_code(base: &str, code: &str, verifier: &str) -> Result<String, S
         .post(&format!("{base}/api/v1/auth/keys"))
         .header("Content-Type", "application/json")
         .send(body.as_bytes())
-        .map_err(|_| "OpenRouter could not be reached.".to_owned())?;
+        .map_err(|e| crate::http::unreachable("OpenRouter", "POST", "/api/v1/auth/keys", &e))?;
     let (status, v) = read_body(r);
     if status != 200 {
         return Err(
@@ -340,7 +340,7 @@ impl Client {
             .get(&format!("{}{path}", self.base))
             .header("Authorization", &format!("Bearer {}", self.key))
             .call()
-            .map_err(|_| "OpenRouter could not be reached.".to_owned())?;
+            .map_err(|e| crate::http::unreachable("OpenRouter", "GET", path, &e))?;
         match read_body(r) {
             (200, v) => Ok(v),
             (401, _) => Err("OpenRouter rejected the key.".to_owned()),

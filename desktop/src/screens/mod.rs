@@ -197,6 +197,8 @@ fn caption(k: &Kit, words: impl Into<String>) -> El {
 }
 
 #[cfg(test)]
+mod live_tests;
+#[cfg(test)]
 mod settings_tests;
 
 #[cfg(test)]

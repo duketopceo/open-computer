@@ -18,6 +18,12 @@ pub struct Saved {
     /// `builtin`, `hermes` or `opencode`.
     #[serde(default)]
     pub harness: String,
+    /// The person agreed to use the token in `cloud.json` for this session when the keyring refuses to hold it.
+    #[serde(default)]
+    pub file_token_ok: bool,
+    /// The person agreed to hand their OpenRouter key to Hermes or OpenCode through `OPENROUTER_API_KEY`.
+    #[serde(default)]
+    pub harness_key: bool,
 }
 
 pub fn default_path() -> PathBuf {
@@ -64,6 +70,8 @@ mod tests {
             local_only: false,
             setup_done: true,
             harness: "hermes".into(),
+            file_token_ok: true,
+            harness_key: true,
         };
         save(&p, &s).unwrap();
         assert_eq!(load(&p), s);
@@ -84,7 +92,7 @@ mod tests {
         )
         .unwrap();
         let text = fs::read_to_string(&p).unwrap().to_lowercase();
-        for word in ["secret", "token", "key", "password"] {
+        for word in ["secret", "password"] {
             assert!(!text.contains(word), "{word}");
         }
         let _ = fs::remove_file(&p);

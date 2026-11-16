@@ -132,6 +132,8 @@ impl Chat {
                 }
                 self.status = status;
             }
+            // Written by the history store for what the person typed; replaying a saved conversation applies it.
+            "user" => self.push_user(&s("text")),
             "reasoning.delta" => match self.items.last_mut() {
                 Some(Item::Thinking { text, done: false }) => text.push_str(&s("text")),
                 _ => self.items.push(Item::Thinking {
@@ -372,8 +374,9 @@ impl Endpoint {
                 .send(b.to_string()),
             _ => agent.get(&url).header("authorization", &auth).call(),
         };
-        let mut res = res.map_err(|_| "The core could not be reached.".to_owned())?;
+        let mut res = res.map_err(|e| crate::http::unreachable("The core", method, path, &e))?;
         let status = res.status().as_u16();
+        crate::http::answered("core", method, path, status);
         let text = res.body_mut().read_to_string().unwrap_or_default();
         Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
     }
@@ -480,8 +483,9 @@ impl Endpoint {
         } else {
             agent.get(&url).header("authorization", &auth).call()
         };
-        let mut res = res.map_err(|_| "The core could not be reached.".to_owned())?;
+        let mut res = res.map_err(|e| crate::http::unreachable("The core", method, path, &e))?;
         let status = res.status().as_u16();
+        crate::http::answered("core", method, path, status);
         let headers = res
             .headers()
             .iter()
@@ -538,7 +542,14 @@ impl Endpoint {
             .get(&url)
             .header("authorization", &format!("Bearer {}", self.token))
             .call()
-            .map_err(|_| "The core could not be reached.".to_owned())?;
+            .map_err(|e| {
+                crate::http::unreachable(
+                    "The core",
+                    "GET",
+                    &format!("/v1/sessions/{session_id}/events"),
+                    &e,
+                )
+            })?;
         if res.status().as_u16() != 200 {
             return Err(plain(res.status().as_u16()));
         }

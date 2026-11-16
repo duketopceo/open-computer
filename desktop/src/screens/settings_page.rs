@@ -38,7 +38,11 @@ fn card(k: &Kit, key: &str, title: &str) -> El {
 }
 
 fn line(k: &Kit, t: impl Into<String>) -> El {
-    text(t.into()).font(k.ty.ui).color(k.c.text_base).w_full()
+    text(t.into())
+        .font(k.ty.ui)
+        .color(k.c.text_base)
+        .w_full()
+        .wrap()
 }
 
 fn note(k: &Kit, t: impl Into<String>) -> El {
@@ -46,6 +50,7 @@ fn note(k: &Kit, t: impl Into<String>) -> El {
         .font(k.ty.caption())
         .color(k.c.text_muted)
         .w_full()
+        .wrap()
 }
 
 fn pair(k: &Kit, label: &str, value: impl Into<String>) -> El {
@@ -964,7 +969,33 @@ fn agent(s: &App, k: &Kit) -> El {
         .gap(16.0)
         .child(note(k, "The default for new tasks is the one marked In use. You can also change it from the chip under the composer."))
         .child(super::integrations::harness(s, k))
+        .child(harness_key_card(s, k))
         .child(row().child(Button::new("Open Codex").variant(ButtonVariant::Neutral).on_press(|s: &mut App| s.launch_codex()).build(k)))
+}
+
+/// Hermes and OpenCode read `OPENROUTER_API_KEY`. Handing it over is the person's choice, and only possible when a real key is on
+/// this computer; a key the core holds never leaves the core.
+fn harness_key_card(s: &App, k: &Kit) -> El {
+    let mut c = card(k, "harness-key", "Model access for Hermes and OpenCode");
+    if s.has_shareable_key() {
+        c = c
+            .child(note(k, "Both agents read the OPENROUTER_API_KEY environment variable. When this is on, Open Computer sets it for their process only. It is not written to any file or log."))
+            .child(
+                row().child(
+                    Button::new(if s.harness_key { "Handing the key over: on" } else { "Hand my OpenRouter key to them" })
+                        .variant(if s.harness_key { ButtonVariant::Submit } else { ButtonVariant::Neutral })
+                        .on_press(|s: &mut App| {
+                            let on = !s.harness_key;
+                            s.set_harness_key(on)
+                        })
+                        .build(k)
+                        .key("harness-key-toggle"),
+                ),
+            );
+    } else {
+        c = c.child(note(k, "Your OpenRouter key is held by your core, so it cannot be handed to a local agent. Give the agent its own model instead: run `hermes setup` or `opencode auth login` in a terminal. If a task fails for that reason, the failure message says so."));
+    }
+    c
 }
 
 // ---------- 4. Models and spend ----------
@@ -1298,6 +1329,13 @@ fn about(s: &App, k: &Kit) -> El {
                 .child(pair(k, "Core", core))
                 .child(pair(
                     k,
+                    "Keyring",
+                    s.keyring_problem
+                        .clone()
+                        .unwrap_or_else(|| "no problem recorded".to_owned()),
+                ))
+                .child(pair(
+                    k,
                     "Backend",
                     if s.onboarding.local_only() {
                         "this computer only".to_owned()
@@ -1305,6 +1343,36 @@ fn about(s: &App, k: &Kit) -> El {
                         s.onboarding.cloud_url().to_owned()
                     },
                 )),
+        )
+        .child(
+            card(k, "about-log", "Diagnostics log")
+                .child(note(
+                    k,
+                    format!(
+                        "The app writes what it does (connections, keyring, Wrangler, agents) to {}. Keys and tokens are never written, and anything that looks like one is hidden.",
+                        shell_core::applog::log_path().display()
+                    ),
+                ))
+                .child(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(
+                            Button::new("Copy diagnostics")
+                                .variant(ButtonVariant::Neutral)
+                                .on_press(|s: &mut App| s.copy_diagnostics())
+                                .build(k)
+                                .key("about-copy-diagnostics"),
+                        )
+                        .child(note(
+                            k,
+                            if s.diag_copied {
+                                "Copied the last 200 lines."
+                            } else {
+                                "Copies the last 200 lines, redacted."
+                            },
+                        )),
+                ),
         )
         .child(
             card(k, "about-links", "Project").child(

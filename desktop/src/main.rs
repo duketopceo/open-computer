@@ -16,10 +16,18 @@ use rune::AppSpec;
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
+    shell_core::applog::init();
 
     if std::env::args().skip(1).any(|a| a == "--print-state") {
         println!("{}", shell_core::onboarding::initial_state_json());
         return Ok(());
+    }
+
+    // `--self-test`: the checks the app depends on, without a window, one PASS/FAIL/SKIP line each. Never prints a secret.
+    if std::env::args().skip(1).any(|a| a == "--self-test") {
+        let lines = shell_core::selftest::run(&shell_core::selftest::Targets::here());
+        println!("{}", shell_core::selftest::render(&lines));
+        std::process::exit(shell_core::selftest::exit_code(&lines));
     }
 
     rune::run(AppSpec {

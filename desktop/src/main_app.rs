@@ -125,6 +125,8 @@ pub struct Main {
     pub tab: Tab,
     pub chat: Chat,
     pub session_id: String,
+    /// Unique to this run of the app, so session ids and saved history never collide with an earlier run's.
+    pub run_id: String,
     /// Earlier tasks (not the one on screen).
     pub threads: Vec<Thread>,
     /// When the task on screen began.
@@ -145,6 +147,34 @@ pub struct Main {
 }
 
 impl Main {
+    /// Puts the conversations saved by earlier runs into the sidebar (the newest 30). A task that was running when the app
+    /// closed is shown as interrupted, not as still working.
+    pub fn restore_history(&mut self, dir: &std::path::Path) {
+        use shell_core::chat::Item;
+        let mut metas = shell_core::history::list(dir);
+        metas.truncate(30);
+        for meta in metas.into_iter().rev() {
+            if meta.session_id == self.session_id {
+                continue;
+            }
+            let mut chat = Chat::default();
+            for ev in shell_core::history::load(dir, &meta.session_id) {
+                chat.apply(&ev);
+            }
+            if chat.is_busy() {
+                chat.items.push(Item::Note(
+                    "This task was interrupted when the app closed.".to_owned(),
+                ));
+                chat.status = "cancelled".to_owned();
+            }
+            self.threads.push(Thread {
+                session_id: meta.session_id,
+                chat,
+                began: std::time::UNIX_EPOCH + std::time::Duration::from_secs(meta.began),
+            });
+        }
+    }
+
     pub fn elapsed_secs(&self) -> u64 {
         self.started.map_or(0, |t| t.elapsed().as_secs())
     }
@@ -177,7 +207,7 @@ impl Main {
         let old = Thread {
             session_id: std::mem::replace(
                 &mut self.session_id,
-                format!("app-{}-{}", std::process::id(), self.next_session),
+                format!("app-{}-{}", self.run_id, self.next_session),
             ),
             chat: std::mem::take(&mut self.chat),
             began: std::mem::replace(&mut self.began, std::time::SystemTime::now()),
@@ -202,11 +232,19 @@ impl Main {
     }
 
     pub fn new() -> Self {
+        let run_id = format!(
+            "{}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+            std::process::id()
+        );
         Main {
             section: Section::OpenRouter,
             tab: Tab::Chat,
             chat: Chat::default(),
-            session_id: format!("app-{}", std::process::id()),
+            session_id: format!("app-{run_id}"),
+            run_id,
             threads: Vec::new(),
             began: std::time::SystemTime::now(),
             next_session: 1,
@@ -233,15 +271,25 @@ pub(crate) fn notify(tx: &Sender<Msg>, waker: &Option<Waker>, msg: Msg) {
 impl App {
     /// Leaves setup for the app, remembering that setup finished.
     pub fn enter_app(&mut self) {
+        let before = config::load(&self.config_path.clone());
         let saved = Saved {
             cloud_url: self.onboarding.cloud_url().to_owned(),
             local_only: self.onboarding.local_only(),
             setup_done: true,
-            harness: config::load(&config::default_path()).harness,
+            ..before
         };
-        let _ = config::save(&config::default_path(), &saved);
-        self.main = Some(Main::new());
+        let _ = config::save(&self.config_path.clone(), &saved);
+        self.main = Some(self.new_main());
         self.connect_endpoint();
+    }
+
+    /// The workspace, with the conversations of earlier runs restored into the sidebar.
+    pub fn new_main(&self) -> Main {
+        let mut m = Main::new();
+        if let Some(dir) = &self.history_dir {
+            m.restore_history(dir);
+        }
+        m
     }
 
     /// Opens the saved app directly when setup already finished and the keys are still in the keyring.
@@ -259,7 +307,7 @@ impl App {
             self.onboarding.sync_secrets(&*self.store);
             self.onboarding.set_cloud_url(url.clone());
             self.cloud_url.replace_text(&url);
-            self.main = Some(Main::new());
+            self.main = Some(self.new_main());
             if std::env::var_os("OC_SCREEN_FIXTURE").is_some() {
                 self.apply_screen_fixture();
             }
@@ -283,18 +331,49 @@ impl App {
             self.connect_endpoint();
             return;
         }
-        let saved = config::load(&config::default_path());
+        let saved = config::load(&self.config_path.clone());
         if !saved.setup_done {
+            // An address saved while the keyring or setup was still unfinished is still the person's core.
+            if !saved.cloud_url.is_empty() && !saved.local_only {
+                self.onboarding.set_cloud_url(saved.cloud_url.clone());
+                self.cloud_url.replace_text(&saved.cloud_url);
+            }
             return;
         }
         self.harness = shell_core::harness::Harness::from_id(&saved.harness);
+        self.harness_key = saved.harness_key;
         self.onboarding.set_local_only(saved.local_only);
         self.onboarding.set_cloud_url(saved.cloud_url.clone());
         self.cloud_url.replace_text(&saved.cloud_url);
-        let secrets = self.onboarding.secrets_set();
+        let mut secrets = self.onboarding.secrets_set();
+        if !saved.local_only && !secrets.cloud_access && saved.file_token_ok {
+            // The keyring would not hold the token and the person agreed to use the saved connection file instead.
+            if let Some(core) =
+                shell_core::autoconnect::read_saved_core(&self.saved_core_path.clone())
+                && core.use_for_session(&*self.store).is_ok()
+            {
+                shell_core::log_info!(
+                    "connect",
+                    "resumed with the token from the saved connection file"
+                );
+                if !secrets.model_key {
+                    let _ = self.store.set(Slot::ModelKey, "managed-by-the-cloud-core");
+                }
+                self.onboarding.sync_secrets(&*self.store);
+                secrets = self.onboarding.secrets_set();
+            }
+        }
         let ready = secrets.model_key && (saved.local_only || secrets.cloud_access);
+        shell_core::log_info!(
+            "connect",
+            "resume: setup done {}, address saved {}, token present {}, model key present {}, ready {ready}",
+            saved.setup_done,
+            !saved.cloud_url.is_empty(),
+            secrets.cloud_access,
+            secrets.model_key
+        );
         if ready {
-            self.main = Some(Main::new());
+            self.main = Some(self.new_main());
             self.connect_endpoint();
         }
     }
@@ -312,6 +391,7 @@ impl App {
                 if let Some(m) = self.main.as_mut() {
                     m.endpoint = Some(Endpoint::new(&url, &t));
                 }
+                self.verify_core();
                 self.load_settings();
             }
             _ => self.notice = Some("Save the access secret for your cloud core first.".to_owned()),
@@ -434,6 +514,9 @@ impl App {
         m.started = Some(std::time::Instant::now());
         let session = m.session_id.clone();
         m.selected_step = None;
+        if let Some(dir) = &self.history_dir {
+            shell_core::history::append_user(dir, &session, &goal);
+        }
         self.composer.replace_text("");
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || match ep.start_task(&goal, &session) {

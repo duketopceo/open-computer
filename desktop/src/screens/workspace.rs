@@ -142,13 +142,24 @@ pub fn status_line(chat: &Chat, model: &str, core: &str) -> String {
     format!("{model} · {spend} · {core}")
 }
 
-fn core_state(m: &Main) -> &'static str {
-    if m.endpoint.is_some() {
-        "core connected"
-    } else if m.starting_local {
-        "starting the core"
-    } else {
-        "core not connected"
+/// What the core chip and the status line say. "core connected" only after the core answered a real request.
+fn core_state(s: &App, m: &Main) -> String {
+    use crate::app::CoreCheck;
+    if m.endpoint.is_none() {
+        return if m.starting_local {
+            "starting the core"
+        } else {
+            "core not connected"
+        }
+        .to_owned();
+    }
+    match &s.core_check {
+        CoreCheck::Ok => "core connected".to_owned(),
+        CoreCheck::Unknown | CoreCheck::Checking => "checking the core".to_owned(),
+        CoreCheck::Failed(why) => {
+            let short: String = why.chars().take(60).collect();
+            format!("core not answering: {short}")
+        }
     }
 }
 
@@ -213,7 +224,7 @@ fn sidebar_toggle(k: &Kit, m: &Main) -> El {
 
 // ---------- sidebar ----------
 
-fn sidebar(_s: &App, k: &Kit, m: &Main) -> El {
+fn sidebar(s: &App, k: &Kit, m: &Main) -> El {
     let now = SystemTime::now();
     let mut list = col().key("threads").w_full().gap(2.0);
     // Newest first: the task on screen (when it has begun), then earlier ones from the most recent.
@@ -340,21 +351,20 @@ fn sidebar(_s: &App, k: &Kit, m: &Main) -> El {
         .padding(8.0)
         .radius(8.0)
         .border(1.0, k.c.border_base)
+        .child(el().w(8.0).h(8.0).radius(4.0).fill(
+            if m.endpoint.is_some() && s.core_check == crate::app::CoreCheck::Ok {
+                k.c.text_strong
+            } else {
+                k.c.border_strong
+            },
+        ))
         .child(
-            el().w(8.0)
-                .h(8.0)
-                .radius(4.0)
-                .fill(if m.endpoint.is_some() {
-                    k.c.text_strong
-                } else {
-                    k.c.border_strong
-                }),
-        )
-        .child(
-            text(core_state(m))
+            text(core_state(s, m))
                 .font(k.ty.caption())
                 .color(k.c.text_muted),
-        );
+        )
+        // Pressing the chip asks the core again.
+        .on_press(|s: &mut App| s.verify_core());
 
     col()
         .key("sidebar")
@@ -817,7 +827,7 @@ pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
         .gap(8.0)
         .child(card)
         .child(
-            text(status_line(&m.chat, &model_name(m), core_state(m)))
+            text(status_line(&m.chat, &model_name(m), &core_state(s, m)))
                 .key("status-line")
                 .font(k.ty.caption())
                 .color(k.c.text_muted),
