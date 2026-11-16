@@ -172,15 +172,12 @@ pub fn page(s: &App, k: &Kit, m: &Main) -> El {
                 .focusable(true)
                 .w_full()
                 .padding(8.0)
-                .radius(8.0)
-                .child(text(sec.label()).font(k.ty.ui).color(if on {
-                    k.c.text_strong
-                } else {
-                    k.c.text_base
-                }));
-            if on {
-                r = r.fill(k.c.layer_02);
-            }
+                .child(
+                    text(sec.label())
+                        .font(k.ty.ui)
+                        .color(crate::controls::ink(k, on)),
+                );
+            r = crate::controls::style(k, r, on, true, false);
             n = n.child(r.on_press(move |s: &mut App| s.open_section(sec)));
         }
         n
@@ -451,12 +448,15 @@ fn models_table(s: &App, k: &Kit) -> El {
         } else {
             ""
         };
-        Button::new(format!("{label}{arrow}"))
-            .variant(ButtonVariant::Ghost)
-            .on_press(move |s: &mut App| s.sort_models(col_sort))
-            .build(k)
-            .key(key.to_owned())
-            .w(w)
+        crate::controls::choice(
+            k,
+            key,
+            &format!("{label}{arrow}"),
+            sort == col_sort,
+            true,
+            move |s: &mut App| s.sort_models(col_sort),
+        )
+        .w(w)
     };
     c = c.child(
         row()
@@ -1060,11 +1060,27 @@ fn models_and_spend(s: &App, k: &Kit, m: &Main) -> El {
     let effective = num("effective_daily_cap_usd");
     let policy_max = num("policy_max_daily_cap_usd");
     let cap_button = |label: &str, usd: Option<f64>, allowed: bool| {
-        Button::new(label.to_owned())
-            .variant(ButtonVariant::Ghost)
-            .disabled(!allowed)
-            .on_press(move |s: &mut App| s.set_daily_cap(usd))
-            .build(k)
+        // The one in effect is filled; the others are outlined; one the policy forbids is dimmed.
+        let on = match (usd, effective) {
+            (Some(v), Some(e)) => (v - e).abs() < 0.005,
+            (None, Some(e)) => (e - 5.0).abs() < 0.005,
+            _ => false,
+        };
+        crate::controls::choice(
+            k,
+            format!(
+                "cap-{}",
+                label
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("x")
+                    .trim_start_matches('$')
+            ),
+            label,
+            on,
+            allowed,
+            move |s: &mut App| s.set_daily_cap(usd),
+        )
     };
     let within = |v: f64| policy_max.is_none_or(|p| v <= p);
     let mut cap = card(k, "ms-cap", "Daily spend cap").child(pair(
@@ -1304,6 +1320,24 @@ fn about(s: &App, k: &Kit) -> El {
                     } else {
                         s.onboarding.cloud_url().to_owned()
                     },
+                )),
+        )
+        .child(
+            card(k, "about-appearance", "Appearance")
+                .child(crate::controls::switch(
+                    k,
+                    "bg-motion",
+                    "Background motion",
+                    s.ambient,
+                    true,
+                    |s: &mut App| {
+                        let on = !s.ambient;
+                        s.set_ambient(on)
+                    },
+                ))
+                .child(note(
+                    k,
+                    "A slow, faint glow drifts behind the window. Off holds it still. It also stays still when your system asks for reduced motion.",
                 )),
         )
         .child(

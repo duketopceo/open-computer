@@ -68,16 +68,14 @@ pub fn harness(s: &App, k: &Kit) -> El {
                     row()
                         .gap(8.0)
                         .center_y()
-                        .child(
-                            Button::new(h.label())
-                                .variant(if chosen {
-                                    ButtonVariant::Submit
-                                } else {
-                                    ButtonVariant::Neutral
-                                })
-                                .on_press(move |s: &mut App| s.set_harness(h))
-                                .build(k),
-                        )
+                        .child(crate::controls::choice(
+                            k,
+                            format!("harness-pick-{}", h.id()),
+                            h.label(),
+                            chosen,
+                            true,
+                            move |s: &mut App| s.set_harness(h),
+                        ))
                         .child(badge(
                             k,
                             if chosen { "In use" } else { "Not in use" },

@@ -53,6 +53,15 @@ impl App {
         });
     }
 
+    /// Turns the moving background on or off and remembers the choice.
+    pub fn set_ambient(&mut self, on: bool) {
+        self.ambient = on;
+        let path = config::default_path();
+        let mut saved = config::load(&path);
+        saved.ambient_off = !on;
+        let _ = config::save(&path, &saved);
+    }
+
     pub fn set_harness(&mut self, h: Harness) {
         self.harness = h;
         let path = config::default_path();

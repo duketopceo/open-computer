@@ -3,7 +3,9 @@
 //! `open-computer --print-state` prints the onboarding state as JSON and exits without
 //! opening a window.
 
+mod ambient;
 mod app;
+mod controls;
 mod getstarted;
 mod integrations;
 mod main_app;

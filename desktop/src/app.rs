@@ -75,6 +75,8 @@ pub struct App {
     pub model_key: TextEdit,
     /// A plain-words message for the person, or none.
     pub notice: Option<String>,
+    /// The slow moving background (Settings > About > Appearance). On unless the person turned it off.
+    pub ambient: bool,
     pub testing: bool,
     /// The full test chain's rows, shown with a spinner on the running one.
     pub diag_rows: Vec<Row>,
@@ -165,6 +167,7 @@ impl App {
             cloud_secret: TextEdit::new("").secure(),
             model_key: TextEdit::new("").secure(),
             notice: None,
+            ambient: true,
             testing: false,
             diag_rows: initial_rows(),
             diag_running: false,

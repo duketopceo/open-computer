@@ -233,11 +233,12 @@ pub(crate) fn notify(tx: &Sender<Msg>, waker: &Option<Waker>, msg: Msg) {
 impl App {
     /// Leaves setup for the app, remembering that setup finished.
     pub fn enter_app(&mut self) {
+        let before = config::load(&config::default_path());
         let saved = Saved {
             cloud_url: self.onboarding.cloud_url().to_owned(),
             local_only: self.onboarding.local_only(),
             setup_done: true,
-            harness: config::load(&config::default_path()).harness,
+            ..before
         };
         let _ = config::save(&config::default_path(), &saved);
         self.main = Some(Main::new());
@@ -288,6 +289,7 @@ impl App {
             return;
         }
         self.harness = shell_core::harness::Harness::from_id(&saved.harness);
+        self.ambient = !saved.ambient_off;
         self.onboarding.set_local_only(saved.local_only);
         self.onboarding.set_cloud_url(saved.cloud_url.clone());
         self.cloud_url.replace_text(&saved.cloud_url);

@@ -18,6 +18,9 @@ pub struct Saved {
     /// `builtin`, `hermes` or `opencode`.
     #[serde(default)]
     pub harness: String,
+    /// The person turned the moving background off (it is on unless this is set).
+    #[serde(default)]
+    pub ambient_off: bool,
 }
 
 pub fn default_path() -> PathBuf {
@@ -64,6 +67,7 @@ mod tests {
             local_only: false,
             setup_done: true,
             harness: "hermes".into(),
+            ambient_off: true,
         };
         save(&p, &s).unwrap();
         assert_eq!(load(&p), s);

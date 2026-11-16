@@ -249,13 +249,16 @@ fn sidebar(_s: &App, k: &Kit, m: &Main) -> El {
         );
         for (index, title, began, running) in here {
             let current = index.is_none();
+            let sel = current && m.tab == Tab::Chat;
             let dot = if *running {
                 Spinner::new()
                     .size(10.0)
                     .color(crate::theme::accent_amber())
                     .build(k)
             } else {
-                el().w(8.0).h(8.0).radius(4.0).fill(if current {
+                el().w(8.0).h(8.0).radius(4.0).fill(if sel {
+                    k.c.page
+                } else if current {
                     k.c.text_strong
                 } else {
                     k.c.border_strong
@@ -274,22 +277,19 @@ fn sidebar(_s: &App, k: &Kit, m: &Main) -> El {
                 .gap(8.0)
                 .center_y()
                 .padding(8.0)
-                .radius(8.0)
                 .child(col().w(12.0).items_center().child(dot))
                 .child(
                     text(title.clone())
                         .font(k.ty.ui)
-                        .color(k.c.text_base)
+                        .color(crate::controls::ink(k, sel))
                         .grow(1.0),
                 )
                 .child(
                     text(relative_time(*began, now))
                         .font(k.ty.caption())
-                        .color(k.c.text_muted),
+                        .color(crate::controls::ink_muted(k, sel)),
                 );
-            if current && m.tab == Tab::Chat {
-                r = r.fill(k.c.layer_02);
-            }
+            r = crate::controls::style(k, r, sel, true, false);
             r = match index {
                 Some(i) => {
                     let i = *i;
@@ -319,19 +319,15 @@ fn sidebar(_s: &App, k: &Kit, m: &Main) -> El {
             .w_full()
             .center_y()
             .padding(8.0)
-            .radius(8.0)
-            .child(text(label.to_owned()).font(k.ty.ui).color(if on {
-                k.c.text_strong
-            } else {
-                k.c.text_base
-            }));
+            .child(
+                text(label.to_owned())
+                    .font(k.ty.ui)
+                    .color(crate::controls::ink(k, on)),
+            );
         if indent {
             r = r.padding(8.0);
         }
-        if on {
-            r = r.fill(k.c.layer_02);
-        }
-        r.on_press(move |s: &mut App| s.show_tab(tab))
+        crate::controls::style(k, r, on, true, false).on_press(move |s: &mut App| s.show_tab(tab))
     };
     let chip = row()
         .key("core-chip")
@@ -672,25 +668,31 @@ fn status_mark(k: &Kit, status: &str) -> El {
 
 // ---------- the composer ----------
 
-fn chip(k: &Kit, key: &str, label: String, on: Option<Action>, disabled_note: bool) -> El {
-    let mut r = row()
+fn chip(
+    k: &Kit,
+    key: &str,
+    label: String,
+    on: Option<Action>,
+    disabled_note: bool,
+    selected: bool,
+) -> El {
+    let r = row()
         .key(key.to_owned())
         .role("button")
         .label(label.clone())
         .gap(4.0)
         .center_y()
         .padding(8.0)
-        .radius(12.0)
-        .border(1.0, k.c.border_base)
         .child(text(label).font(k.ty.caption()).color(if disabled_note {
             k.c.text_muted
         } else {
-            k.c.text_base
+            crate::controls::ink(k, selected)
         }));
-    if let Some(f) = on {
-        r = r.focusable(true).on_press(move |s: &mut App| f(s));
+    let r = crate::controls::style(k, r, selected, on.is_some(), true).radius(12.0);
+    match on {
+        Some(f) => r.on_press(move |s: &mut App| f(s)),
+        None => r,
     }
-    r
 }
 
 pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
@@ -720,6 +722,7 @@ pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
         format!("Agent: {}", harness.label()),
         Some(Box::new(|s: &mut App| s.toggle_harness_menu())),
         false,
+        m.harness_menu,
     ));
     controls = controls.child(chip(
         k,
@@ -727,10 +730,20 @@ pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
         model_name(m),
         Some(Box::new(|s: &mut App| s.show_tab(Tab::Settings))),
         false,
+        false,
     ));
     // Attaching files is not built yet, so it is shown as unavailable and does nothing.
-    controls =
-        controls.child(chip(k, "attach-chip", "Attach · soon".to_owned(), None, true).opacity(0.6));
+    controls = controls.child(
+        chip(
+            k,
+            "attach-chip",
+            "Attach · soon".to_owned(),
+            None,
+            true,
+            false,
+        )
+        .opacity(0.4),
+    );
     controls = controls.child(col().grow(1.0));
     let send = if busy {
         row()
@@ -744,6 +757,9 @@ pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
             .items_center()
             .justify_center()
             .fill(k.c.text_strong)
+            .hover(k.c.hover)
+            .press_scale(0.96)
+            .focus_ring(2.0, 2.0, k.c.border_focus)
             .child(icon(&STOP, 16.0).color(k.c.page))
             .on_press(|s: &mut App| s.stop_task())
     } else {
@@ -758,6 +774,9 @@ pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
                 .radius(20.0)
                 .items_center()
                 .justify_center()
+                .hover(k.c.hover)
+                .press_scale(0.96)
+                .focus_ring(2.0, 2.0, k.c.border_focus)
                 .child(icon(&ARROW_UP, 18.0).color(crate::theme::on_accent())),
         )
         .on_press(|s: &mut App| s.send())
@@ -788,24 +807,14 @@ pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
             } else {
                 format!("{} · not installed", h.label())
             };
-            menu = menu.child(
-                chip(
-                    k,
-                    &format!("harness-{}", h.id()),
-                    label,
-                    if installed {
-                        Some(Box::new(move |s: &mut App| s.pick_harness(h)))
-                    } else {
-                        None
-                    },
-                    !installed,
-                )
-                .fill(if h == harness {
-                    k.c.layer_03
-                } else {
-                    k.c.layer_01
-                }),
-            );
+            menu = menu.child(crate::controls::choice(
+                k,
+                format!("harness-{}", h.id()),
+                &label,
+                h == harness,
+                installed,
+                move |s: &mut App| s.pick_harness(h),
+            ));
         }
         card = card.child(menu);
     }
@@ -848,22 +857,19 @@ fn computer_panel(_s: &App, k: &Kit, m: &Main) -> El {
             .gap(8.0)
             .center_y()
             .padding(8.0)
-            .radius(8.0)
             .child(status_mark(k, &st.status))
             .child(
                 text(st.name.clone())
                     .font(k.ty.ui)
-                    .color(k.c.text_base)
+                    .color(crate::controls::ink(k, pick == Some(item)))
                     .grow(1.0),
             )
             .child(
                 text(st.ms.map_or(String::new(), duration))
                     .font(k.ty.caption())
-                    .color(k.c.text_muted),
+                    .color(crate::controls::ink_muted(k, pick == Some(item))),
             );
-        if pick == Some(item) {
-            r = r.fill(k.c.layer_02);
-        }
+        r = crate::controls::style(k, r, pick == Some(item), true, false);
         timeline = timeline.child(r.on_press(move |s: &mut App| s.select_step(item)));
     }
 

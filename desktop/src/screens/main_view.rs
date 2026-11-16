@@ -62,6 +62,24 @@ pub(super) fn approval_card(k: &Kit, s: &App, key: String, a: &ApprovalCard) -> 
                         .build(k),
                 ),
         );
+    } else {
+        // Once decided, the answer stays readable: the chosen option filled, the other dimmed.
+        c = c.child(
+            row()
+                .gap(8.0)
+                .child(crate::controls::decided(
+                    k,
+                    format!("{}-approve", a.id),
+                    "Approve",
+                    a.state == "approved",
+                ))
+                .child(crate::controls::decided(
+                    k,
+                    format!("{}-deny", a.id),
+                    "Deny",
+                    a.state == "denied",
+                )),
+        );
     }
     c
 }
