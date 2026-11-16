@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use rune::{El, Icon, ScrollSpec, Transition, col, el, icon, row, text};
 use rune_kit::glyphs::{CHECK_SMALL, CLOSE};
 use rune_kit::shell::{INSPECTOR, SIDEBAR};
-use rune_kit::{Kit, Markdown, Spinner, TextArea};
+use rune_kit::{Button, ButtonVariant, Kit, Markdown, Spinner, TextArea};
 use shell_core::chat::{Chat, Item, ToolCard, write_diff};
 use shell_core::defaults;
 use shell_core::harness::Harness;
@@ -472,6 +472,7 @@ fn chat_page(s: &App, k: &Kit, m: &Main) -> El {
         .h_full()
         .child(top)
         .child(transcript(s, k, m))
+        .children(s.busy_conflict.as_ref().map(|_| busy_card(k)))
         .child(col().w_full().items_center().padding(16.0).child(composer(
             s,
             k,
@@ -483,6 +484,48 @@ fn chat_page(s: &App, k: &Kit, m: &Main) -> El {
         body = body.child(computer_panel(s, k, m));
     }
     body
+}
+
+/// The task could not start because another is still running in this conversation: say so and offer both ways out.
+fn busy_card(k: &Kit) -> El {
+    col()
+        .key("busy-card")
+        .w_full()
+        .max_w(COMPOSER_W)
+        .gap(8.0)
+        .padding(12.0)
+        .radius(12.0)
+        .border(1.0, k.c.border_strong)
+        .child(
+            text(shell_core::chat::SESSION_BUSY)
+                .font(k.ty.ui_medium)
+                .color(k.c.text_strong),
+        )
+        .child(
+            text("Yours is waiting. Stop the running one and it starts at once, or start a new conversation and leave the other as it is.")
+                .font(k.ty.caption())
+                .color(k.c.text_muted)
+                .w_full()
+                .wrap(),
+        )
+        .child(
+            row()
+                .gap(8.0)
+                .child(
+                    Button::new("Stop it")
+                        .variant(ButtonVariant::Submit)
+                        .on_press(|s: &mut App| s.stop_busy_and_retry())
+                        .build(k)
+                        .key("busy-stop"),
+                )
+                .child(
+                    Button::new("Start a new conversation")
+                        .variant(ButtonVariant::Neutral)
+                        .on_press(|s: &mut App| s.new_conversation_for_busy())
+                        .build(k)
+                        .key("busy-new"),
+                ),
+        )
 }
 
 fn empty_state(s: &App, k: &Kit, m: &Main) -> El {

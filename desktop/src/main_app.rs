@@ -18,6 +18,9 @@ pub enum Tab {
     Diagnostics,
 }
 
+/// Shown on a restored conversation whose task was still running when the app closed, until the core says how it ended.
+pub const INTERRUPTED: &str = "This task was interrupted when the app closed.";
+
 /// An earlier task: its own conversation and session. The task on screen is `Main::chat`; opening an earlier one swaps them.
 pub struct Thread {
     pub session_id: String,
@@ -162,9 +165,7 @@ impl Main {
                 chat.apply(&ev);
             }
             if chat.is_busy() {
-                chat.items.push(Item::Note(
-                    "This task was interrupted when the app closed.".to_owned(),
-                ));
+                chat.items.push(Item::Note(INTERRUPTED.to_owned()));
                 chat.status = "cancelled".to_owned();
             }
             self.threads.push(Thread {
@@ -519,6 +520,13 @@ impl App {
             shell_core::history::append_user(dir, &session, &goal);
         }
         self.composer.replace_text("");
+        self.busy_conflict = None;
+        self.spawn_task(ep, session, goal);
+    }
+
+    /// Starts a task on the core and streams its events back. Remembers what was sent so a retry can send it again.
+    fn spawn_task(&mut self, ep: Endpoint, session: String, goal: String) {
+        self.last_sent = Some((session.clone(), goal.clone()));
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || match ep.start_task(&goal, &session) {
             Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
@@ -533,6 +541,128 @@ impl App {
                 }
             }
         });
+    }
+
+    /// "Stop it": cancels the task in the way, then sends the waiting goal again.
+    pub fn stop_busy_and_retry(&mut self) {
+        let Some(conflict) = self.busy_conflict.clone() else {
+            return;
+        };
+        let Some(m) = self.main.as_mut() else { return };
+        let (Some(ep), Some(task)) = (m.endpoint.clone(), m.chat.task_id.clone()) else {
+            self.notice = Some(
+                "Which task is running here is not known. Start a new conversation instead."
+                    .to_owned(),
+            );
+            return;
+        };
+        if m.session_id != conflict.session {
+            self.notice =
+                Some("That conversation is not open. Start a new conversation instead.".to_owned());
+            return;
+        }
+        self.busy_conflict = None;
+        m.chat.status = "running".to_owned();
+        m.started = Some(std::time::Instant::now());
+        shell_core::log_info!(
+            "chat",
+            "stopping task {task} in {} and sending the goal again",
+            conflict.session
+        );
+        let (tx, waker) = (self.tx(), self.waker());
+        let session = conflict.session.clone();
+        let goal = conflict.goal.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = ep.cancel(&session, &task) {
+                notify(&tx, &waker, Msg::ChatFailed(session.clone(), e));
+                return;
+            }
+            match ep.start_task(&goal, &session) {
+                Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
+                Ok(started) => {
+                    let sid = started.session_id.clone();
+                    let r = ep.stream_events(&started.session_id, |ev| {
+                        notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev.clone()))
+                    });
+                    match r {
+                        Ok(()) => notify(&tx, &waker, Msg::ChatEnd(session.clone())),
+                        Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
+                    }
+                }
+            }
+        });
+    }
+
+    /// "Start a new conversation": the busy one stays as it is in the list and the goal goes to a fresh session.
+    pub fn new_conversation_for_busy(&mut self) {
+        let Some(conflict) = self.busy_conflict.take() else {
+            return;
+        };
+        let Some(m) = self.main.as_mut() else { return };
+        let Some(ep) = m.endpoint.clone() else { return };
+        m.new_task();
+        m.chat.push_user(&conflict.goal);
+        m.started = Some(std::time::Instant::now());
+        let session = m.session_id.clone();
+        if let Some(dir) = &self.history_dir {
+            shell_core::history::append_user(dir, &session, &conflict.goal);
+        }
+        shell_core::log_info!(
+            "chat",
+            "the conversation was busy; sending the goal in a new one ({session})"
+        );
+        self.spawn_task(ep, session, conflict.goal);
+    }
+
+    /// Asks the core how earlier conversations ended, once per run, so none shows as running or interrupted when it finished.
+    pub fn reconcile_threads(&mut self) {
+        if self.reconciled {
+            return;
+        }
+        let Some(ep) = self.main.as_ref().and_then(|m| m.endpoint.clone()) else {
+            return;
+        };
+        self.reconciled = true;
+        let (tx, waker) = (self.tx(), self.waker());
+        std::thread::spawn(move || {
+            notify(
+                &tx,
+                &waker,
+                Msg::Data(crate::app::DataMsg::RunStatuses(
+                    shell_core::settings_data::fetch_run_statuses(&ep),
+                )),
+            )
+        });
+    }
+
+    /// Earlier conversations the core finished (or abandoned) while the app was closed get the status the core reports.
+    pub fn apply_run_statuses(&mut self, statuses: &std::collections::HashMap<String, String>) {
+        use shell_core::chat::Item;
+        let Some(m) = self.main.as_mut() else { return };
+        for t in &mut m.threads {
+            let interrupted = t
+                .chat
+                .items
+                .iter()
+                .any(|i| matches!(i, Item::Note(n) if n == crate::main_app::INTERRUPTED));
+            let Some(task) = t.chat.task_id.clone() else {
+                continue;
+            };
+            let Some(status) = statuses.get(&task) else {
+                continue;
+            };
+            if interrupted && matches!(status.as_str(), "done" | "failed" | "cancelled") {
+                t.chat
+                    .items
+                    .retain(|i| !matches!(i, Item::Note(n) if n == crate::main_app::INTERRUPTED));
+                t.chat.items.push(Item::Note(match status.as_str() {
+                    "done" => "This task finished while the app was closed.".to_owned(),
+                    "cancelled" => "This task was cancelled while the app was closed.".to_owned(),
+                    _ => "This task failed while the app was closed.".to_owned(),
+                }));
+                t.chat.status = status.clone();
+            }
+        }
     }
 
     /// Opens or closes a thinking block or tool card.

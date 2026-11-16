@@ -190,6 +190,24 @@ describe("the full agent runtime", () => {
     expect(Math.min(...ids)).toBeGreaterThan(3);
   });
 
+  it("ends a running task with no progress for 15 minutes when a new task is started in its session, but not a fresh or waiting one", async () => {
+    const b = await boot();
+    const old = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+    b.store.insertTask({ taskId: "stalled", sessionId: "s2", goal: "g", createdAt: old });
+    const res = await b.call("POST", "/v1/tasks", { goal: "next", session_id: "s2" });
+    expect(res.status).toBe(202);
+    expect(b.store.taskStatus("stalled")).toBe("failed");
+    // Let the new task finish before the store closes under it.
+    const started = (await res.json()) as { task_id: string };
+    for (let i = 0; i < 100 && ["running", "waiting"].includes(b.store.taskStatus(started.task_id) ?? ""); i++) await new Promise((r) => setTimeout(r, 50));
+    // A task that just began is still busy, and one waiting on an approval never goes stale.
+    b.store.insertTask({ taskId: "fresh", sessionId: "s3", goal: "g" });
+    expect((await b.call("POST", "/v1/tasks", { goal: "x", session_id: "s3" })).status).toBe(409);
+    b.store.insertTask({ taskId: "waiting", sessionId: "s4", goal: "g", createdAt: old });
+    b.store.setTaskStatus("waiting", "waiting");
+    expect((await b.call("POST", "/v1/tasks", { goal: "x", session_id: "s4" })).status).toBe(409);
+  });
+
   it("refuses a second task in a busy session and ends tasks a dead process left behind", async () => {
     const b = await boot();
     b.store.insertTask({ taskId: "old", sessionId: "s", goal: "g" });

@@ -250,6 +250,7 @@ impl App {
             Ok(()) => {
                 shell_core::log_info!("connect", "the core answered /v1/diag/bindings");
                 self.core_check = CoreCheck::Ok;
+                self.reconcile_threads();
                 if self.main.is_none() {
                     let url = self.onboarding.cloud_url().to_owned();
                     self.core_line = Some(format!("Connected to {url}."));

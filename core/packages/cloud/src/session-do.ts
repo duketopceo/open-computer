@@ -96,6 +96,9 @@ const toRecord = (r: ApprovalRow): ApprovalRecord => ({
  *
  * Subclasses (the test entry) override the three `make*` hooks; production code has no flag that picks a fake.
  */
+/** How long a running task may go without an event before a new task in its session ends it as failed. */
+export const STALE_RUN_MS = 15 * 60 * 1000;
+
 export class SessionDO extends DurableObject<Env> {
   private nextSeq = 0;
   private readonly subscribers = new Set<ReadableStreamDefaultController<Uint8Array>>();
@@ -144,6 +147,10 @@ export class SessionDO extends DurableObject<Env> {
   }
   protected clock(): number {
     return Date.now();
+  }
+  /** A task still "running" (not waiting on a human) with no event for this long is not making progress. */
+  protected staleRunMs(): number {
+    return STALE_RUN_MS;
   }
   /** Runs just before a step's audit entries are written. The test entry uses it to inject a failure. */
   protected async beforeAuditFlush(_stepKey: string): Promise<void> {}
@@ -341,9 +348,38 @@ export class SessionDO extends DurableObject<Env> {
 
   // ---- tasks ----
 
-  /** One task at a time per session: a second one would share the event log and close the first one's stream. */
+  /** The open task of this session when it has stalled: still running, and its last event is older than `staleRunMs()`. A task
+   * waiting for an approval is waiting on a person, not stalled, and is never returned. */
+  private stalledTask(): string | null {
+    const row = this.ctx.storage.sql.exec("SELECT task_id, json FROM events ORDER BY seq DESC LIMIT 1").toArray()[0] as
+      | { task_id: string; json: string }
+      | undefined;
+    if (!row) return null;
+    let status: string;
+    try {
+      status = this.loadTask(row.task_id).state.status;
+    } catch {
+      return null;
+    }
+    if (status !== "running") return null;
+    const ts = Date.parse((JSON.parse(row.json) as { ts?: string }).ts ?? "");
+    if (!Number.isFinite(ts) || this.clock() - ts < this.staleRunMs()) return null;
+    return row.task_id;
+  }
+
+  /** One task at a time per session: a second one would share the event log and close the first one's stream. A task that has
+   * made no progress for `STALE_RUN_MS` is ended as failed first, so a dead step or Workflow cannot block the session forever. */
   async startTask(input: StartTaskInput): Promise<{ taskId: string } | { busy: true }> {
-    if (this.kvGet<boolean>("settled") === false) return { busy: true };
+    if (this.kvGet<boolean>("settled") === false) {
+      const stalled = this.stalledTask();
+      if (stalled === null) return { busy: true };
+      await this.failTask(stalled, `No progress for ${Math.round(this.staleRunMs() / 60000)} minutes, so the task was ended and a new one can start.`);
+      try {
+        await (await this.env.TASK_WORKFLOW.get(stalled)).terminate();
+      } catch {
+        /* the instance already ended */
+      }
+    }
     const memory = this.memoryFor(input.memoryEnabled);
     const prepared = await memory.prepare(input.goal);
     const system = prepared.section ? `${BASE_SYSTEM}\n\n${prepared.section}` : BASE_SYSTEM;

@@ -413,3 +413,146 @@ fn when_the_keyring_refuses_the_replacement_the_person_is_asked_and_a_second_401
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+fn app_in_a_busy_conversation() -> App {
+    let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+    let mut m = Main::new();
+    m.endpoint = Some(shell_core::chat::Endpoint::new("http://127.0.0.1:9", "t"));
+    m.chat.push_user("do the second thing");
+    m.chat.task_id = Some("task-1".to_owned());
+    let session = m.session_id.clone();
+    app.main = Some(m);
+    app.last_sent = Some((session, "do the second thing".to_owned()));
+    app
+}
+
+#[test]
+fn a_busy_conversation_offers_stop_it_or_a_new_conversation_and_does_not_report_a_failure() {
+    let mut app = app_in_a_busy_conversation();
+    let session = app.main.as_ref().unwrap().session_id.clone();
+    // The core's 409 session_busy arrives as the chat's failure message.
+    app.busy_conflict = Some(crate::app::BusyConflict {
+        session,
+        goal: "do the second thing".into(),
+    });
+    let rt = runtime(app);
+    assert!(find(&rt, "busy-card") && find(&rt, "busy-stop") && find(&rt, "busy-new"));
+    assert!(has(&rt, "A task is still running in this conversation."));
+}
+
+#[test]
+fn starting_a_new_conversation_keeps_the_busy_one_and_sends_the_goal_in_a_fresh_session() {
+    let mut app = app_in_a_busy_conversation();
+    let before = app.main.as_ref().unwrap().session_id.clone();
+    app.busy_conflict = Some(crate::app::BusyConflict {
+        session: before.clone(),
+        goal: "do the second thing".into(),
+    });
+    app.new_conversation_for_busy();
+    let m = app.main.as_ref().unwrap();
+    assert_ne!(m.session_id, before, "a fresh session");
+    assert_eq!(
+        m.threads.len(),
+        1,
+        "the busy conversation stays in the list"
+    );
+    assert_eq!(m.threads[0].session_id, before);
+    assert!(app.busy_conflict.is_none());
+    assert_eq!(
+        app.last_sent.as_ref().map(|(s, g)| (s.clone(), g.clone())),
+        Some((m.session_id.clone(), "do the second thing".to_owned()))
+    );
+    assert!(
+        m.chat
+            .items
+            .iter()
+            .any(|i| matches!(i, shell_core::chat::Item::User(t) if t == "do the second thing"))
+    );
+}
+
+#[test]
+fn stop_it_needs_to_know_which_task_and_never_cancels_a_guess() {
+    let mut app = app_in_a_busy_conversation();
+    let session = app.main.as_ref().unwrap().session_id.clone();
+    app.main.as_mut().unwrap().chat.task_id = None;
+    app.busy_conflict = Some(crate::app::BusyConflict {
+        session,
+        goal: "g".into(),
+    });
+    app.stop_busy_and_retry();
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .contains("Start a new conversation instead")
+    );
+    assert!(app.busy_conflict.is_some(), "the choice is still open");
+}
+
+#[test]
+fn a_missing_key_says_how_to_fix_it_in_the_chat() {
+    let mut app = app_in_a_busy_conversation();
+    let session = app.main.as_ref().unwrap().session_id.clone();
+    app.on_data_for_test_chat_failed(&session, shell_core::chat::KEY_MISSING);
+    let m = app.main.as_ref().unwrap();
+    assert!(
+        m.chat
+            .items
+            .iter()
+            .any(|i| matches!(i, shell_core::chat::Item::Note(n) if n.contains("connect one")))
+    );
+    assert!(app.busy_conflict.is_none());
+}
+
+#[test]
+fn earlier_conversations_the_core_finished_are_marked_so_none_stays_interrupted() {
+    let dir = temp_dir("reconcile");
+    shell_core::history::append_user(&dir, "app-9-1", "long task");
+    shell_core::history::append(
+        &dir,
+        "app-9-1",
+        &serde_json::json!({"type":"run","status":"running","task_id":"t-done"}),
+    );
+    shell_core::history::append_user(&dir, "app-9-2", "other task");
+    shell_core::history::append(
+        &dir,
+        "app-9-2",
+        &serde_json::json!({"type":"run","status":"running","task_id":"t-still"}),
+    );
+    let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+    app.history_dir = Some(dir.clone());
+    app.main = Some(app.new_main());
+    let status = |app: &App, id: &str| {
+        app.main
+            .as_ref()
+            .unwrap()
+            .threads
+            .iter()
+            .find(|t| t.session_id == id)
+            .unwrap()
+            .chat
+            .status
+            .clone()
+    };
+    assert_eq!(
+        status(&app, "app-9-1"),
+        "cancelled",
+        "interrupted until the core says otherwise"
+    );
+    let statuses: std::collections::HashMap<String, String> = [
+        ("t-done".to_owned(), "done".to_owned()),
+        ("t-still".to_owned(), "running".to_owned()),
+    ]
+    .into();
+    app.apply_run_statuses(&statuses);
+    assert_eq!(status(&app, "app-9-1"), "done");
+    assert!(app.main.as_ref().unwrap().threads.iter().find(|t| t.session_id == "app-9-1").unwrap().chat.items.iter().any(
+        |i| matches!(i, shell_core::chat::Item::Note(n) if n.contains("finished while the app was closed"))
+    ));
+    assert_eq!(
+        status(&app, "app-9-2"),
+        "cancelled",
+        "the core still says running: it stays interrupted"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -29,12 +29,21 @@ pub enum CoreCheck {
     Failed(String),
 }
 
+/// The goal that could not start, and the conversation whose running task was in the way.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BusyConflict {
+    pub session: String,
+    pub goal: String,
+}
+
 pub(crate) enum DataMsg {
     Bindings(Result<serde_json::Value, String>),
     CoreInfo(Result<shell_core::settings_data::CoreInfo, String>),
     Spend(Result<shell_core::settings_data::SpendReport, String>),
     Memory(Result<shell_core::settings_data::MemoryStats, String>),
     MemoryCleared(Result<u64, String>),
+    /// What the core says became of each task: `task id -> status`.
+    RunStatuses(Result<std::collections::HashMap<String, String>, String>),
 }
 
 pub(crate) enum Msg {
@@ -152,6 +161,12 @@ pub struct App {
     pub core_check: CoreCheck,
     /// A stale keyring token was already replaced from the saved file once this run; a second 401 is reported, not retried.
     pub readopt_tried: bool,
+    /// A task could not start because one is still running in this conversation: the goal waits for the person's choice.
+    pub busy_conflict: Option<BusyConflict>,
+    /// The last task sent to the core, so a retry can send it again: (session, goal).
+    pub last_sent: Option<(String, String)>,
+    /// Earlier conversations were checked against the core once this run.
+    pub reconciled: bool,
     /// Why the keyring could not hold a secret, in words (from the keyring's own error), shown until a save works.
     pub keyring_problem: Option<String>,
     /// The keyring refused the saved token: offer to use `cloud.json` for this session instead (needs the person's yes).
@@ -254,6 +269,9 @@ impl App {
             models_sort: (shell_core::settings_data::ModelSort::Prompt, true),
             core_check: CoreCheck::Unknown,
             readopt_tried: false,
+            busy_conflict: None,
+            last_sent: None,
+            reconciled: false,
             keyring_problem: None,
             file_token_offer: false,
             history_dir: None,
@@ -281,6 +299,16 @@ impl App {
             tx,
             rx,
         }
+    }
+
+    /// What the message loop does with a chat failure, callable from a test.
+    #[cfg(test)]
+    pub(crate) fn on_data_for_test_chat_failed(&mut self, sid: &str, words: &str) {
+        self.tx()
+            .send(Msg::ChatFailed(sid.to_owned(), words.to_owned()))
+            .ok();
+        let mut tx = rune::Tx::default();
+        self.poll(0.0, &mut tx);
     }
 
     pub(crate) fn tx(&self) -> Sender<Msg> {
@@ -401,8 +429,25 @@ impl App {
                 }
                 Msg::ChatFailed(sid, words) => {
                     self.harness_running = false;
-                    self.notice = Some(words);
+                    if words == shell_core::chat::SESSION_BUSY {
+                        // Not a failure of the task: it never started. The person chooses what to do about the one in the way.
+                        let goal = self
+                            .last_sent
+                            .as_ref()
+                            .filter(|(s, _)| *s == sid)
+                            .map(|(_, g)| g.clone())
+                            .unwrap_or_default();
+                        self.busy_conflict = Some(BusyConflict {
+                            session: sid.clone(),
+                            goal,
+                        });
+                    } else {
+                        self.notice = Some(words.clone());
+                    }
                     if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid)) {
+                        if words == shell_core::chat::KEY_MISSING {
+                            chat.items.push(shell_core::chat::Item::Note(words));
+                        }
                         chat.status = "failed".to_owned();
                     }
                 }

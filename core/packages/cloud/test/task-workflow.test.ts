@@ -129,6 +129,40 @@ describe("cancel, busy sessions and exhausted retries", () => {
     await readSse(await api(eventsUrl(session_id)));
   });
 
+  it("ends a running task with no progress for 15 minutes so the session is not blocked forever, but never one waiting on a person", async () => {
+    const fx = install([() => ({ partial: [], throwAfter: new Error("stalled") }), textTurn("the new task works")]);
+    let release!: () => void;
+    fx.script.gate = new Promise<void>((resolve) => (release = resolve));
+    const { session_id, task_id } = await startTask({ goal: "stuck in a step" });
+    await waitFor(async () => (fx.script.calls > 0 ? true : undefined), "the model call to start");
+    // Just started: busy.
+    const busy = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "second", session_id }) });
+    expect(busy.status).toBe(409);
+    // 16 minutes of silence later the old task is ended as failed and the new one is accepted.
+    fx.setClockSkew(16 * 60 * 1000);
+    const next = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "second", session_id }) });
+    expect(next.status).toBe(202);
+    const old = await session(session_id).taskState(task_id);
+    expect(old?.status).toBe("failed");
+    expect(old?.failureReason).toContain("No progress for 15 minutes");
+    fx.setClockSkew(0);
+    release();
+  });
+
+  it("does not end a task that is waiting for an approval, however long it waits", async () => {
+    const fx = install([toolTurn([{ id: "c1", name: "sandbox.exec", args: '{"command":"ls"}' }])]);
+    const { session_id } = await startTask({ goal: "needs a person" });
+    await pendingApproval(session_id);
+    fx.setClockSkew(3 * 60 * 60 * 1000);
+    const res = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "second", session_id }) });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("session_busy");
+    fx.setClockSkew(0);
+    const pending = await pendingApproval(session_id);
+    await decide(session_id, pending.id, { hash: pending.hash, approved: false });
+    await readSse(await api(eventsUrl(session_id)));
+  });
+
   it("ends the task as failed, with its sandbox released, when step retries run out", async () => {
     const fx = install([() => ({ partial: [], throwAfter: new Error("ledger unavailable") })]);
     await using_(await introspectWorkflow(env.TASK_WORKFLOW), async (intro) => {

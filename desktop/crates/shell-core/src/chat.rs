@@ -334,6 +334,13 @@ pub struct Started {
 /// What a 401 from the core is called on screen.
 pub const REFUSED: &str = "The core refused the access token.";
 
+/// A task is already running in this conversation (the core's 409 `session_busy`).
+pub const SESSION_BUSY: &str = "A task is still running in this conversation.";
+
+/// The core has no OpenRouter key stored (its 409 `key_missing`), with the fix.
+pub const KEY_MISSING: &str =
+    "This core has no OpenRouter key yet. Open Settings, OpenRouter, and connect one.";
+
 fn plain(status: u16) -> String {
     match status {
         401 => REFUSED.to_owned(),
@@ -379,9 +386,16 @@ impl Endpoint {
         };
         let mut res = res.map_err(|e| crate::http::unreachable("The core", method, path, &e))?;
         let status = res.status().as_u16();
-        crate::http::answered("core", method, path, status);
         let text = res.body_mut().read_to_string().unwrap_or_default();
-        Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+        let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        crate::http::answered_with(
+            "core",
+            method,
+            path,
+            status,
+            &crate::http::problem_detail(&body),
+        );
+        Ok((status, body))
     }
 
     pub fn start_task(&self, goal: &str, session_id: &str) -> Result<Started, String> {
@@ -391,9 +405,13 @@ impl Endpoint {
             Some(&serde_json::json!({ "goal": goal, "session_id": session_id })),
         )?;
         if status != 202 {
-            return Err(body["error"]["message"]
-                .as_str()
-                .map_or_else(|| plain(status), str::to_owned));
+            return Err(match (status, body["error"]["code"].as_str()) {
+                (409, Some("session_busy")) => SESSION_BUSY.to_owned(),
+                (409, Some("key_missing")) => KEY_MISSING.to_owned(),
+                _ => body["error"]["message"]
+                    .as_str()
+                    .map_or_else(|| plain(status), str::to_owned),
+            });
         }
         Ok(Started {
             task_id: body["task_id"].as_str().unwrap_or("").to_owned(),
