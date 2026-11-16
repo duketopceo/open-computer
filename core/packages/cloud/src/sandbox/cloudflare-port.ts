@@ -11,5 +11,6 @@ export function cloudflareSandbox(env: Env, taskId: string): SandboxPort {
     readFile: (path) => stub.readText(taskId, path),
     writeFile: (path, content) => stub.writeText(taskId, path, content),
     destroy: () => stub.destroyContainer(),
+    stopRecord: () => stub.lastStop(),
   };
 }

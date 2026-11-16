@@ -199,6 +199,10 @@ export async function handleRuntimeRoutes(c: RuntimeRouteContext, req: IncomingM
   if (!p.startsWith("/v1/diag/")) return false;
   const now = () => performance.now();
 
+  // This core runs commands without containers, so there is no instance that could stop badly.
+  if (method === "GET" && p === "/v1/diag/sandbox/stops") {
+    return h.send(res, 200, { ok: true, total: 0, clean: 0, deliberate: 0, crashed: 0, stops: [], note: "This core runs commands without containers." }), true;
+  }
   if (method === "GET" && p === "/v1/diag/bindings") {
     const key = c.modelKey();
     const box = c.sandboxKind !== "none";

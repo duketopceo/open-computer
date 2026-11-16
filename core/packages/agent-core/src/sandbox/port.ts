@@ -14,6 +14,16 @@ export interface SandboxPort {
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
   destroy(): Promise<void>;
+  /** How the instance last stopped (clean, deliberate, crashed), when the implementation records it. */
+  stopRecord?(): Promise<SandboxStop | null>;
+}
+
+/** One recorded stop of a sandbox instance. */
+export interface SandboxStop {
+  reason: string;
+  exit_code: number | null;
+  kind: "clean" | "deliberate" | "crashed";
+  stopped_at: string;
 }
 
 export type SandboxFactory = (taskId: string) => SandboxPort | Promise<SandboxPort>;

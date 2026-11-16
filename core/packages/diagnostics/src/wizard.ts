@@ -412,7 +412,35 @@ function cloudflareDefs(): Def[] {
           { label: "key-shaped variables", value: String(b.key_shaped_variables ?? 0) },
           { label: "outbound internet and model host", value: b.egress_blocked ? "blocked" : "OPEN" },
         ];
-        return b.ok ? { ok: true, detail: "The sandbox sees no secret and cannot call out on its own.", metrics: m } : { ok: false, detail: b.key_visible ? "A secret is visible inside the sandbox." : "The sandbox can reach the internet.", metrics: m, fix: { text: "This is a security defect. Do not run tasks; update the core with `oc setup` and retest.", action: "update-core" } };
+        // A sandbox that stopped badly is the next row's finding, not a leaked key or an open network.
+        return b.ok || b.code === "sandbox_unclean_stop" ? { ok: true, detail: "The sandbox sees no secret and cannot call out on its own.", metrics: m } : { ok: false, detail: b.key_visible ? "A secret is visible inside the sandbox." : "The sandbox can reach the internet.", metrics: m, fix: { text: "This is a security defect. Do not run tasks; update the core with `oc setup` and retest.", action: "update-core" } };
+      },
+    },
+    {
+      id: "sandbox.stops",
+      group: "7. Sandbox",
+      title: "Sandbox stops are clean (none crashed)",
+      requires: ["sandbox.run"],
+      async run(ctx) {
+        // The sandbox check above just ended a sandbox, so its stop is in this list too.
+        const unclean = ((ctx.cache.sandbox as HttpResult | undefined)?.body ?? {}) as Record<string, any>;
+        const r = await call(ctx, "GET", "/v1/diag/sandbox/stops", 30_000);
+        const bad = transport(r);
+        if (bad) return bad;
+        const b = r.body ?? {};
+        const m: Metric[] = [
+          { label: "last stops", value: String(b.total ?? 0) },
+          { label: "clean", value: String(b.clean ?? 0) },
+          { label: "ended on purpose", value: String(b.deliberate ?? 0) },
+          { label: "crashed", value: String(b.crashed ?? 0) },
+        ];
+        if (unclean.code === "sandbox_unclean_stop") {
+          return { ok: false, detail: String(unclean.message ?? "The test sandbox did not stop cleanly."), metrics: m, fix: { text: "A sandbox ended with an error instead of a clean exit. Open the Cloudflare dashboard, Containers, to see the instance, then retest.", action: "retry" } };
+        }
+        if (b.ok === false) {
+          return { ok: false, detail: String(b.message ?? "Some sandboxes crashed."), metrics: m, fix: { text: "A sandbox ended with an error instead of a clean exit. Open the Cloudflare dashboard, Containers, to see the instance, then retest.", action: "retry" } };
+        }
+        return { ok: true, detail: b.total ? `The last ${b.total} sandbox stops: none crashed.` : "No sandbox stop is recorded yet; the one just made will show next time.", metrics: m };
       },
     },
     {

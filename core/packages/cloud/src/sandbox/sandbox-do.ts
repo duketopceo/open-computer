@@ -4,6 +4,8 @@ import { buildSandboxEnv } from "@open-computer/agent-core";
 import type { Env } from "../env.ts";
 import { ledgerStub } from "../storage/ledger-client.ts";
 import { createOutboundHandler, type OutboundRule } from "./outbound.ts";
+import { MAIN_PROCESS } from "./main-process.ts";
+import { StopWatcher, type StopRecord } from "./stops.ts";
 import type { ExecResult } from "./port.ts";
 
 const decoder = new TextDecoder();
@@ -15,29 +17,57 @@ const START_WAIT_MS = 60_000;
  * Containers do not run under miniflare, so this class is exercised only by an owner-approved real run.
  */
 export class Sandbox extends DurableObject<Env> {
+  private readonly stops: StopWatcher;
+  private taskId = "";
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.stops = new StopWatcher(ctx.container as unknown as ConstructorParameters<typeof StopWatcher>[0], (record) => this.recordStop(record));
+    // A restarted Durable Object loses the earlier monitor() call; pick the running instance up again.
+    if (ctx.container?.running) void ctx.blockConcurrencyWhile(async () => {
+      this.taskId = (await ctx.storage.get<string>("taskId")) ?? "";
+      this.stops.watch();
+    });
+  }
+
+  /** Keeps the stop on the Durable Object and in the audit log, so Diagnostics can list the last ones. */
+  private async recordStop(record: StopRecord): Promise<void> {
+    await this.ctx.storage.put("lastStop", record);
+    try {
+      await ledgerStub(this.env).appendAudit("sandbox.stopped", this.taskId || null, { ...record });
+    } catch {
+      /* the record on this object still holds the stop */
+    }
+  }
+
+  async lastStop(): Promise<StopRecord | null> {
+    this.stops.reconcile();
+    await this.stops.settled();
+    return this.stops.lastStop ?? (await this.ctx.storage.get<StopRecord>("lastStop")) ?? null;
+  }
+
   private async ensureStarted(taskId: string): Promise<Container> {
     const container = this.ctx.container;
     if (!container) throw new Error("The container binding is not configured.");
+    this.taskId = taskId;
     if (!container.running) {
+      await this.ctx.storage.put("taskId", taskId);
       container.start({
         image: container.images.sandbox ?? Object.values(container.images)[0] ?? "",
         instance: "lite",
         // The image's default command is not a long-running process; commands arrive through exec().
-        entrypoint: ["sleep", "infinity"],
+        entrypoint: MAIN_PROCESS,
         enableInternet: false,
         env: buildSandboxEnv({ set: { OC_TASK_ID: taskId } }),
       });
       await container.interceptOutboundHttps("*:443", this.ctx.exports.OutboundProxy({ props: { taskId } }));
+      this.stops.watch();
     }
     // start() returns before the instance is up; commands only work once it reports running.
     const deadline = Date.now() + START_WAIT_MS;
-    let exited: string | null = null;
-    container.monitor().then(
-      () => void (exited = "The container exited right after it started."),
-      (e: unknown) => void (exited = `The container failed to start: ${e instanceof Error ? e.message : String(e)}`.slice(0, 240)),
-    );
     while (!container.running) {
-      if (exited) throw new Error(exited);
+      const stop = this.stops.lastStop;
+      if (stop) throw new Error(`The container stopped right after it started (${stop.reason}${stop.exit_code === null ? "" : `, exit code ${stop.exit_code}`}).`.slice(0, 240));
       if (Date.now() > deadline) throw new Error("The container did not start in time.");
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -69,8 +99,10 @@ export class Sandbox extends DurableObject<Env> {
     await new Files(container).writeFile(path, content);
   }
 
+  /** Ends the instance as a clean stop: SIGTERM and the main process exits 0; destroyed with a reason only if it does not. */
   async destroyContainer(): Promise<void> {
-    await this.ctx.container?.destroy();
+    if (!this.ctx.container) return;
+    await this.stops.stopCleanly();
   }
 }
 

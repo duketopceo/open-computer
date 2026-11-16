@@ -199,6 +199,12 @@ const DEFS: &[Def] = &[
         requires: &["sandbox.run"],
     },
     Def {
+        id: "sandbox.stops",
+        group: "7. Sandbox",
+        title: "Sandbox stops are clean (none crashed)",
+        requires: &["sandbox.run"],
+    },
+    Def {
         id: "memory.cycle",
         group: "8. Memory",
         title: "Write, recall with a citation, delete",
@@ -643,7 +649,9 @@ impl Chain<'_> {
                     .as_ref()
                     .map(|r| r.body.clone())
                     .unwrap_or(Value::Null);
-                if b.get("ok").and_then(Value::as_bool) == Some(true) {
+                // A sandbox that stopped badly is the next row's finding, not a leaked key or an open network.
+                let unclean = b.get("code").and_then(Value::as_str) == Some("sandbox_unclean_stop");
+                if b.get("ok").and_then(Value::as_bool) == Some(true) || unclean {
                     pass(
                         "The sandbox sees no secret and cannot call out on its own.",
                         vec![],
@@ -659,6 +667,52 @@ impl Chain<'_> {
                         "This is a security defect. Do not run tasks; update the core with `oc setup` and retest.",
                     )
                 }
+            }
+            "sandbox.stops" => {
+                let unclean = self
+                    .sandbox
+                    .as_ref()
+                    .map(|r| r.body.clone())
+                    .unwrap_or(Value::Null);
+                let r = self
+                    .t
+                    .call("GET", "/v1/diag/sandbox/stops", Duration::from_secs(30));
+                if let Some(p) = transport_problem(&r) {
+                    return p;
+                }
+                let b = &r.body;
+                let n = |k: &str| b.get(k).and_then(Value::as_u64).unwrap_or(0);
+                let metrics = vec![
+                    ("last stops".to_owned(), n("total").to_string()),
+                    ("clean".to_owned(), n("clean").to_string()),
+                    ("ended on purpose".to_owned(), n("deliberate").to_string()),
+                    ("crashed".to_owned(), n("crashed").to_string()),
+                ];
+                let fix = "A sandbox ended with an error instead of a clean exit. Open the Cloudflare dashboard, Containers, to see the instance, then retest.";
+                if unclean.get("code").and_then(Value::as_str) == Some("sandbox_unclean_stop") {
+                    let words = unclean
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("The test sandbox did not stop cleanly.");
+                    return fail(words, fix);
+                }
+                if b.get("ok").and_then(Value::as_bool) == Some(false) {
+                    let words = b
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Some sandboxes crashed.");
+                    return fail(words, fix);
+                }
+                let total = n("total");
+                pass(
+                    &if total > 0 {
+                        format!("The last {total} sandbox stops: none crashed.")
+                    } else {
+                        "No sandbox stop is recorded yet; the one just made will show next time."
+                            .to_owned()
+                    },
+                    metrics,
+                )
             }
             "memory.cycle" => {
                 let r = self
@@ -841,6 +895,10 @@ mod tests {
             json!({"ok": true, "cold_ms": 2000.0, "warm_ms": 30.0, "key_visible": false, "egress_blocked": true}),
         );
         add(
+            "/v1/diag/sandbox/stops",
+            json!({"ok": true, "total": 3, "clean": 2, "deliberate": 1, "crashed": 0}),
+        );
+        add(
             "/v1/diag/memory",
             json!({"ok": true, "citation": "task:diag"}),
         );
@@ -995,5 +1053,57 @@ mod tests {
                 .any(|s| s == "GET /v1/diag/bindings"),
             "no cloud derivation call"
         );
+    }
+
+    #[test]
+    fn the_stops_row_passes_while_none_crashed_and_lists_the_counts() {
+        let fake = healthy();
+        let rows = run_chain(&fake, "0.1.0", 2, false, |_| {});
+        let r = row(&rows, "sandbox.stops");
+        assert_eq!(r.status, Status::Pass, "{r:#?}");
+        assert!(r.detail.contains("last 3 sandbox stops"), "{}", r.detail);
+        assert!(r.metrics.iter().any(|(k, v)| k == "crashed" && v == "0"));
+        assert!(
+            fake.seen
+                .borrow()
+                .iter()
+                .any(|c| c == "GET /v1/diag/sandbox/stops")
+        );
+    }
+
+    #[test]
+    fn a_crashed_sandbox_fails_the_stops_row_with_the_cores_words() {
+        let mut fake = healthy();
+        fake.routes.insert(
+            "/v1/diag/sandbox/stops".into(),
+            ok(json!({"ok": false, "total": 4, "clean": 3, "deliberate": 0, "crashed": 1, "message": "1 of the last 4 sandbox stops were crashes (exited exit 137)."})),
+        );
+        let rows = run_chain(&fake, "0.1.0", 2, false, |_| {});
+        let r = row(&rows, "sandbox.stops");
+        assert_eq!(r.status, Status::Fail);
+        assert!(r.detail.contains("exit 137"), "{}", r.detail);
+        assert!(r.fix.as_deref().unwrap_or("").contains("Containers"));
+    }
+
+    #[test]
+    fn an_unclean_stop_of_the_test_sandbox_fails_only_the_stops_row_not_the_key_row() {
+        let mut fake = healthy();
+        fake.routes.insert(
+            "/v1/diag/sandbox".into(),
+            ok(json!({"ok": false, "code": "sandbox_unclean_stop", "stop": "crashed", "cold_ms": 1.0, "warm_ms": 1.0, "key_visible": false, "egress_blocked": true, "message": "The sandbox did not stop cleanly (exited, exit code 137)."})),
+        );
+        let rows = run_chain(&fake, "0.1.0", 2, false, |_| {});
+        assert_eq!(row(&rows, "sandbox.run").status, Status::Pass);
+        assert_eq!(row(&rows, "sandbox.keys").status, Status::Pass);
+        let r = row(&rows, "sandbox.stops");
+        assert_eq!(r.status, Status::Fail);
+        assert!(r.detail.contains("did not stop cleanly"), "{}", r.detail);
+    }
+
+    #[test]
+    fn local_only_runs_the_stops_row_like_the_other_sandbox_rows() {
+        let fake = healthy();
+        let rows = run_chain(&fake, "0.1.0", 2, true, |_| {});
+        assert!(!row(&rows, "sandbox.stops").not_applicable);
     }
 }
