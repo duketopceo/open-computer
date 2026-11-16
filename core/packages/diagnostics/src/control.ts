@@ -18,9 +18,41 @@ export type Runner = (args: string[], opts?: { input?: string; cwd?: string }) =
 
 const HEX32 = /[0-9a-f]{32}/;
 
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+/** Wrangler colours its output even with NO_COLOR set; the codes are removed before anything is matched or shown. */
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, "");
+}
+
+/** Wrangler's own words about what went wrong: its `[ERROR]` blocks and error lines, without the docker build progress (`#7 CACHED`),
+ * the ruler and the telemetry notice. Scrubbed, at most `max` lines. When it printed none, the last lines of output. */
+export function wranglerErrorLines(out: string, max = 6): string[] {
+  const lines = stripAnsi(out)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !/^#\d+ /.test(l) && !/^[─-]+$/.test(l) && !/^Cloudflare collects anonymous telemetry/.test(l) && !/wrangler \d+\.\d+/.test(l) && !/^🪵/.test(l));
+  const start = lines.findIndex((l) => /\[ERROR\]|✘|^Error:/i.test(l));
+  const picked = start >= 0 ? lines.slice(start) : lines.slice(-max);
+  return picked.slice(0, max).map((l) => scrub(l));
+}
+
+/** Docker is the problem only when Wrangler says so. */
+export function dockerProblem(out: string): boolean {
+  return /Docker CLI|Docker daemon|docker: command not found|Cannot connect to the Docker|docker build (failed|exited)|failed to (build|push) (the )?(container )?image/i.test(stripAnsi(out));
+}
+
 /** Strips ids and anything key-shaped from tool output before it is shown. */
 export function scrub(text: string): string {
   return text.replace(/[0-9a-f]{32}/g, "<id>").replace(/\b(sk|cf)[-_][A-Za-z0-9_-]{16,}\b/g, "<redacted>");
+}
+
+/** Tries `primary`; when it cannot be started at all (exit 127), runs `fallback` instead. */
+export function withFallback(primary: Runner, fallback: Runner): Runner {
+  return async (args, opts) => {
+    const r = await primary(args, opts);
+    return r.code === 127 ? fallback(args, opts) : r;
+  };
 }
 
 export function wranglerRunner(cwd: string, wrangler: string[] = (process.env.OC_WRANGLER ?? "pnpm exec wrangler").split(" ")): Runner {
@@ -40,6 +72,8 @@ export function wranglerRunner(cwd: string, wrangler: string[] = (process.env.OC
 
 export interface ControlOptions {
   run: Runner;
+  /** Runs `wrangler deploy`; defaults to `run`. The CLI gives it this repository's own Wrangler. */
+  deployRun?: Runner;
   /** The cloud package directory (holds wrangler.jsonc). */
   cloudDir: string;
   workerName?: string;
@@ -212,13 +246,15 @@ export function createControlPlane(o: ControlOptions): ControlPlane {
             const key = o.modelKey?.();
             if (key && !(await putSecret(sid, SECRET_NAMES.model, key))) return fail("The OpenRouter key could not be stored.", "Retry.");
           }
-          const r = await run(["deploy", "-c", deployCfg]);
+          // The deploy uses this repository's pinned Wrangler when it can (the config needs its version); the configured one otherwise.
+          const r = await (o.deployRun ?? run)(["deploy", "-c", deployCfg]);
           if (r.code !== 0) {
-            const text = scrub(r.out);
-            if (/container|docker/i.test(text) && /fail|error|denied|cannot/i.test(text)) {
-              return fail("The sandbox image could not be built or pushed.", "Make sure Docker is running (Containers need a local image build) and the account is on Workers Paid, then retry.", "retry");
+            const real = wranglerErrorLines(r.out).join(" ");
+            o.log?.(`deploy failed (exit ${r.code}): ${real}`);
+            if (dockerProblem(r.out)) {
+              return fail("The sandbox image could not be built or pushed.", `Make sure Docker is running (Containers need a local image build), then retry. Wrangler said: ${real}`.slice(0, 600), "retry");
             }
-            return fail("The deploy failed.", `Retry. Detail: ${text.split("\n").slice(-4).join(" ").slice(0, 240)}`);
+            return fail("The deploy failed.", `Retry. Wrangler said: ${real}`.slice(0, 600));
           }
           const url = /https:\/\/[a-z0-9.-]+\.workers\.dev/i.exec(r.out)?.[0];
           if (url) writeState({ url }, stateDir);
