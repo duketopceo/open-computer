@@ -29,6 +29,8 @@ REQUIRED_JOBS = frozenset({
     # one means the repository is not in a releasable state, so they gate like every other job.
     "core (typecheck, tests, sidecar build, bundle dry run)",
     "desktop (fmt, clippy, tests, sidecar e2e)",
+    # The self-hosted install script run for real on the runner, then the wizard chain against the daemon.
+    "self-host (install script on the runner, wizard chain)",
     "production approval",
 })
 HOME = Path.home()

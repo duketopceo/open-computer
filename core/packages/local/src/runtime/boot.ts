@@ -6,7 +6,7 @@ import type { LocalServerOptions } from "../server.ts";
 import { sandboxFactoryFor, type SandboxKind } from "./sandbox.ts";
 import { LocalStore } from "./store.ts";
 
-const KINDS: SandboxKind[] = ["bubblewrap", "space", "cube", "none"];
+const KINDS: SandboxKind[] = ["bubblewrap", "space", "cube", "stub", "none"];
 
 export function defaultStateDir(env: Record<string, string | undefined>): string {
   return env.OC_CORE_STATE_DIR ?? path.join(env.XDG_DATA_HOME ?? path.join(homedir(), ".local", "share"), "open-computer", "core");
@@ -43,5 +43,6 @@ export function runtimeFromEnv(env: Record<string, string | undefined>): NonNull
     sandboxKind: kind,
     ...(env.OC_CORE_MODEL_KEY_FILE ? { modelKeyFile: env.OC_CORE_MODEL_KEY_FILE } : {}),
     ...(policyJson ? { policyJson } : {}),
+    ...(env.OC_OTLP_ENDPOINT ? { otlpEndpoint: env.OC_OTLP_ENDPOINT } : {}),
   };
 }

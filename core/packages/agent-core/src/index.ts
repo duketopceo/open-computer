@@ -26,3 +26,4 @@ export * from "./tools/web-search.ts";
 export * from "./sandbox/port.ts";
 export * from "./it-policy.ts";
 export * from "./cost/openrouter-prices.ts";
+export * from "./otel.ts";

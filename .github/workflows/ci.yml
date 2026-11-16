@@ -92,6 +92,51 @@ jobs:
       - name: no purple, violet or indigo in product colours
         run: node scripts/check-no-purple.mjs
 
+  # The self-hosted install script, run for real on the runner (no containers, no VMs): install the compiled core as a
+  # systemd service under the hardened unit, then run the wizard chain against the daemon. The sandbox is the CI-only
+  # stub and the OpenRouter rows are skipped, because CI has no model key and no live models.
+  self-host:
+    name: self-host (install script on the runner, wizard chain)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: build the core binary
+        working-directory: core
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @open-computer/local build
+      - name: install with the script
+        run: sudo bash deploy/self-host/install.sh --bin core/packages/local/out/oc-core --sandbox stub --port 8787
+      - name: wait for the service
+        run: |
+          for _ in $(seq 30); do
+            [ "$(systemctl is-active open-computer-core)" = active ] && curl -sS -o /dev/null http://127.0.0.1:8787/v1/health && break
+            sleep 1
+          done
+          systemctl is-active open-computer-core
+      - name: wizard chain against the daemon
+        env:
+          OC_CLOUD_URL: http://127.0.0.1:8787
+        run: |
+          OC_CLOUD_TOKEN="$(sudo cat /etc/open-computer/token)" node core/packages/diagnostics/src/cli.ts doctor --backend self-hosted --skip-model --json "$RUNNER_TEMP/self-host-results.json"
+      - name: rejects a missing token and survives a restart
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/v1/health)" = 401
+          sudo systemctl restart open-computer-core
+          sleep 2
+          curl -fsS -H "authorization: Bearer $(sudo cat /etc/open-computer/token)" http://127.0.0.1:8787/v1/health
+      - name: service log on failure
+        if: failure()
+        run: sudo journalctl -u open-computer-core --no-pager -n 50
+
   desktop:
     name: desktop (fmt, clippy, tests, sidecar e2e)
     runs-on: ubuntu-latest
@@ -177,7 +222,7 @@ jobs:
   production-approval:
     name: production approval
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [python, console-e2e, provisioning, core, desktop]
+    needs: [python, console-e2e, provisioning, core, self-host, desktop]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5

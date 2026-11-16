@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { bubblewrapFactory, bwrapArgs, e2bFactory, inside, sandboxFactoryFor, type E2bSandboxLike } from "../src/runtime/sandbox.ts";
+import { bubblewrapFactory, bwrapArgs, e2bFactory, inside, sandboxFactoryFor, stubFactory, type E2bSandboxLike } from "../src/runtime/sandbox.ts";
 
 /** True when bubblewrap exists and this machine lets it create the namespaces it needs. */
 function bwrapWorks(): boolean {
@@ -146,5 +146,17 @@ describe("E2B-compatible adapter (SPACE and Cube)", () => {
     expect(seen).toEqual({ apiUrl: "http://127.0.0.1:8080", apiKey: "k", template: "seed", domain: "local.e2b.test", sandboxUrl: "http://127.0.0.1:8092" });
     await expect(sandboxFactoryFor({ kind: "cube", env: {} })("t")).rejects.toThrow(/CUBE_API_URL/);
     await expect(sandboxFactoryFor({ kind: "none", env: {} })("t")).rejects.toThrow(/No sandbox/);
+  });
+});
+
+describe("stub sandbox (CI only)", () => {
+  it("answers only the diagnostics commands and refuses everything else plainly", async () => {
+    const box = await stubFactory()("t");
+    expect((await box.exec("echo oc-sandbox-ok")).stdout).toBe("oc-sandbox-ok\n");
+    expect((await box.exec("env")).stdout).not.toMatch(/key|token|secret/i);
+    expect((await box.exec("curl https://example.com")).stdout).toContain("000");
+    expect(await box.exec("rm -rf /")).toMatchObject({ exitCode: 126 });
+    await expect(box.readFile("a")).rejects.toThrow(/no files/);
+    expect(await sandboxFactoryFor({ kind: "stub", env: {} })("t")).toBeDefined();
   });
 });

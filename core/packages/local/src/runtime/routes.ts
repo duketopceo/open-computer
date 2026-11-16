@@ -15,7 +15,7 @@ import {
   type ToolSpec,
 } from "@open-computer/agent-core";
 import defaults from "../../../../contracts/defaults.json" with { type: "json" };
-import type { Runtime } from "./runtime.ts";
+import { PolicyRefusal, type Runtime } from "./runtime.ts";
 
 export interface RouteHelpers {
   send(res: ServerResponse, status: number, body: unknown): void;
@@ -80,6 +80,7 @@ export async function handleRuntimeRoutes(c: RuntimeRouteContext, req: IncomingM
     try {
       started = await rt.startTask({ goal: body.goal, sessionId, taskCap, ...(asked !== undefined ? { dayCap: asked } : {}), ...(typeof body.model === "string" && body.model ? { model: body.model } : {}), memory: body.memory !== false });
     } catch (e) {
+      if (e instanceof PolicyRefusal) return h.err(res, 403, "policy_model", e.message), true;
       return h.err(res, 500, "policy_invalid", `The IT policy cannot be read, so nothing runs until it is fixed: ${e instanceof Error ? e.message : "error"}`), true;
     }
     if ("busy" in started) return h.err(res, 409, "session_busy", "This session already has a task running. Wait for it to finish or start a new session."), true;

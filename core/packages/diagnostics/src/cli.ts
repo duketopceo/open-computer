@@ -60,7 +60,7 @@ async function main(argv: string[]): Promise<number> {
     return result.ok ? 0 : 1;
   }
   if (cmd !== "doctor" && cmd !== "setup") {
-    console.log("usage: oc <doctor|setup|update> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
+    console.log("usage: oc <doctor|setup|update> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N] [--skip-model]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
     return 2;
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;
@@ -79,7 +79,14 @@ async function main(argv: string[]): Promise<number> {
     cache: {},
   };
 
-  const defs = stepsFor(backend);
+  let defs = stepsFor(backend);
+  // CI has no model key and no network to a model: --skip-model shows the OpenRouter rows as not applicable.
+  if (args.includes("--skip-model")) {
+    const MODEL_ROW = /^(or\.|net\.model$)/;
+    defs = defs.map((d) =>
+      MODEL_ROW.test(d.id) ? { ...d, requires: [], run: async () => ({ ok: true, notApplicable: true, detail: "Skipped on request (--skip-model): no model key in this environment." }) } : d,
+    );
+  }
   const tty = process.stdout.isTTY;
   let frame = 0;
   let printed = 0;

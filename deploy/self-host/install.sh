@@ -34,7 +34,7 @@ done
 
 case "$PORT" in ''|*[!0-9]*) echo "--port must be a number" >&2; exit 2 ;; esac
 [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || { echo "--port must be 1-65535" >&2; exit 2; }
-case "$SANDBOX" in bubblewrap|space|cube|none) ;; *) echo "--sandbox must be bubblewrap, space, cube or none" >&2; exit 2 ;; esac
+case "$SANDBOX" in bubblewrap|space|cube|none|stub) ;; *) echo "--sandbox must be bubblewrap, space, cube or none (stub is for CI only)" >&2; exit 2 ;; esac
 [ -n "$BIN" ] || { echo "--bin is required (the compiled oc-core binary; build it with: pnpm --filter @open-computer/local build)" >&2; exit 2; }
 
 run() { if [ "$DRY" = 1 ]; then echo "would run: $*"; else "$@"; fi; }

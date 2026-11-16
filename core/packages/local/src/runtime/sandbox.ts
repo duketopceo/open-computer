@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildSandboxEnv, MAX_FILE_BYTES, type ExecResult, type SandboxFactory, type SandboxPort } from "@open-computer/agent-core";
 
-export type SandboxKind = "bubblewrap" | "space" | "cube" | "none";
+export type SandboxKind = "bubblewrap" | "space" | "cube" | "stub" | "none";
 
 /** Resolves a path the model gave against the workspace and refuses anything that leaves it. */
 export function inside(root: string, p: string): string {
@@ -154,9 +154,33 @@ export function sandboxFactoryFor(c: SandboxChoice): SandboxFactory {
       }
       return e2bFactory({ apiUrl, apiKey, template, ...(c.env[`${p}_DOMAIN`] ? { domain: c.env[`${p}_DOMAIN`] as string } : {}), ...(c.env[`${p}_DATA_PLANE_URL`] ? { sandboxUrl: c.env[`${p}_DATA_PLANE_URL`] as string } : {}) }, c.create);
     }
+    case "stub":
+      return stubFactory();
     default:
       return async () => {
         throw new Error("No sandbox is configured, so commands cannot run on this core.");
       };
   }
+}
+
+/**
+ * A sandbox that runs nothing: canned answers for the commands the diagnostics use, and an error for anything else. It
+ * exists so CI can install and test the daemon on a runner that has no bubblewrap or Cube. Never choose it for real work.
+ */
+export function stubFactory(): SandboxFactory {
+  return async () => ({
+    exec: async (command) => {
+      if (command === "env") return { stdout: "PATH=/usr/bin\nHOME=/workspace\n", stderr: "", exitCode: 0 };
+      if (command.includes("curl")) return { stdout: "000\n000", stderr: "", exitCode: 0 };
+      if (command.startsWith("echo ")) return { stdout: `${command.slice(5)}\n`, stderr: "", exitCode: 0 };
+      return { stdout: "", stderr: "The stub sandbox does not run commands.", exitCode: 126 };
+    },
+    readFile: async () => {
+      throw new Error("The stub sandbox has no files.");
+    },
+    writeFile: async () => {
+      throw new Error("The stub sandbox has no files.");
+    },
+    destroy: async () => {},
+  });
 }

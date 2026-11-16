@@ -4,6 +4,7 @@ import { authenticate } from "./auth.ts";
 import type { Env } from "./env.ts";
 import { readSecret, SecretError } from "./models/secrets.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
+import { modelRefusal, settingRefusal } from "@open-computer/agent-core";
 import { NO_POLICY, parsePolicy, PolicyError, resolveDailyCaps, validateUserDailyCap, type DailyCaps, type Policy } from "./policy.ts";
 import { readAllAudit } from "./storage/ledger-client.ts";
 import { handleDiag } from "./diag.ts";
@@ -107,6 +108,8 @@ export function createHandler(deps: {
             return problem(400, "bad_request", "The body must be JSON.");
           }
           for (const k of Object.keys(body)) if (k !== "daily_cap_usd") return problem(400, "bad_request", `Unknown setting "${k}".`);
+          const locked = settingRefusal(policy, "daily_cap_usd");
+          if (locked) return problem(403, "policy_locked", locked);
           if (!("daily_cap_usd" in body)) return problem(400, "bad_request", "daily_cap_usd is required (a number, or null to use the default).");
           if (body.daily_cap_usd === null) {
             await env.DB.prepare("DELETE FROM settings WHERE key = 'daily_cap_usd'").run();
@@ -173,6 +176,8 @@ export function createHandler(deps: {
         if (!Number.isFinite(askedDayCap) || askedDayCap <= 0) return problem(400, "bad_request", "day_cap must be above 0.");
         const dayCap = Math.min(askedDayCap, caps.effective);
         const model = typeof body.model === "string" && body.model !== "" ? body.model : defaults.default_model;
+        const refused = modelRefusal(policy, model);
+        if (refused) return problem(403, "policy_model", refused);
         const taskId = crypto.randomUUID();
         const session = env.SESSION.get(env.SESSION.idFromName(sessionId));
         const started = await session.startTask({

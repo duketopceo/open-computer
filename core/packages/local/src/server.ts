@@ -5,7 +5,7 @@ import { ProviderError, type FetchLike } from "@open-computer/agent-core";
 import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import { testConnection } from "./test-connection.ts";
 import { readFileSync } from "node:fs";
-import { resolveDailyCaps, validateUserDailyCap, parseItPolicy, type SandboxFactory } from "@open-computer/agent-core";
+import { settingRefusal, validateUserDailyCap, parseItPolicy, type SandboxFactory } from "@open-computer/agent-core";
 import { Runtime } from "./runtime/runtime.ts";
 import { handleRuntimeRoutes } from "./runtime/routes.ts";
 import type { LocalStore } from "./runtime/store.ts";
@@ -37,6 +37,7 @@ export interface LocalServerOptions {
     sandboxKind: string;
     baseUrl?: string;
     policyJson?: string;
+    otlpEndpoint?: string;
     /** File holding the model key (daemon mode); read at start. */
     modelKeyFile?: string;
   };
@@ -111,6 +112,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
         ...(options.runtime.baseUrl ? { baseUrl: options.runtime.baseUrl } : {}),
         sandbox: options.runtime.sandbox,
         ...(options.runtime.policyJson ? { policyJson: options.runtime.policyJson } : {}),
+        ...(options.runtime.otlpEndpoint ? { otlpEndpoint: options.runtime.otlpEndpoint } : {}),
       })
     : null;
   let selfBase = "";
@@ -147,6 +149,13 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
         if ("cloud_url" in body && body.cloud_url === "") body.cloud_url = null;
         if ("cloud_url" in body && body.cloud_url !== null && !isAllowedCloudUrl(body.cloud_url)) {
           return err(res, 400, "bad_request", "cloud_url must be an https address, or http on this computer.");
+        }
+        if (runtime) {
+          const policy = parseItPolicy(options.runtime?.policyJson);
+          for (const k of Object.keys(body)) {
+            const locked = settingRefusal(policy, k);
+            if (locked) return err(res, 403, "policy_locked", locked);
+          }
         }
         if (runtime && "daily_cap_usd" in body) {
           if (body.daily_cap_usd === null) runtime.store.setSetting("daily_cap_usd", null);

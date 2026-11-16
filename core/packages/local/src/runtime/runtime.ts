@@ -10,7 +10,9 @@ import {
   SandboxManager,
   ToolRegistry,
   createState,
-  defaultPolicy,
+  createPolicy,
+  exportOtlp,
+  modelRefusal,
   openRouterProvider,
   parseItPolicy,
   parsePrices,
@@ -40,6 +42,8 @@ export interface RuntimeOptions {
   sandbox: SandboxFactory;
   /** IT policy JSON text; empty means none, a broken policy fails closed. */
   policyJson?: string;
+  /** Optional OTLP/HTTP traces endpoint; the policy's otlp_endpoint takes precedence. */
+  otlpEndpoint?: string;
   now?: () => number;
   /** Test hook: replaces the OpenRouter provider. */
   provider?: Provider;
@@ -139,6 +143,8 @@ export class Runtime {
 
   async startTask(input: StartTaskInput): Promise<{ taskId: string; sessionId: string; dayCap: number } | { busy: true }> {
     if (this.store.activeTaskInSession(input.sessionId) !== null) return { busy: true };
+    const refused = modelRefusal(parseItPolicy(this.opts.policyJson), input.model ?? defaults.default_model);
+    if (refused) throw new PolicyRefusal(refused);
     const caps = this.caps();
     const dayCap = Math.min(input.dayCap ?? caps.effective, caps.effective);
     const taskCap = input.taskCap ?? 1;
@@ -167,13 +173,16 @@ export class Runtime {
     const controller = new AbortController();
     this.aborts.set(j.taskId, controller);
     const sequencer = new EventSequencer(j.taskId, 0, () => new Date(this.now()).toISOString());
+    const collected: AgentEvent[] = [];
     const deliver = async (event: AgentEvent): Promise<void> => {
+      collected.push(event);
       const id = this.store.appendEvent(j.sessionId, event);
       for (const s of this.subs.get(j.sessionId) ?? []) s.send(id, event);
       await this.audit.recordEvent(event);
     };
     let status = "failed";
     try {
+      const it = parseItPolicy(this.opts.policyJson);
       const guard = new CostGuard(this.store.ledger, { taskCap: j.taskCap, dayCap: j.dayCap, now: () => this.now() });
       const tools = new ToolRegistry([
         ...j.memory.tools(),
@@ -186,7 +195,7 @@ export class Runtime {
         {
           provider: this.provider(),
           tools,
-          policy: defaultPolicy,
+          policy: createPolicy(it.risk, it.denyTools),
           approvals: this.approvals.requester,
           guard,
           prices: await this.prices(),
@@ -206,6 +215,12 @@ export class Runtime {
       await deliver(sequencer.stamp({ type: "run", status: status as "failed" | "cancelled", reason: controller.signal.aborted ? "Cancelled." : "The task stopped because of an internal error." }));
     } finally {
       this.aborts.delete(j.taskId);
+      try {
+        const endpoint = parseItPolicy(this.opts.policyJson).otlpEndpoint ?? (this.opts.otlpEndpoint || null);
+        if (endpoint) await exportOtlp(this.opts.fetch, endpoint, collected, { serviceName: "open-computer-local" });
+      } catch {
+        /* telemetry is best effort */
+      }
       this.store.setTaskStatus(j.taskId, status);
       await this.sandboxes.release(j.taskId).catch(() => undefined);
       this.closeSession(j.sessionId);
@@ -230,3 +245,6 @@ export class Runtime {
     this.approvals.dispose();
   }
 }
+
+/** A task the IT policy does not allow. The route turns it into a plain 403. */
+export class PolicyRefusal extends Error {}
