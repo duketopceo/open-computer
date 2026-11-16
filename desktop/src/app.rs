@@ -35,6 +35,8 @@ pub(crate) enum Msg {
         access: shell_core::signin::AccessState,
     },
     HarnessDetected(Vec<shell_core::harness::Detected>),
+    /// Whether the connected core routes model calls through an AI Gateway.
+    Gateway(Option<bool>),
     /// The key from "Connect OpenRouter", or why it did not finish.
     OrKey(Result<String, String>),
     OrAccount(shell_core::openrouter::Account),
@@ -176,6 +178,11 @@ impl App {
                     self.cf_access = Some(access);
                 }
                 Msg::HarnessDetected(list) => self.harness_info = list,
+                Msg::Gateway(g) => {
+                    if g.is_some() {
+                        self.cf_gateway = g;
+                    }
+                }
                 Msg::OrKey(r) => self.on_openrouter_key(r),
                 Msg::OrAccount(a) => {
                     self.or_busy = false;

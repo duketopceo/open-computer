@@ -352,7 +352,7 @@ impl App {
             ],
             missing: Vec::new(),
         });
-        self.cf_gateway = Some(false);
+        self.cf_gateway = Some(true);
         self.cf_access = Some(AccessState::Protected);
     }
 }

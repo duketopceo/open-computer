@@ -190,7 +190,15 @@ impl App {
             return;
         };
         let (tx, waker) = (self.tx(), self.waker());
-        std::thread::spawn(move || notify(&tx, &waker, Msg::Settings(ep.settings())));
+        std::thread::spawn(move || {
+            notify(&tx, &waker, Msg::Settings(ep.settings()));
+            // The core says whether it routes through an AI Gateway; the Routing and Cloudflare sections show it.
+            let gateway = ep
+                .bindings()
+                .ok()
+                .map(|b| shell_core::signin::gateway_configured(&b));
+            notify(&tx, &waker, Msg::Gateway(gateway));
+        });
     }
 
     pub fn set_daily_cap(&mut self, usd: Option<f64>) {

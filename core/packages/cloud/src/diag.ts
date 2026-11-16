@@ -11,7 +11,7 @@ import {
 } from "@open-computer/agent-core";
 import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import type { Env } from "./env.ts";
-import { buildProvider, providerTarget } from "./models/gateway.ts";
+import { buildProvider, gatewayConfigured, resolveTarget } from "./models/gateway.ts";
 import { isValidationError, openRouterSdk, sdkStatus } from "./models/sdk.ts";
 import { readSecret, SecretError } from "./models/secrets.ts";
 import type { SandboxFactory } from "./sandbox/port.ts";
@@ -236,13 +236,13 @@ async function completion(env: Env, deps: DiagDeps): Promise<Response> {
   }
   const total = now() - t0;
   await ledger.settle({ stepId, actual: cost });
-  await ledger.appendAudit("diag.model_call", "diag", { model: defaults.default_model, cost, via_gateway: providerTarget(env).viaGateway });
+  await ledger.appendAudit("diag.model_call", "diag", { model: defaults.default_model, cost, via_gateway: gatewayConfigured(env) });
   const genMs = Math.max(1, now() - streamStart);
   return json({
     ok: toolCalls >= 1,
     code: toolCalls >= 1 ? "ok" : "no_tool_call",
     model: defaults.default_model,
-    via_gateway: providerTarget(env).viaGateway,
+    via_gateway: gatewayConfigured(env),
     ttft_ms: firstToken === null ? null : round(firstToken),
     total_ms: round(total),
     tokens_per_sec: completionTokens > 0 ? round((completionTokens / genMs) * 1000) : null,
@@ -322,7 +322,7 @@ async function perf(env: Env, deps: DiagDeps): Promise<Response> {
       }
     }
     out.edge_to_openrouter_ms = stats(direct);
-    const target = providerTarget(env);
+    const target = await resolveTarget(env);
     if (target.viaGateway) {
       const via: number[] = [];
       for (let i = 0; i < 5; i++) {
@@ -461,7 +461,7 @@ async function bindings(env: Env, deps: DiagDeps, version: string): Promise<Resp
     probe(() => env.ARTIFACTS.head("diag/none")),
     probe(() => readSecret(env.MODEL_KEY, "model_key")),
   ]);
-  const target = providerTarget(env);
+  const target = await resolveTarget(env);
   return json({
     ok: db && r2,
     version,
@@ -473,6 +473,7 @@ async function bindings(env: Env, deps: DiagDeps, version: string): Promise<Resp
     workflow: !!env.TASK_WORKFLOW,
     container: !!env.SANDBOX,
     gateway: target.viaGateway,
+    gateway_via: target.source ?? "direct",
     default_model: defaults.default_model,
     worker_model: defaults.worker_model,
     daily_cap_usd: deps.dayCap,

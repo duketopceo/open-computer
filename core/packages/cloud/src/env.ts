@@ -24,6 +24,11 @@ export interface Env {
   POLICY_JSON?: string;
   /** Optional OTLP/HTTP traces endpoint (https). The IT policy's otlp_endpoint takes precedence. */
   OTLP_ENDPOINT?: string;
+  /**
+   * The Workers AI binding. Bound only when a gateway id is set at deploy time. With it, the gateway URL (account id
+   * included) comes from the binding, so no account id is ever written into a config file.
+   */
+  AI?: Ai;
   AI_GATEWAY_ACCOUNT: string;
   AI_GATEWAY_ID: string;
 }

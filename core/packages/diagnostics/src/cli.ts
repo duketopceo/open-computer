@@ -101,7 +101,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;
   const state = readState();
-  const control = cmd === "setup" ? createControlPlane({ run: wranglerRunner(cloudDir), cloudDir, modelKey: () => process.env.OC_OPENROUTER_KEY, extraKeys: extraKeysFromEnv }) : undefined;
+  const control = cmd === "setup" ? createControlPlane({ run: wranglerRunner(cloudDir), cloudDir, ...(process.env.OC_AI_GATEWAY_ID ? { gatewayId: process.env.OC_AI_GATEWAY_ID } : {}), modelKey: () => process.env.OC_OPENROUTER_KEY, extraKeys: extraKeysFromEnv }) : undefined;
 
   const ctx: Ctx = {
     baseUrl: flag(args, "url") ?? process.env.OC_CLOUD_URL ?? state.url ?? "",

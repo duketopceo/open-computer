@@ -13,7 +13,7 @@ import {
 export interface OpenRouterOptions {
   fetch: FetchLike;
   /** Chat Completions base, for example the direct API or an AI Gateway route. No trailing slash needed. */
-  baseUrl: string;
+  baseUrl: string | (() => string | Promise<string>);
   /** Resolves the key per call so a rotated key is picked up; the key is never logged or put in a body. */
   apiKey: () => string | Promise<string>;
   /** Extra non-secret headers (attribution, gateway authorization). */
@@ -169,7 +169,8 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
     const signal = guard.signal;
     const key = await options.apiKey();
     const extra = typeof options.headers === "function" ? await options.headers() : (options.headers ?? {});
-    const url = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+    const baseUrl = typeof options.baseUrl === "function" ? await options.baseUrl() : options.baseUrl;
+    const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
     let response: Response;
     try {
       response = await options.fetch(url, {
