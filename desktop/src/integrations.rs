@@ -383,5 +383,29 @@ impl App {
                     Some(signin::locate_wrangler(None, None, &|_| false).describe(None));
             }
         }
+        // OC_SCREEN_ROWS=1: a test chain part way through, for the Diagnostics screenshot.
+        if std::env::var_os("OC_SCREEN_ROWS").is_some() {
+            use shell_core::diagnostics::{Status, initial_rows};
+            let mut rows = initial_rows();
+            let n = rows.len();
+            for (i, r) in rows.iter_mut().enumerate() {
+                let (status, ms) = match i {
+                    x if x + 7 < n => (Status::Pass, Some(180.0 + 90.0 * x as f64)),
+                    x if x + 7 == n => (Status::Fail, Some(2400.0)),
+                    x if x + 6 == n => (Status::Running, None),
+                    _ => (Status::Pending, None),
+                };
+                r.status = status;
+                r.ms = ms;
+                if status == Status::Fail {
+                    r.detail = "The model did not call the tool.".to_owned();
+                    r.fix = Some(
+                        "Pick another model in Settings, then run the tests again.".to_owned(),
+                    );
+                }
+            }
+            self.diag_rows = rows;
+            self.diag_running = true;
+        }
     }
 }
