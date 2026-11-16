@@ -29,7 +29,7 @@ pub(crate) enum Msg {
     Settings(Result<serde_json::Value, String>),
     LocalReady(Result<(CoreProcess, shell_core::chat::Endpoint), String>),
     SignedIn(Result<shell_core::signin::SignIn, String>),
-    CfProgress(String),
+    CfProgress(shell_core::signin::Progress),
     CfDashboard {
         gateway: Option<bool>,
         access: shell_core::signin::AccessState,
@@ -61,6 +61,8 @@ pub struct App {
     /// Who is signed in to Cloudflare, in one plain line, or the reason the sign-in did not finish.
     pub cloudflare_line: Option<String>,
     pub signing_in: bool,
+    /// A Cloudflare page to open by hand, when Wrangler said it could not open the browser itself.
+    pub cf_open_url: Option<String>,
     pub cf_state: Option<shell_core::signin::SignIn>,
     pub cf_gateway: Option<bool>,
     pub cf_gateway_reason: Option<String>,
@@ -119,6 +121,7 @@ impl App {
             composer: TextEdit::new(""),
             cloudflare_line: None,
             signing_in: false,
+            cf_open_url: None,
             cf_state: None,
             cf_gateway: None,
             cf_gateway_reason: None,
@@ -188,6 +191,7 @@ impl App {
                 }
                 Msg::SignedIn(r) => {
                     self.signing_in = false;
+                    self.cf_open_url = None;
                     match r {
                         Ok(st) => {
                             self.cloudflare_line = Some(st.summary());
@@ -196,7 +200,12 @@ impl App {
                         Err(words) => self.cloudflare_line = Some(words),
                     }
                 }
-                Msg::CfProgress(line) => self.cloudflare_line = Some(line),
+                Msg::CfProgress(p) => {
+                    self.cloudflare_line = Some(p.text);
+                    if p.open_url.is_some() {
+                        self.cf_open_url = p.open_url;
+                    }
+                }
                 Msg::CfDashboard { gateway, access } => {
                     self.cf_gateway = gateway;
                     self.cf_access = Some(access);

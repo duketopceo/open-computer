@@ -105,21 +105,111 @@ pub fn parse_whoami(text: &str) -> SignIn {
     }
 }
 
-/// The command that runs Wrangler: `OC_WRANGLER` (for example `pnpm exec wrangler`), else `npx --yes wrangler@4`.
-pub fn wrangler_command() -> Vec<String> {
-    std::env::var("OC_WRANGLER")
-        .ok()
-        .filter(|c| !c.trim().is_empty())
-        .map_or_else(
-            || {
-                vec![
-                    "npx".to_owned(),
-                    "--yes".to_owned(),
-                    "wrangler@4".to_owned(),
-                ]
+/// How Wrangler will be run, and how it was found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Located {
+    pub cmd: Vec<String>,
+    pub how: Found,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Found {
+    /// `OC_WRANGLER` named it.
+    Env,
+    /// A `wrangler` program on the PATH.
+    OnPath(String),
+    /// Nothing installed: `npx` downloads it first, which can take 10 to 30 seconds.
+    Npx,
+}
+
+impl Located {
+    /// One plain line saying which Wrangler this is, for the progress text.
+    pub fn describe(&self, version: Option<&str>) -> String {
+        match &self.how {
+            Found::Env => "Using the Wrangler set in OC_WRANGLER.".to_owned(),
+            Found::OnPath(_) => match version {
+                Some(v) => format!("Using wrangler {v} on this computer."),
+                None => "Using wrangler on this computer.".to_owned(),
             },
-            |c| c.split_whitespace().map(str::to_owned).collect(),
-        )
+            Found::Npx => {
+                "Downloading Wrangler with npx… the first time takes up to 30 seconds.".to_owned()
+            }
+        }
+    }
+}
+
+/// Finds Wrangler: `OC_WRANGLER`, then a `wrangler` on the PATH (the entries are checked here, no `which` is spawned), then
+/// `npx --yes wrangler@4`. `exists` says whether a path is a file, so tests can supply a fake PATH.
+pub fn locate_wrangler(
+    env_override: Option<&str>,
+    path: Option<&std::ffi::OsStr>,
+    exists: &dyn Fn(&std::path::Path) -> bool,
+) -> Located {
+    if let Some(c) = env_override.map(str::trim).filter(|c| !c.is_empty()) {
+        return Located {
+            cmd: c.split_whitespace().map(str::to_owned).collect(),
+            how: Found::Env,
+        };
+    }
+    let names: &[&str] = if cfg!(windows) {
+        &["wrangler.cmd", "wrangler.exe", "wrangler.bat"]
+    } else {
+        &["wrangler"]
+    };
+    if let Some(path) = path {
+        for dir in std::env::split_paths(path) {
+            for name in names {
+                let candidate = dir.join(name);
+                if exists(&candidate) {
+                    let p = candidate.to_string_lossy().into_owned();
+                    return Located {
+                        cmd: vec![p.clone()],
+                        how: Found::OnPath(p),
+                    };
+                }
+            }
+        }
+    }
+    Located {
+        cmd: vec![
+            "npx".to_owned(),
+            "--yes".to_owned(),
+            "wrangler@4".to_owned(),
+        ],
+        how: Found::Npx,
+    }
+}
+
+fn is_executable_file(p: &std::path::Path) -> bool {
+    let Ok(m) = std::fs::metadata(p) else {
+        return false;
+    };
+    if !m.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        m.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// Where this computer's Wrangler is, using the real environment.
+pub fn locate_wrangler_here() -> Located {
+    locate_wrangler(
+        std::env::var("OC_WRANGLER").ok().as_deref(),
+        std::env::var_os("PATH").as_deref(),
+        &is_executable_file,
+    )
+}
+
+/// The command that runs Wrangler: `OC_WRANGLER`, else `wrangler` on the PATH, else `npx --yes wrangler@4`.
+pub fn wrangler_command() -> Vec<String> {
+    locate_wrangler_here().cmd
 }
 
 fn strip_ansi(s: &str) -> String {
@@ -159,11 +249,38 @@ pub fn progress_line(raw: &str) -> Option<String> {
     }
 }
 
-/// Runs a command, handing each output line (stdout and stderr) to `on_line`. Returns whether it exited successfully.
-fn run_lines(
+/// What a spawn failure means in words the person can act on.
+pub fn spawn_failure_words(program: &str, e: &std::io::Error) -> String {
+    let name = std::path::Path::new(program)
+        .file_name()
+        .map_or_else(|| program.to_owned(), |n| n.to_string_lossy().into_owned());
+    if e.kind() == std::io::ErrorKind::NotFound {
+        if name.starts_with("npx") || name.starts_with("node") {
+            return "Node.js / npx was not found on this computer. Install Node.js from https://nodejs.org, then try again.".to_owned();
+        }
+        return format!(
+            "{name} was not found on this computer. Install Wrangler (npm i -g wrangler) or Node.js, then try again."
+        );
+    }
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        return format!("{name} could not be started: permission denied.");
+    }
+    format!("{name} could not be started ({}).", e.kind())
+}
+
+/// How long to wait for Wrangler's first line before saying it is still working.
+pub const SILENCE: std::time::Duration = std::time::Duration::from_secs(60);
+pub const STILL_WAITING: &str =
+    "Still waiting for Wrangler… the first run can take a minute while it downloads.";
+
+/// Runs a command, handing each output line (stdout and stderr) to `on_line`. If nothing has been printed for `silence`,
+/// `on_silence` is called once (and again after each further `silence` without a line). Returns whether it exited successfully.
+fn run_lines_ex(
     cmd: &[String],
     extra: &[String],
+    silence: std::time::Duration,
     on_line: &mut dyn FnMut(&str),
+    on_silence: &mut dyn FnMut(),
 ) -> Result<bool, String> {
     let (program, rest) = cmd.split_first().ok_or("Wrangler was not found.")?;
     let mut child = Command::new(program)
@@ -173,7 +290,7 @@ fn run_lines(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|_| "Wrangler was not found. Install Node.js, then try again.".to_owned())?;
+        .map_err(|e| spawn_failure_words(program, &e))?;
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let mut readers = Vec::new();
     if let Some(o) = child.stdout.take() {
@@ -193,13 +310,25 @@ fn run_lines(
         }));
     }
     drop(tx);
-    for l in rx {
-        on_line(&l);
+    loop {
+        match rx.recv_timeout(silence) {
+            Ok(l) => on_line(&l),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => on_silence(),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
     }
     for r in readers {
         let _ = r.join();
     }
     Ok(child.wait().map(|s| s.success()).unwrap_or(false))
+}
+
+fn run_lines(
+    cmd: &[String],
+    extra: &[String],
+    on_line: &mut dyn FnMut(&str),
+) -> Result<bool, String> {
+    run_lines_ex(cmd, extra, SILENCE, on_line, &mut || {})
 }
 
 pub fn whoami_with(cmd: &[String]) -> Result<SignIn, String> {
@@ -211,17 +340,103 @@ pub fn whoami_with(cmd: &[String]) -> Result<SignIn, String> {
     Ok(parse_whoami(&text))
 }
 
-/// Opens the browser sign-in, reports progress in plain words, and reads who is signed in afterwards. Blocking: run on a thread.
-pub fn sign_in_with(cmd: &[String], on_progress: &mut dyn FnMut(String)) -> Result<SignIn, String> {
-    let mut last = String::new();
-    let ok = run_lines(cmd, &sign_in_args(), &mut |l| {
-        if let Some(p) = progress_line(l)
-            && p != last
-        {
-            on_progress(p.clone());
-            last = p;
+/// One progress update for the screen: the words, and a Cloudflare page the person can open by hand when Wrangler could
+/// not open the browser itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Progress {
+    pub text: String,
+    pub open_url: Option<String>,
+}
+
+impl Progress {
+    pub fn say(text: impl Into<String>) -> Progress {
+        Progress {
+            text: text.into(),
+            open_url: None,
         }
-    })?;
+    }
+}
+
+/// The first https address on a line, without trailing punctuation.
+pub fn extract_url(line: &str) -> Option<String> {
+    let start = line.find("https://")?;
+    let url: String = line[start..]
+        .chars()
+        .take_while(|c| !c.is_whitespace() && !matches!(c, '"' | '\'' | '<' | '>'))
+        .collect();
+    let url = url.trim_end_matches(['.', ',', ')', ']']).to_owned();
+    (url.len() > "https://".len()).then_some(url)
+}
+
+/// Only Cloudflare's own pages are offered as a button, never an arbitrary address from program output.
+pub fn is_cloudflare_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    host == "cloudflare.com" || host.ends_with(".cloudflare.com")
+}
+
+fn browser_did_not_open(lower: &str) -> bool {
+    [
+        "failed to open",
+        "could not open",
+        "couldn't open",
+        "unable to open",
+        "no browser",
+        "cannot open",
+        "visit the following",
+        "open the following",
+        "please visit",
+    ]
+    .iter()
+    .any(|p| lower.contains(p))
+}
+
+/// Opens the browser sign-in, reports progress in plain words, and reads who is signed in afterwards. Blocking: run on a thread.
+/// The first update is sent before anything starts, so the screen is never silent.
+pub fn sign_in_with_timing(
+    cmd: &[String],
+    silence: std::time::Duration,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<SignIn, String> {
+    on_progress(Progress::say("Starting Wrangler…"));
+    let mut last = String::new();
+    let mut link: Option<String> = None;
+    let ok = {
+        let on_progress = std::cell::RefCell::new(&mut *on_progress);
+        run_lines_ex(
+            cmd,
+            &sign_in_args(),
+            silence,
+            &mut |l| {
+                let clean = strip_ansi(l);
+                let lower = clean.to_lowercase();
+                // Keep the address Wrangler printed: it is the fallback when the browser cannot be opened.
+                if let Some(u) = extract_url(&clean)
+                    && is_cloudflare_url(&u)
+                {
+                    link = Some(u);
+                }
+                let p = if browser_did_not_open(&lower) {
+                    link.clone().map(|u| Progress {
+                        text: "Your browser did not open. Use the button to open the sign-in page."
+                            .to_owned(),
+                        open_url: Some(u),
+                    })
+                } else {
+                    progress_line(l).map(Progress::say)
+                };
+                if let Some(p) = p
+                    && p.text != last
+                {
+                    last = p.text.clone();
+                    (on_progress.borrow_mut())(p);
+                }
+            },
+            &mut || (on_progress.borrow_mut())(Progress::say(STILL_WAITING)),
+        )?
+    };
     if !ok {
         return Err(
             "The sign-in did not finish. Try again and click Allow in the browser.".to_owned(),
@@ -230,8 +445,37 @@ pub fn sign_in_with(cmd: &[String], on_progress: &mut dyn FnMut(String)) -> Resu
     whoami_with(cmd)
 }
 
-pub fn sign_in(on_progress: &mut dyn FnMut(String)) -> Result<SignIn, String> {
-    sign_in_with(&wrangler_command(), on_progress)
+pub fn sign_in_with(
+    cmd: &[String],
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<SignIn, String> {
+    sign_in_with_timing(cmd, SILENCE, on_progress)
+}
+
+/// Finds Wrangler, says which one it is, then signs in.
+pub fn sign_in(on_progress: &mut dyn FnMut(Progress)) -> Result<SignIn, String> {
+    on_progress(Progress::say("Starting Wrangler…"));
+    let found = locate_wrangler_here();
+    let version = match found.how {
+        Found::OnPath(_) => version_of(&found.cmd),
+        _ => None,
+    };
+    on_progress(Progress::say(found.describe(version.as_deref())));
+    sign_in_with(&found.cmd, on_progress)
+}
+
+/// `wrangler --version`, first line, for the "Using wrangler 4.x" message. None when it cannot be read.
+fn version_of(cmd: &[String]) -> Option<String> {
+    let mut out = String::new();
+    run_lines(cmd, &["--version".to_owned()], &mut |l| {
+        if out.is_empty() {
+            out = strip_ansi(l).trim().to_owned();
+        }
+    })
+    .ok()?;
+    out.split_whitespace()
+        .find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(str::to_owned)
 }
 
 pub fn who_am_i() -> Result<SignIn, String> {
@@ -257,14 +501,17 @@ pub fn sign_out() -> Result<SignIn, String> {
 /// Switch account: sign out, then sign in again so Cloudflare asks which account to approve.
 pub fn switch_account_with(
     cmd: &[String],
-    on_progress: &mut dyn FnMut(String),
+    on_progress: &mut dyn FnMut(Progress),
 ) -> Result<SignIn, String> {
     sign_out_with(cmd)?;
     sign_in_with(cmd, on_progress)
 }
 
-pub fn switch_account(on_progress: &mut dyn FnMut(String)) -> Result<SignIn, String> {
-    switch_account_with(&wrangler_command(), on_progress)
+pub fn switch_account(on_progress: &mut dyn FnMut(Progress)) -> Result<SignIn, String> {
+    on_progress(Progress::say("Starting Wrangler…"));
+    let found = locate_wrangler_here();
+    on_progress(Progress::say(found.describe(None)));
+    switch_account_with(&found.cmd, on_progress)
 }
 
 /// Step 1 of the setup chain, from the sign-in state: pass or fail, the words, and the fix when it fails.
@@ -474,9 +721,157 @@ mod tests {
         let mut seen = Vec::new();
         let s = sign_in_with(&cmd, &mut |p| seen.push(p)).unwrap();
         assert!(s.signed_in && s.missing.is_empty());
-        assert_eq!(seen.len(), 2, "{seen:?}");
-        assert!(seen[0].contains("Click Allow") && seen[1].contains("Waiting"));
-        assert!(seen.iter().all(|p| !p.contains("https://")));
+        let words: Vec<&str> = seen.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(words.len(), 3, "{words:?}");
+        assert_eq!(words[0], "Starting Wrangler…");
+        assert!(words[1].contains("Click Allow") && words[2].contains("Waiting"));
+        assert!(words.iter().all(|t| !t.contains("https://")));
+        // The page Wrangler opened itself is not offered as a button.
+        assert!(seen.iter().all(|p| p.open_url.is_none()));
+    }
+
+    fn script(body: &str) -> Vec<String> {
+        ["sh", "-c", body, "x"].map(String::from).to_vec()
+    }
+
+    #[test]
+    fn the_first_message_is_sent_before_anything_is_spawned_and_a_spawn_failure_says_why() {
+        let mut seen = Vec::new();
+        let err = sign_in_with(&["npx-missing-for-test".to_owned()], &mut |p| {
+            seen.push(p.text)
+        })
+        .unwrap_err();
+        assert_eq!(
+            seen,
+            ["Starting Wrangler…"],
+            "the message came before the failure"
+        );
+        assert!(
+            err.contains("Node.js / npx was not found") && err.contains("nodejs.org"),
+            "{err}"
+        );
+        let err = sign_in_with(&["wrangler-missing-for-test".to_owned()], &mut |_| {}).unwrap_err();
+        assert!(
+            err.contains("wrangler-missing-for-test was not found"),
+            "{err}"
+        );
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(spawn_failure_words("/x/wrangler", &denied).contains("permission denied"));
+    }
+
+    #[test]
+    fn wrangler_is_found_in_order_env_then_path_then_npx() {
+        let on = |files: &'static [&'static str]| {
+            move |p: &std::path::Path| files.contains(&p.to_string_lossy().as_ref())
+        };
+        let path = std::ffi::OsString::from("/first/bin:/second/bin");
+        // OC_WRANGLER wins over everything.
+        let env = locate_wrangler(
+            Some("pnpm exec wrangler"),
+            Some(&path),
+            &on(&["/first/bin/wrangler"]),
+        );
+        assert_eq!(
+            (env.cmd.as_slice(), &env.how),
+            (
+                ["pnpm", "exec", "wrangler"].map(String::from).as_slice(),
+                &Found::Env
+            )
+        );
+        // A blank OC_WRANGLER is ignored.
+        assert!(matches!(
+            locate_wrangler(Some("  "), Some(&path), &on(&[])).how,
+            Found::Npx
+        ));
+        // The first PATH entry that has it wins, and no program is spawned to find it.
+        let both = locate_wrangler(
+            None,
+            Some(&path),
+            &on(&["/second/bin/wrangler", "/first/bin/wrangler"]),
+        );
+        assert_eq!(both.cmd, ["/first/bin/wrangler"]);
+        let second = locate_wrangler(None, Some(&path), &on(&["/second/bin/wrangler"]));
+        assert_eq!(second.how, Found::OnPath("/second/bin/wrangler".to_owned()));
+        // Nothing installed: npx downloads it.
+        let npx = locate_wrangler(None, Some(&path), &on(&[]));
+        assert_eq!(npx.cmd, ["npx", "--yes", "wrangler@4"]);
+        assert!(locate_wrangler(None, None, &on(&[])).how == Found::Npx);
+        // What the screen is told.
+        assert_eq!(
+            second.describe(Some("4.9.0")),
+            "Using wrangler 4.9.0 on this computer."
+        );
+        assert_eq!(second.describe(None), "Using wrangler on this computer.");
+        assert!(
+            npx.describe(None)
+                .starts_with("Downloading Wrangler with npx")
+        );
+        assert!(env.describe(None).contains("OC_WRANGLER"));
+    }
+
+    #[test]
+    fn a_wrangler_that_stays_quiet_gets_a_still_waiting_message_before_its_first_line() {
+        let cmd = script(
+            "case \"$1\" in login) sleep 1; echo 'Attempting to login via OAuth...';; whoami) echo 'You are not authenticated.';; esac",
+        );
+        let mut seen = Vec::new();
+        let _ = sign_in_with_timing(&cmd, std::time::Duration::from_millis(250), &mut |p| {
+            seen.push(p.text)
+        });
+        let words: Vec<&str> = seen.iter().map(String::as_str).collect();
+        assert_eq!(words[0], "Starting Wrangler…");
+        assert!(words.contains(&STILL_WAITING), "{words:?}");
+        let quiet = words.iter().position(|w| *w == STILL_WAITING).unwrap();
+        let first_line = words
+            .iter()
+            .position(|w| w.contains("Click Allow"))
+            .unwrap();
+        assert!(quiet < first_line, "{words:?}");
+    }
+
+    #[test]
+    fn if_wrangler_cannot_open_the_browser_the_page_it_printed_is_offered_as_a_button() {
+        let cmd = script(
+            "case \"$1\" in login) echo 'Opening a link in your default browser: https://dash.cloudflare.com/oauth2/auth?client_id=x&state=y'; echo 'Failed to open'; exit 1;; whoami) echo 'You are not authenticated.';; esac",
+        );
+        let mut seen = Vec::new();
+        let _ = sign_in_with(&cmd, &mut |p| seen.push(p));
+        // The "Opening a link..." line is not swallowed.
+        assert!(
+            seen.iter().any(|p| p.text.contains("Click Allow")),
+            "{seen:?}"
+        );
+        let fallback = seen
+            .iter()
+            .find(|p| p.open_url.is_some())
+            .expect("a fallback");
+        assert_eq!(
+            fallback.open_url.as_deref(),
+            Some("https://dash.cloudflare.com/oauth2/auth?client_id=x&state=y")
+        );
+        assert!(fallback.text.contains("Open") || fallback.text.contains("button"));
+        // An address that is not Cloudflare's is never offered.
+        let evil = script(
+            "case \"$1\" in login) echo 'Opening a link in your default browser: https://evil.example/phish'; echo 'Failed to open'; exit 1;; esac",
+        );
+        let mut seen = Vec::new();
+        let _ = sign_in_with(&evil, &mut |p| seen.push(p));
+        assert!(seen.iter().all(|p| p.open_url.is_none()), "{seen:?}");
+    }
+
+    #[test]
+    fn urls_are_read_from_a_line_and_only_cloudflare_pages_count() {
+        assert_eq!(
+            extract_url("visit https://dash.cloudflare.com/a?b=1, then wait.").as_deref(),
+            Some("https://dash.cloudflare.com/a?b=1")
+        );
+        assert_eq!(extract_url("no link here"), None);
+        assert!(is_cloudflare_url(
+            "https://dash.cloudflare.com/oauth2/auth?x=1"
+        ));
+        assert!(is_cloudflare_url("https://cloudflare.com/x"));
+        assert!(!is_cloudflare_url("https://cloudflare.com.evil.example/x"));
+        assert!(!is_cloudflare_url("http://dash.cloudflare.com/x"));
     }
 
     #[test]
