@@ -206,7 +206,7 @@ fn settings_and_diagnostics_are_full_pages_reached_from_the_sidebar_not_tabs() {
     let mut rt = runtime(app_with("empty"), SIZES[0]);
     rt.update(|s, _| s.show_tab(Tab::Settings));
     settle(&mut rt);
-    assert!(find(&rt, "page").is_some() && has(&rt, "Back to chat"));
+    assert!(find(&rt, "settings-page").is_some() && has(&rt, "Back to chat"));
     assert!(find(&rt, "composer").is_none());
     rt.update(|s, _| s.show_tab(Tab::Diagnostics));
     settle(&mut rt);

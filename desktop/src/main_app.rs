@@ -71,8 +71,57 @@ pub fn title_of(chat: &Chat) -> String {
     }
 }
 
+/// The sections of the Settings page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    OpenRouter,
+    Cloudflare,
+    Agent,
+    Models,
+    Memory,
+    Diagnostics,
+    About,
+}
+
+impl Section {
+    pub const ALL: [Section; 7] = [
+        Section::OpenRouter,
+        Section::Cloudflare,
+        Section::Agent,
+        Section::Models,
+        Section::Memory,
+        Section::Diagnostics,
+        Section::About,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Section::OpenRouter => "openrouter",
+            Section::Cloudflare => "cloudflare",
+            Section::Agent => "agent",
+            Section::Models => "models",
+            Section::Memory => "memory",
+            Section::Diagnostics => "diagnostics",
+            Section::About => "about",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Section::OpenRouter => "OpenRouter",
+            Section::Cloudflare => "Cloudflare",
+            Section::Agent => "Agent harness",
+            Section::Models => "Models and spend",
+            Section::Memory => "Memory and privacy",
+            Section::Diagnostics => "Diagnostics",
+            Section::About => "About",
+        }
+    }
+}
+
 /// Everything the main screens read.
 pub struct Main {
+    pub section: Section,
     pub tab: Tab,
     pub chat: Chat,
     pub session_id: String,
@@ -154,6 +203,7 @@ impl Main {
 
     pub fn new() -> Self {
         Main {
+            section: Section::OpenRouter,
             tab: Tab::Chat,
             chat: Chat::default(),
             session_id: format!("app-{}", std::process::id()),
@@ -214,11 +264,21 @@ impl App {
                 self.apply_screen_fixture();
             }
             if let (Some(m), Ok(tab)) = (self.main.as_mut(), std::env::var("OC_START_TAB")) {
-                m.tab = match tab.as_str() {
-                    "settings" => Tab::Settings,
-                    "diagnostics" => Tab::Diagnostics,
+                // `settings` or `settings:<section>` (openrouter, cloudflare, agent, models, memory, diagnostics, about).
+                let (page, section) = tab.split_once(':').unwrap_or((tab.as_str(), ""));
+                m.tab = match page {
+                    "settings" | "diagnostics" => Tab::Settings,
                     _ => Tab::Chat,
                 };
+                m.section = Section::ALL
+                    .into_iter()
+                    .find(|s| {
+                        s.id() == section
+                            || (section.is_empty()
+                                && page == "diagnostics"
+                                && *s == Section::Diagnostics)
+                    })
+                    .unwrap_or(Section::OpenRouter);
             }
             self.connect_endpoint();
             return;
@@ -301,10 +361,19 @@ impl App {
 
     pub fn show_tab(&mut self, tab: Tab) {
         if let Some(m) = self.main.as_mut() {
-            m.tab = tab;
+            // Diagnostics is a section of the Settings page, not a page of its own.
+            m.tab = if tab == Tab::Diagnostics {
+                Tab::Settings
+            } else {
+                tab
+            };
+            if tab == Tab::Diagnostics {
+                m.section = Section::Diagnostics;
+            }
         }
-        if tab == Tab::Settings {
+        if matches!(tab, Tab::Settings | Tab::Diagnostics) {
             self.load_settings();
+            self.load_section();
         }
     }
 

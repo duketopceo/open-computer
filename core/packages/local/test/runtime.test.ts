@@ -288,3 +288,18 @@ describe("OpenRouter account routes and recent generations", () => {
     }
   });
 });
+
+describe("memory stats and clearing", () => {
+  it("reports counts only, clears both tiers and says so in the audit log", async () => {
+    const b = await boot();
+    for (const [m, p] of [["GET", "/v1/memory/stats"], ["POST", "/v1/memory/clear"]] as const) expect((await b.call(m, p, undefined, null)).status, p).toBe(401);
+    await b.store.memory.setBlock("agent_notes", "likes short answers");
+    await b.store.memory.addHistory({ id: "task:1", taskId: "1", title: "Private title", summary: "private summary", ts: "2026-11-15T10:00:00.000Z" });
+    const text = await (await b.call("GET", "/v1/memory/stats")).text();
+    expect(JSON.parse(text)).toMatchObject({ entries: 1, newest: "2026-11-15T10:00:00.000Z", blocks: [{ name: "agent_notes", chars: 19 }, { name: "user_profile", chars: 0 }] });
+    expect(text).not.toContain("Private title");
+    expect(await (await b.call("POST", "/v1/memory/clear")).json()).toEqual({ ok: true, cleared: 1 });
+    expect(await (await b.call("GET", "/v1/memory/stats")).json()).toMatchObject({ entries: 0, newest: null });
+    expect(await (await b.call("GET", "/v1/audit/export")).text()).toContain("memory.cleared");
+  });
+});

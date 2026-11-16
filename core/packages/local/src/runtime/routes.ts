@@ -7,6 +7,8 @@ import {
   OPENROUTER_BASE_URL,
   ProviderError,
   accountRoute,
+  clearMemory,
+  memoryStats,
   recallHistory,
   toNdjson,
   verifyChain,
@@ -142,6 +144,16 @@ export async function handleRuntimeRoutes(c: RuntimeRouteContext, req: IncomingM
     } catch {
       h.send(res, 200, { ok: false, code: "error" });
     }
+    return true;
+  }
+  if (method === "GET" && p === "/v1/memory/stats") {
+    h.send(res, 200, await memoryStats(store.memory));
+    return true;
+  }
+  if (method === "POST" && p === "/v1/memory/clear") {
+    const out = await clearMemory(store.memory);
+    await store.appendAudit("memory.cleared", null, { entries: out.cleared });
+    h.send(res, 200, { ok: true, ...out });
     return true;
   }
   if (method === "POST" && p === "/v1/memory/probe") {

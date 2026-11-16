@@ -5,6 +5,7 @@ pub(crate) mod integrations;
 mod main_view;
 mod memory;
 mod model_key;
+mod settings_page;
 mod start;
 mod test_connection;
 mod workspace;
@@ -194,6 +195,9 @@ fn caption(k: &Kit, words: impl Into<String>) -> El {
         .font(k.ty.caption())
         .color(k.c.text_muted)
 }
+
+#[cfg(test)]
+mod settings_tests;
 
 #[cfg(test)]
 mod start_tests;

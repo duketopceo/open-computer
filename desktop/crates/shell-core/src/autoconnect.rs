@@ -135,6 +135,8 @@ pub struct FoundCore {
     pub name: String,
     pub account: String,
     pub url: String,
+    /// When the Worker was last deployed (ISO time), when Cloudflare said.
+    pub modified_on: Option<String>,
     account_id: String,
 }
 
@@ -155,6 +157,7 @@ impl FoundCore {
             name: name.into(),
             account: account.into(),
             url: url.into(),
+            modified_on: None,
             account_id: account_id.into(),
         }
     }
@@ -181,10 +184,14 @@ pub fn discover_core(api: &dyn CfApi) -> Result<Option<FoundCore>, String> {
         ) else {
             continue;
         };
-        let (status, _) = api.get(&format!("/accounts/{id}/workers/services/{CORE_NAME}"))?;
+        let (status, service) = api.get(&format!("/accounts/{id}/workers/services/{CORE_NAME}"))?;
         if status != 200 {
             continue;
         }
+        let modified_on = service["result"]["default_environment"]["script"]["modified_on"]
+            .as_str()
+            .or_else(|| service["result"]["modified_on"].as_str())
+            .map(str::to_owned);
         let (status, sub) = api.get(&format!("/accounts/{id}/workers/subdomain"))?;
         let Some(subdomain) = sub["result"]["subdomain"]
             .as_str()
@@ -198,6 +205,7 @@ pub fn discover_core(api: &dyn CfApi) -> Result<Option<FoundCore>, String> {
             name: CORE_NAME.to_owned(),
             account: name.to_owned(),
             url: format!("https://{CORE_NAME}.{subdomain}.workers.dev"),
+            modified_on,
             account_id: id.to_owned(),
         }));
     }
@@ -819,6 +827,7 @@ mod tests {
             name: "open-computer-core".into(),
             account: "A".into(),
             url: "https://x".into(),
+            modified_on: None,
             account_id: "i".into(),
         };
         assert_eq!(
