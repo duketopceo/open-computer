@@ -340,3 +340,19 @@ impl App {
         }
     }
 }
+
+impl App {
+    /// "Sign in with Cloudflare": opens the browser to Cloudflare's own consent page. Click Allow, done.
+    pub fn sign_in_cloudflare(&mut self) {
+        if self.signing_in {
+            return;
+        }
+        self.signing_in = true;
+        self.cloudflare_line =
+            Some("Your browser opened Cloudflare's sign-in page. Click Allow there.".to_owned());
+        let (tx, waker) = (self.tx(), self.waker());
+        std::thread::spawn(move || {
+            notify(&tx, &waker, Msg::SignedIn(shell_core::signin::sign_in()))
+        });
+    }
+}

@@ -6,6 +6,7 @@ import { createControlPlane, readState, scrub, writeState, type Runner } from ".
 import { extraKeysFromEnv } from "../src/cli.ts";
 
 const STORE = "a".repeat(32);
+const SIGNED_IN = "You are logged in with an OAuth Token, associated with the email me@example.com.\nScope (Access)\n- user (read)\n- account (read)\n- workers (write)\n- workers_scripts (write)\n- workers_routes (write)\n- workers_tail (read)\n- d1 (write)\n- secrets_store (write)\n- containers (write)\n- cloudchamber (write)\n";
 
 function fakeWrangler(opts: { secrets?: string[]; whoami?: string; failOn?: string } = {}) {
   const calls: Array<{ args: string[]; input?: string }> = [];
@@ -20,7 +21,7 @@ function fakeWrangler(opts: { secrets?: string[]; whoami?: string; failOn?: stri
       secrets.add(args[args.indexOf("--name") + 1] as string);
       return { code: 0, out: "created" };
     }
-    if (args[0] === "whoami") return { code: 0, out: opts.whoami ?? "workers (write) d1 (write) secrets_store (write) containers (write)" };
+    if (args[0] === "whoami") return { code: 0, out: opts.whoami ?? SIGNED_IN };
     return { code: 0, out: "" };
   };
   return { run, calls, secrets };
@@ -74,7 +75,7 @@ describe("keys step", () => {
 describe("account step", () => {
   it("passes with a full login and fails with the missing permissions named", async () => {
     expect((await make(fakeWrangler().run).run("account")).ok).toBe(true);
-    const bad = await make(fakeWrangler({ whoami: "workers (write)" }).run).run("account");
+    const bad = await make(fakeWrangler({ whoami: "You are logged in with an OAuth Token.\n- workers (write)\n" }).run).run("account");
     expect(bad.ok).toBe(false);
     expect(bad.detail).toContain("d1");
   });

@@ -18,3 +18,4 @@ pub mod diagnostics;
 pub mod http;
 pub mod onboarding;
 pub mod secrets;
+pub mod signin;

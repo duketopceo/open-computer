@@ -35,6 +35,15 @@ pub fn view(s: &App, k: &Kit) -> El {
         )
         .build(k);
 
+    let sign_in = Button::new("Sign in with Cloudflare")
+        .variant(if s.signing_in {
+            ButtonVariant::Loading
+        } else {
+            ButtonVariant::Submit
+        })
+        .disabled(s.signing_in)
+        .on_press(|s: &mut App| s.sign_in_cloudflare())
+        .build(k);
     let local = s.onboarding.local_only();
     let toggle = Button::new(if local {
         "Local only: on (press to use a cloud core)"
@@ -63,7 +72,12 @@ pub fn view(s: &App, k: &Kit) -> El {
             ))
             .child(url)
             .child(secret)
-            .child(row().child(status_badge(k, access_set)));
+            .child(row().child(status_badge(k, access_set)))
+            .child(caption(k, "To set up a new core, sign in with Cloudflare: your browser opens Cloudflare's page, you click Allow, and nothing is pasted."))
+            .child(sign_in);
+        if let Some(line) = &s.cloudflare_line {
+            page = page.child(caption(k, line.clone()));
+        }
     }
     page.child(toggle)
 }

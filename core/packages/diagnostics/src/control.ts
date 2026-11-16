@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import path from "node:path";
 import { parseJsonc, renderDeployConfig } from "./jsonc.ts";
+import { parseWhoami } from "./signin.ts";
 import { ms1, type ControlPlane, type Outcome } from "./wizard.ts";
 
 export interface RunResult {
@@ -138,17 +139,21 @@ export function createControlPlane(o: ControlOptions): ControlPlane {
       const t0 = Date.now();
       switch (step) {
         case "account": {
-          const r = await run(["whoami"]);
-          if (r.code !== 0 || /not authenticated|not logged in/i.test(r.out)) {
-            return fail("You are not signed in to Cloudflare.", "Run `wrangler login`, or set CLOUDFLARE_API_TOKEN to a token with Workers, D1, R2, Secrets Store and Containers write access.", "login");
-          }
-          const needs = ["workers", "d1", "secrets_store", "containers"];
-          const missing = needs.filter((n) => !new RegExp(`${n}\\s*\\((write|edit)`, "i").test(r.out));
           const viaToken = !!process.env.CLOUDFLARE_API_TOKEN;
-          if (missing.length > 0 && !viaToken) {
-            return fail(`The login is missing these permissions: ${missing.join(", ")}.`, "Run `wrangler login` again and accept every permission, or use a scoped API token.", "login");
+          const r = await run(["whoami"]);
+          const state = parseWhoami(r.out, viaToken);
+          if (r.code !== 0 || (!state.signedIn && !viaToken)) {
+            return fail("You are not signed in to Cloudflare.", "Click Sign in with Cloudflare (or run `oc login`). Your browser opens Cloudflare's own page; click Allow.", "sign-in");
           }
-          return { ok: true, detail: `Signed in${viaToken ? " with an API token" : ""}; the account is reachable.`, metrics: [{ label: "time", value: ms1(Date.now() - t0) }] };
+          const metrics = [
+            ...(state.email ? [{ label: "signed in as", value: state.email }] : []),
+            ...(state.accounts.length ? [{ label: "account", value: state.accounts.join(", ") }] : []),
+            { label: "access granted", value: viaToken ? "an API token from the environment (Advanced / CI)" : state.scopes.join(", ") || "none listed" },
+          ];
+          if (state.missing.length > 0) {
+            return { ok: false, detail: `The sign-in is missing access for: ${state.missing.join(", ")}.`, metrics, fix: { text: "Sign in with Cloudflare again and click Allow on every item.", action: "sign-in" } };
+          }
+          return { ok: true, detail: viaToken ? "Using the API token from the environment." : "Signed in with Cloudflare.", metrics: [...metrics, { label: "time", value: ms1(Date.now() - t0) }] };
         }
         case "features": {
           const probes: Array<[string, string[], string]> = [

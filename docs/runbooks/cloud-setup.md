@@ -8,7 +8,7 @@ into your own Cloudflare account. Nothing is hosted for you.
 | Need | Why |
 | --- | --- |
 | Cloudflare account on the Workers Paid plan | Containers and Durable Objects require it; setup stops and says so if missing |
-| `wrangler login`, or `CLOUDFLARE_API_TOKEN` | Workers, D1, R2, Secrets Store and Containers write access |
+| Sign in with Cloudflare (`oc login`, or the button in the desktop app) | Your browser opens Cloudflare's own page; click Allow. No token to create or paste. Advanced / CI only: `CLOUDFLARE_API_TOKEN` |
 | Docker running locally | Wrangler builds the sandbox image on your machine (linux/amd64) |
 | An OpenRouter key | Passed once through the environment as `OC_OPENROUTER_KEY`; stored only in Secrets Store |
 
@@ -54,14 +54,29 @@ container application first (`wrangler containers delete <id>`); Wrangler cannot
 `wrangler delete --name open-computer-core`, `wrangler containers delete <id>`, then the D1 database
 (`open-computer`), the R2 bucket (`open-computer-artifacts`) and the two `oc_` secrets in your Secrets Store.
 
-## AI Gateway and Cloudflare Access (needs an admin token)
+## Sign in with Cloudflare
 
-Wrangler has no commands for these, so they need a scoped API token with AI Gateway Edit and Read and Access Apps and Policies Edit. Store it once (`omaseal set cloudflare oc-admin`), then:
+`oc login` (or "Sign in with Cloudflare" in the desktop app) runs Wrangler's OAuth login with the scopes setup needs:
+account and user read; Workers, scripts, routes and tail; D1; Secrets Store; Containers and Cloudchamber. Click Allow once.
+Wrangler stores and refreshes the session; Open Computer never reads or shows it. Step 1 of the chain shows who is signed in
+and what was granted, and names anything missing.
+
+## AI Gateway and Cloudflare Access
+
+The OAuth consent page does not offer AI Gateway or Access scopes (`wrangler login --scopes-list`). Two one-click routes:
+
+- Access: in the Cloudflare dashboard, Workers & Pages, your Worker, Settings, Domains & Routes, turn on Cloudflare Access for the workers.dev address.
+- AI Gateway: in the dashboard, AI, AI Gateway, Create gateway (name it `open-computer`).
+
+Or use the Advanced / CI route with a scoped token (AI Gateway Edit and Read; Access Apps and Policies Edit), kept in
+`omaseal set cloudflare oc-admin`:
 
 ```sh
 export OC_CF_ADMIN_TOKEN="$(omaseal get cloudflare oc-admin)" OC_CF_ACCOUNT_ID=<your account id>
-oc admin gateway                                  # creates the authenticated gateway open-computer
+oc admin gateway
 oc admin access --hostname core.example.com --emails you@example.com
 ```
 
-For the gateway, set `AI_GATEWAY_ACCOUNT` and `AI_GATEWAY_ID` in the deploy config and bind the same token as the Secrets Store secret `oc_aig_token` (binding `AIG_TOKEN`); the core then sends `cf-aig-authorization` on every model call and the wizard reports the gateway overhead. Not verified live: this needs the token.
+For the gateway, set `AI_GATEWAY_ACCOUNT` and `AI_GATEWAY_ID` in the deploy config and bind the token as the Secrets Store
+secret `oc_aig_token` (binding `AIG_TOKEN`); the core then sends `cf-aig-authorization` on every model call and the wizard
+reports the gateway overhead. Not verified live: it needs the gateway to exist.

@@ -28,6 +28,7 @@ pub(crate) enum Msg {
     ChatError(String),
     Settings(Result<serde_json::Value, String>),
     LocalReady(Result<(CoreProcess, shell_core::chat::Endpoint), String>),
+    SignedIn(Result<shell_core::signin::SignIn, String>),
 }
 
 pub struct App {
@@ -45,6 +46,9 @@ pub struct App {
     /// Set once setup is finished: the chat, settings and diagnostics screens.
     pub main: Option<Main>,
     pub composer: TextEdit,
+    /// Who is signed in to Cloudflare, in one plain line, or the reason the sign-in did not finish.
+    pub cloudflare_line: Option<String>,
+    pub signing_in: bool,
     /// The note typed on an approval card, sent with the decision.
     pub approval_note: TextEdit,
     /// Settings > Models and keys fields. Key fields are secure and are cleared once sent.
@@ -80,6 +84,8 @@ impl App {
             diag_running: false,
             main: None,
             composer: TextEdit::new(""),
+            cloudflare_line: None,
+            signing_in: false,
             approval_note: TextEdit::new(""),
             set_default_model: TextEdit::new(""),
             set_worker_model: TextEdit::new(""),
@@ -123,6 +129,13 @@ impl App {
                     if let Some(m) = self.main.as_mut() {
                         m.chat.apply(&e);
                     }
+                }
+                Msg::SignedIn(r) => {
+                    self.signing_in = false;
+                    self.cloudflare_line = Some(match r {
+                        Ok(s) => s.summary(),
+                        Err(words) => words,
+                    });
                 }
                 Msg::ChatEnd => {}
                 Msg::ChatError(words) => {
