@@ -86,6 +86,11 @@ jobs:
       - name: event schema file is up to date
         working-directory: core/packages/agent-core
         run: node scripts/gen-schema.ts --check
+      - name: web setup wizard page is up to date
+        working-directory: core
+        run: pnpm --filter @open-computer/diagnostics check:wizard
+      - name: no purple, violet or indigo in product colours
+        run: node scripts/check-no-purple.mjs
 
   desktop:
     name: desktop (fmt, clippy, tests, sidecar e2e)

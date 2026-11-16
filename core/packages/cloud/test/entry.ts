@@ -46,4 +46,8 @@ export class SessionDO extends BaseSessionDO {
   }
 }
 
-export default createHandler({ fetch: (url, init) => doubles().fetch(url, init), policy: () => doubles().policyJson });
+export default createHandler({
+  fetch: (url, init) => doubles().fetch(url, init),
+  policy: () => doubles().policyJson,
+  sandbox: (_env, id) => doubles().sandbox(id),
+});

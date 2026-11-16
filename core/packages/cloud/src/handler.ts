@@ -6,6 +6,10 @@ import { readSecret, SecretError } from "./models/secrets.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
 import { NO_POLICY, parsePolicy, PolicyError, resolveDailyCaps, validateUserDailyCap, type DailyCaps, type Policy } from "./policy.ts";
 import { readAllAudit } from "./storage/ledger-client.ts";
+import { handleDiag } from "./diag.ts";
+import { cloudflareSandbox } from "./sandbox/cloudflare-port.ts";
+import type { SandboxPort } from "./sandbox/port.ts";
+import { WIZARD_HTML } from "./wizard/page.ts";
 
 export const VERSION = "0.1.0";
 const ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -54,9 +58,29 @@ const settingsBody = (caps: DailyCaps) => ({
  * `fetch` is the only outbound network the handler itself uses (the model key check). `policy` supplies the IT
  * policy text; production leaves it unset, which reads the `POLICY_JSON` variable, and tests pass their own.
  */
-export function createHandler(deps: { fetch: FetchLike; policy?: () => string | undefined }): ExportedHandler<Env> {
+export function createHandler(deps: {
+  fetch: FetchLike;
+  policy?: () => string | undefined;
+  /** Sandbox for diagnostics; production uses the Container, tests pass a fake. */
+  sandbox?: (env: Env, id: string) => SandboxPort | Promise<SandboxPort>;
+}): ExportedHandler<Env> {
   return {
     async fetch(request, env) {
+      // The setup page is static and carries no data or secret; it asks for the access token and calls the routes below.
+      if (request.method === "GET") {
+        const p = new URL(request.url).pathname;
+        if (p === "/" || p === "/setup") {
+          return new Response(WIZARD_HTML, {
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "cache-control": "no-store",
+              "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'",
+              "x-content-type-options": "nosniff",
+              "referrer-policy": "no-referrer",
+            },
+          });
+        }
+      }
       const auth = await authenticate(request, env);
       if (auth === "blocked") return problem(429, "too_many_attempts", "Too many wrong tokens. Try again in a minute.");
       if (auth === "unconfigured") return problem(503, "not_configured", "The cloud core has no access secret yet.");
@@ -98,6 +122,17 @@ export function createHandler(deps: { fetch: FetchLike; policy?: () => string | 
       }
 
       if (method === "GET" && path === "/v1/health") return json({ ok: true, version: VERSION });
+
+      if (path.startsWith("/v1/diag/")) {
+        const caps = await loadDailyCaps(env, policy);
+        const diag = await handleDiag(
+          request,
+          env,
+          { fetch: deps.fetch, sandbox: async (id) => (deps.sandbox ? deps.sandbox(env, id) : cloudflareSandbox(env, id)), dayCap: caps.effective },
+          VERSION,
+        );
+        if (diag) return diag;
+      }
 
       if (method === "GET" && path === "/v1/model/health") return modelHealth(env, deps.fetch);
 
