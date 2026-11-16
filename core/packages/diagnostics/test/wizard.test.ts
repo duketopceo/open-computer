@@ -38,6 +38,7 @@ function healthy(over: Record<string, () => Response> = {}): Handler {
     "/v1/diag/openrouter/completion": () => j({ ok: true, model: "a/m", tool_calls: 1, reasoning_tokens: 4, reasoning_sample: "hmm", cost_usd: 0.002, ttft_ms: 800, tokens_per_sec: 55, total_ms: 3000, via_gateway: false }),
     "/v1/diag/perf": () => j({ ok: true, d1_write_ms: { p50: 5, p95: 9 }, d1_read_ms: { p50: 2, p95: 4 }, r2_put_ms: { p50: 40, p95: 60 }, r2_get_ms: { p50: 30, p95: 50 }, r2_put_mib_per_s: 25, r2_get_mib_per_s: 33, edge_to_openrouter_ms: { p50: 90, p95: 120 }, gateway_overhead_ms: null }),
     "/v1/diag/sandbox": () => j({ ok: true, cold_ms: 2400, warm_ms: 30, key_visible: false, key_shaped_variables: 0, egress_blocked: true }),
+    "/v1/diag/sandbox/stops": () => j({ ok: true, total: 3, clean: 2, deliberate: 1, crashed: 0, stops: [] }),
     "/v1/diag/memory": () => j({ ok: true, citation: "task:diag", ms: 12 }),
     "/v1/diag/audit": () => j({ ok: true, entries: 4, day_spent_usd: 0.002, daily_cap_usd: 5, diag_spend_rows: 1, diag_spend_usd: 0.002 }),
     "/v1/diag/stream?n=10": () => sseStream(10),
@@ -227,3 +228,36 @@ describe("helpers", () => {
     expect(lines.join("\n")).toContain("Fix: do it");
   });
 });
+
+describe("sandbox stops row", () => {
+  it("passes while no recorded sandbox stop crashed, and lists the counts", async () => {
+    const rows = await runWizard(stepsFor("cloudflare"), ctx(healthy()), () => {});
+    expect(byId(rows, "sandbox.stops")).toMatchObject({ status: "pass" });
+    expect(byId(rows, "sandbox.stops").detail).toContain("last 3 sandbox stops");
+    expect(byId(rows, "sandbox.stops").metrics?.some((m) => m.label === "crashed" && m.value === "0")).toBe(true);
+  });
+
+  it("fails with the core's words when a sandbox crashed", async () => {
+    const rows = await runWizard(
+      stepsFor("cloudflare"),
+      ctx(healthy({ "/v1/diag/sandbox/stops": () => j({ ok: false, total: 4, clean: 3, deliberate: 0, crashed: 1, message: "1 of the last 4 sandbox stops were crashes (exited exit 137)." }) })),
+      () => {},
+    );
+    expect(byId(rows, "sandbox.stops")).toMatchObject({ status: "fail" });
+    expect(byId(rows, "sandbox.stops").detail).toContain("exit 137");
+    expect(byId(rows, "sandbox.stops").fix?.text).toContain("Containers");
+  });
+
+  it("an unclean stop of the test sandbox fails only the stops row, not the run or the key row", async () => {
+    const rows = await runWizard(
+      stepsFor("cloudflare"),
+      ctx(healthy({ "/v1/diag/sandbox": () => j({ ok: false, code: "sandbox_unclean_stop", stop: "crashed", cold_ms: 100, warm_ms: 10, key_visible: false, egress_blocked: true, message: "The sandbox did not stop cleanly (exited, exit code 137)." }) })),
+      () => {},
+    );
+    expect(byId(rows, "sandbox.run")).toMatchObject({ status: "pass" });
+    expect(byId(rows, "sandbox.keys")).toMatchObject({ status: "pass" });
+    expect(byId(rows, "sandbox.stops")).toMatchObject({ status: "fail" });
+    expect(byId(rows, "sandbox.stops").detail).toContain("did not stop cleanly");
+  });
+});
+

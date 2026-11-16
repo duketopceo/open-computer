@@ -285,7 +285,7 @@ async function renderSettings(): Promise<void> {
   sec("Integrations, MCP and plugins", "Not available in this release.");
   sec("Voice", "Not available in this release.");
   sec("Developer", "Same tests from the terminal: `oc doctor`. API: POST /v1/tasks, GET /v1/sessions/:id/events.");
-  sec("Policy and diagnostics", "An IT policy file can lock the daily cap, limit models and tools, and set an OpenTelemetry endpoint. Run the Tests tab for the full 18-row chain.");
+  sec("Policy and diagnostics", "An IT policy file can lock the daily cap, limit models and tools, and set an OpenTelemetry endpoint. Run the Tests tab for the full 19-row chain.");
 }
 
 function showTab(name: "tests" | "chat" | "settings"): void {

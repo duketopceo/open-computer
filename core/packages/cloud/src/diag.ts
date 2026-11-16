@@ -17,6 +17,7 @@ import { readSecret, SecretError } from "./models/secrets.ts";
 import type { SandboxFactory } from "./sandbox/port.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
 import { ledgerStub, readAllAudit } from "./storage/ledger-client.ts";
+import { stopsFromAudit } from "./sandbox/stops.ts";
 
 /**
  * Diagnostics routes behind the setup wizard and `oc doctor`. Every route is authenticated by the handler before it
@@ -347,6 +348,7 @@ async function sandbox(env: Env, deps: DiagDeps): Promise<Response> {
   const now = deps.now ?? (() => performance.now());
   const id = `diag-${crypto.randomUUID()}`;
   const box = await deps.sandbox(id);
+  let reply: Response;
   try {
     const cold = await timed(now, () => box.exec("echo oc-sandbox-ok", { timeoutMs: 120_000 }));
     if (cold.value.exitCode !== 0 || !cold.value.stdout.includes("oc-sandbox-ok")) {
@@ -372,7 +374,7 @@ async function sandbox(env: Env, deps: DiagDeps): Promise<Response> {
     );
     const lines = egress.stdout.split("\n").map((l) => l.trim());
     const reached = lines.some((l) => /^2\d\d$/.test(l));
-    return json({
+    reply = json({
       ok: !leaked && suspicious.length === 0 && !reached,
       code: leaked ? "key_visible" : suspicious.length > 0 ? "key_shaped_variable" : reached ? "egress_open" : "ok",
       cold_ms: round(cold.ms),
@@ -382,10 +384,38 @@ async function sandbox(env: Env, deps: DiagDeps): Promise<Response> {
       egress_blocked: !reached,
     });
   } catch (e) {
-    return json({ ok: false, code: "sandbox_unavailable", message: e instanceof Error ? e.message.slice(0, 200) : "The sandbox could not start." });
-  } finally {
-    await box.destroy().catch(() => undefined);
+    reply = json({ ok: false, code: "sandbox_unavailable", message: e instanceof Error ? e.message.slice(0, 200) : "The sandbox could not start." });
   }
+  // The test ends the sandbox, and how it stopped is part of the result: a clean stop (the main process exited 0), not a kill.
+  await box.destroy().catch(() => undefined);
+  const stop = (await box.stopRecord?.().catch(() => null)) ?? null;
+  const body = (await reply.clone().json()) as Record<string, unknown>;
+  if (body.ok === true && box.stopRecord && (stop === null || stop.kind === "crashed")) {
+    return json({
+      ...body,
+      ok: false,
+      code: "sandbox_unclean_stop",
+      stop: stop?.kind ?? "unknown",
+      message: stop ? `The sandbox did not stop cleanly (${stop.reason}${stop.exit_code === null ? "" : `, exit code ${stop.exit_code}`}).` : "The sandbox stop was not recorded.",
+    });
+  }
+  return json({ ...body, ...(stop ? { stop: stop.kind } : {}) }, reply.status);
+}
+
+/** The last stops of sandbox instances, from the audit log. Only a crash fails it. */
+async function sandboxStops(env: Env): Promise<Response> {
+  const stops = stopsFromAudit(await readAllAudit(env), 20);
+  const count = (kind: string) => stops.filter((s) => s.kind === kind).length;
+  const crashed = stops.filter((s) => s.kind === "crashed");
+  return json({
+    ok: crashed.length === 0,
+    total: stops.length,
+    clean: count("clean"),
+    deliberate: count("deliberate"),
+    crashed: crashed.length,
+    stops: stops.map((s) => ({ task_id: s.task_id, reason: s.reason, exit_code: s.exit_code, kind: s.kind, at: s.stopped_at })),
+    ...(crashed.length > 0 ? { message: `${crashed.length} of the last ${stops.length} sandbox stops were crashes (${crashed.map((c) => `${c.reason}${c.exit_code === null ? "" : ` exit ${c.exit_code}`}`).join("; ").slice(0, 160)}).` } : {}),
+  });
 }
 
 async function memory(env: Env): Promise<Response> {
@@ -492,6 +522,7 @@ export async function handleDiag(request: Request, env: Env, deps: DiagDeps, ver
   if (m === "GET" && p === "/v1/diag/stream") return stream(url);
   if (m === "GET" && p === "/v1/diag/openrouter/auth") return keyInfo(env, deps);
   if (m === "GET" && p === "/v1/diag/openrouter/models") return models(env, deps);
+  if (m === "GET" && p === "/v1/diag/sandbox/stops") return sandboxStops(env);
   if (m !== "POST") return null;
   if (p === "/v1/diag/openrouter/completion") return completion(env, deps);
   if (p === "/v1/diag/perf") return perf(env, deps);
