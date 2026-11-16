@@ -218,7 +218,8 @@ impl App {
 
     /// "Sign in with Cloudflare": opens the browser to Cloudflare's own consent page. Click Allow, done.
     pub fn sign_in_cloudflare(&mut self) {
-        if !self.cf_start("Starting the Cloudflare sign-in.") {
+        // Shown the instant the button is pressed, before anything is spawned.
+        if !self.cf_start("Starting Wrangler…") {
             return;
         }
         let (tx, waker) = (self.tx(), self.waker());
@@ -229,7 +230,7 @@ impl App {
     }
 
     pub fn switch_cloudflare(&mut self) {
-        if !self.cf_start("Signing out, then signing in again.") {
+        if !self.cf_start("Starting Wrangler…") {
             return;
         }
         let (tx, waker) = (self.tx(), self.waker());
@@ -240,7 +241,7 @@ impl App {
     }
 
     pub fn sign_out_cloudflare(&mut self) {
-        if !self.cf_start("Signing out.") {
+        if !self.cf_start("Starting Wrangler…") {
             return;
         }
         let (tx, waker) = (self.tx(), self.waker());
@@ -249,7 +250,7 @@ impl App {
 
     /// Re-reads who is signed in (step 1 again) and checks the two dashboard steps.
     pub fn check_cloudflare(&mut self) {
-        if !self.cf_start("Checking the Cloudflare sign-in.") {
+        if !self.cf_start("Starting Wrangler…") {
             return;
         }
         let ep = self.main.as_ref().and_then(|m| m.endpoint.clone());
@@ -269,6 +270,16 @@ impl App {
             };
             notify(&tx, &waker, Msg::CfDashboard { gateway, access });
         });
+    }
+
+    /// Opens the sign-in page Wrangler printed, when it could not open the browser itself.
+    pub fn open_sign_in_page(&mut self) {
+        let Some(url) = self.cf_open_url.clone() else {
+            return;
+        };
+        if !open_url(&url) {
+            self.cloudflare_line = Some(format!("Open this page yourself: {url}"));
+        }
     }
 
     pub fn open_dashboard(&mut self, step: signin::DashboardStep) {
@@ -356,5 +367,21 @@ impl App {
         });
         self.cf_gateway = Some(true);
         self.cf_access = Some(AccessState::Protected);
+        // Screenshot states for the sign-in feedback: OC_SCREEN_SIGNING=1 (busy, Wrangler downloading) and
+        // OC_SCREEN_SIGNING=url (the browser could not be opened, so the page is offered as a button).
+        if let Ok(mode) = std::env::var("OC_SCREEN_SIGNING") {
+            self.cf_state = None;
+            self.signing_in = true;
+            if mode == "url" {
+                self.cloudflare_line = Some(
+                    "Your browser did not open. Use the button to open the sign-in page."
+                        .to_owned(),
+                );
+                self.cf_open_url = Some("https://dash.cloudflare.com/oauth2/auth".to_owned());
+            } else {
+                self.cloudflare_line =
+                    Some(signin::locate_wrangler(None, None, &|_| false).describe(None));
+            }
+        }
     }
 }

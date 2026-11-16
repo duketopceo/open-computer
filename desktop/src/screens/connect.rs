@@ -78,6 +78,17 @@ pub fn view(s: &App, k: &Kit) -> El {
         if let Some(line) = &s.cloudflare_line {
             page = page.child(caption(k, line.clone()));
         }
+        if s.signing_in {
+            page = page.child(caption(k, "Working… the first run can take up to 30 seconds while Wrangler is found or downloaded."));
+        }
+        if s.cf_open_url.is_some() {
+            page = page.child(
+                Button::new("Open sign-in page")
+                    .variant(ButtonVariant::Submit)
+                    .on_press(|s: &mut App| s.open_sign_in_page())
+                    .build(k),
+            );
+        }
     }
     page.child(toggle)
 }

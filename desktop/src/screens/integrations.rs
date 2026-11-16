@@ -218,6 +218,19 @@ pub fn cloudflare(s: &App, k: &Kit) -> El {
     if let Some(l) = &s.cloudflare_line {
         sec = sec.child(line(k, l.clone()));
     }
+    if s.signing_in {
+        sec = sec.child(note(k, "Working… the first run can take up to 30 seconds while Wrangler is found or downloaded."));
+    }
+    if s.cf_open_url.is_some() {
+        sec = sec.child(
+            row().child(
+                Button::new("Open sign-in page")
+                    .variant(ButtonVariant::Submit)
+                    .on_press(|s: &mut App| s.open_sign_in_page())
+                    .build(k),
+            ),
+        );
+    }
     if let Some(c) = &s.cf_state {
         if c.signed_in {
             sec = sec.child(line(
