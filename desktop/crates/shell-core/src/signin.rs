@@ -240,11 +240,14 @@ pub fn who_am_i() -> Result<SignIn, String> {
 
 /// Signs out: Wrangler revokes and forgets the session. Returns the state afterwards (not signed in).
 pub fn sign_out_with(cmd: &[String]) -> Result<SignIn, String> {
-    let ok = run_lines(cmd, &["logout".to_owned()], &mut |_| {})?;
-    if !ok {
+    // The real wrangler exits non-zero from `logout` in some environments when nobody is signed in, so the goal decides:
+    // success is being signed out afterwards, whatever the exit code said.
+    let _ = run_lines(cmd, &["logout".to_owned()], &mut |_| {})?;
+    let after = whoami_with(cmd)?;
+    if after.signed_in {
         return Err("Signing out did not finish. Try again.".to_owned());
     }
-    whoami_with(cmd)
+    Ok(after)
 }
 
 pub fn sign_out() -> Result<SignIn, String> {
@@ -434,8 +437,13 @@ mod tests {
     /// Writes a tiny fake `wrangler` shell script: prints canned login output, whoami text, or succeeds on logout.
     fn fake_wrangler(dir: &std::path::Path, whoami: &str, login_ok: bool) -> Vec<String> {
         let path = dir.join("wrangler");
+        // Stateful like the real thing: a login signs in, a logout signs out, whoami reports the current state.
+        let state = dir.join("signed-in");
+        let _ = std::fs::remove_file(&state);
         let script = format!(
-            "#!/bin/sh\ncase \"$1\" in\n login) echo 'Attempting to login via OAuth...'; echo 'Opening a link in your default browser: https://dash.cloudflare.com/oauth2/auth?x=1'; echo 'Waiting for authorization...'; exit {};;\n logout) exit 0;;\n whoami) cat <<'EOF'\n{}\nEOF\n;;\nesac\n",
+            "#!/bin/sh\nS='{}'\ncase \"$1\" in\n login) echo 'Attempting to login via OAuth...'; echo 'Opening a link in your default browser: https://dash.cloudflare.com/oauth2/auth?x=1'; echo 'Waiting for authorization...'; {} exit {};;\n logout) rm -f \"$S\"; exit 0;;\n whoami) if [ -f \"$S\" ]; then cat <<'EOF'\n{}\nEOF\nelse echo 'You are not authenticated.'; fi;;\nesac\n",
+            state.display(),
+            if login_ok { "touch \"$S\";" } else { "" },
             if login_ok { 0 } else { 1 },
             whoami
         );
@@ -492,6 +500,26 @@ mod tests {
                 .signed_in
         );
         assert!(!seen.is_empty());
+    }
+
+    #[test]
+    fn sign_out_succeeds_when_logout_exits_non_zero_but_nobody_is_signed_in_and_fails_if_still_signed_in()
+     {
+        let out = [
+            "sh",
+            "-c",
+            "case $1 in logout) exit 1;; whoami) echo 'You are not authenticated.';; esac",
+            "x",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert!(!sign_out_with(&out).unwrap().signed_in);
+        let still = ["sh", "-c", "case $1 in logout) exit 1;; whoami) echo 'You are logged in with an OAuth Token, associated with the email a@b.c.';; esac", "x"].map(String::from).to_vec();
+        assert!(
+            sign_out_with(&still)
+                .unwrap_err()
+                .contains("did not finish")
+        );
     }
 
     #[test]
