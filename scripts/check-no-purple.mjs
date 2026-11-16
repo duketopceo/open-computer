@@ -11,6 +11,8 @@ const ROOTS = ["ui/src", "ui/index.html", "desktop/src", "desktop/crates", "core
 const EXT = new Set([".css", ".svg", ".ts", ".tsx", ".rs", ".json", ".html", ".toml"]);
 const SKIP_DIR = new Set(["node_modules", "target", "dist", "dist-demo", "out", ".git"]);
 const SKIP_FILE = /(\.test\.|\.spec\.|check-no-purple|palette\.test|pnpm-lock|package-lock|Cargo\.lock)/;
+// Code that must stay black and white plus the accent. (The older web console and Python UI keep their own rules above.)
+const STRICT_ROOTS = ["desktop/src", "desktop/crates", "core/packages/diagnostics/src/page.css"];
 const WORDS = /\b(purple|violet|indigo|lavender|amethyst|grape|plum|orchid)\b/i;
 
 /** Hue in degrees and saturation 0..1 from 0..255 channels. */
@@ -31,6 +33,34 @@ export function hueSat(r, g, b) {
 }
 
 export const isPurple = ({ h, s }) => s > 0.15 && h >= 225 && h <= 325;
+
+// The one accent allowed on top of black, white and grey: an orange-to-red gradient. These two values are the only colour
+// values the product may contain (the theme token defines them once; nothing else spells a colour).
+export const ACCENT = ["#ffb020", "#ff4d2e"];
+
+/**
+ * Stricter rule for the product's own UI code: any colour with visible saturation that is not one of the two accent
+ * values is a violation (purple included). Black, white and every grey pass.
+ */
+export function findStrictViolations(text) {
+  const out = [];
+  text.split("\n").forEach((line, i) => {
+    for (const m of line.matchAll(/#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g)) {
+      let hex = m[1];
+      if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
+      const v = hueSat(parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16));
+      if (v.s > 0.05 && !ACCENT.includes(`#${hex.slice(0, 6).toLowerCase()}`)) out.push({ line: i + 1, why: `hex ${m[0]} is a colour that is not the accent` });
+    }
+    for (const m of line.matchAll(/rgba?8?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/g)) {
+      const v = hueSat(+m[1], +m[2], +m[3]);
+      if (v.s > 0.05) out.push({ line: i + 1, why: `${m[0]}) is a colour that is not the accent` });
+    }
+    for (const m of line.matchAll(/hsla?\(\s*(\d{1,3}(?:\.\d+)?)(?:deg)?[\s,]+(\d{1,3}(?:\.\d+)?)%/g)) {
+      if (+m[2] > 5) out.push({ line: i + 1, why: `${m[0]} is a colour that is not the accent` });
+    }
+  });
+  return out;
+}
 
 export function findViolations(text) {
   const out = [];
@@ -80,6 +110,15 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     for (const f of walk(path.join(root, r))) {
       if (!EXT.has(path.extname(f)) || SKIP_FILE.test(path.basename(f))) continue;
       for (const v of findViolations(readFileSync(f, "utf8"))) {
+        bad += 1;
+        console.error(`${path.relative(root, f)}:${v.line}: ${v.why}`);
+      }
+    }
+  }
+  for (const r of STRICT_ROOTS) {
+    for (const f of walk(path.join(root, r))) {
+      if (!EXT.has(path.extname(f)) || SKIP_FILE.test(path.basename(f))) continue;
+      for (const v of findStrictViolations(readFileSync(f, "utf8"))) {
         bad += 1;
         console.error(`${path.relative(root, f)}:${v.line}: ${v.why}`);
       }

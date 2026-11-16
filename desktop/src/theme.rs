@@ -8,6 +8,28 @@ use std::sync::OnceLock;
 use rune::Color;
 use rune_kit::{Kit, PaletteFocus, PaletteSeed, StateColors};
 
+/// The one accent: an orange-to-red gradient used sparingly on top of the black and white palette, for what matters most
+/// on a screen (the primary action, live progress). The two stops are the only colour values in the app; the colour lint
+/// allows exactly these and nothing else.
+pub const ACCENT_FROM: &str = "#FFB020";
+pub const ACCENT_TO: &str = "#FF4D2E";
+
+fn accent_colors() -> [Color; 2] {
+    let c = |h: &str| rune::color::hex(h).unwrap_or(Color::WHITE);
+    [c(ACCENT_FROM), c(ACCENT_TO)]
+}
+
+/// Paints the accent gradient (left to right) on an element.
+pub fn accent_fill(el: rune::El) -> rune::El {
+    let [a, b] = accent_colors();
+    el.linear_gradient(std::f32::consts::FRAC_PI_2, [(0.0, a), (1.0, b)])
+}
+
+/// Text on the accent: black in both appearances, which keeps contrast on amber and on red.
+pub fn on_accent() -> Color {
+    Color::BLACK
+}
+
 /// The kit for one appearance with the black and white palette.
 pub fn kit(dark: bool) -> &'static Kit {
     static KITS: [OnceLock<Kit>; 2] = [OnceLock::new(), OnceLock::new()];
@@ -92,6 +114,25 @@ mod tests {
                     chroma(col)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_accent_is_exactly_the_two_allowed_values_in_the_orange_to_red_band_with_readable_text_on_it()
+     {
+        assert_eq!((ACCENT_FROM, ACCENT_TO), ("#FFB020", "#FF4D2E"));
+        for hex in [ACCENT_FROM, ACCENT_TO] {
+            let c = rune::color::hex(hex).unwrap();
+            let o = c.to_oklab();
+            let hue = o[2].atan2(o[1]).to_degrees().rem_euclid(360.0);
+            assert!(
+                (20.0..=95.0).contains(&hue),
+                "{hex} is orange to red, hue {hue}"
+            );
+            assert!(
+                contrast(on_accent(), c) >= 4.5,
+                "black text on {hex} meets AA contrast"
+            );
         }
     }
 
