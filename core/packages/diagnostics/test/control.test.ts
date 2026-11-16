@@ -198,3 +198,138 @@ describe("deploy step against real Wrangler output", () => {
     mkdirSync(tmpdir(), { recursive: true });
   });
 });
+
+
+/** A wrangler that remembers the account between runs: the store, its secrets (name to id), the database and the bucket. */
+function accountWrangler() {
+  const secrets = new Map<string, string>();
+  const calls: string[][] = [];
+  let next = 1;
+  const run: Runner = async (args, o) => {
+    calls.push(args);
+    const key = args.slice(0, 3).join(" ");
+    if (key === "secrets-store store list") return { code: 0, out: `│ default_secrets_store │ ${STORE} │` };
+    if (key === "secrets-store secret list") {
+      return { code: 0, out: [...secrets].map(([n, id]) => `│ ${n.padEnd(22)} │ ${id} │ │ workers │ active │`).join("\n") };
+    }
+    if (key === "secrets-store secret create") {
+      secrets.set(args[args.indexOf("--name") + 1] as string, `${next++}`.padStart(32, "0"));
+      expect(o?.input).toBeTruthy();
+      return { code: 0, out: "created" };
+    }
+    if (key === "secrets-store secret delete") {
+      const id = args[args.indexOf("--secret-id") + 1];
+      for (const [n, v] of secrets) if (v === id) secrets.delete(n);
+      return { code: 0, out: "deleted" };
+    }
+    if (args[0] === "d1" && args[1] === "list") return { code: 0, out: JSON.stringify([{ uuid: "11111111-1111-4111-8111-111111111111", name: "open-computer" }]) };
+    if (args[0] === "r2" && args[1] === "bucket" && args[2] === "list") return { code: 0, out: "name:           open-computer-artifacts" };
+    return { code: 0, out: "" };
+  };
+  return { run, calls, secrets };
+}
+
+describe("setup keeps the access token", () => {
+  const cloudDir = () => {
+    const d = mkdtempSync(path.join(tmpdir(), "oc-cloud-"));
+    writeFileSync(path.join(d, "wrangler.jsonc"), readFileSync(new URL("../../cloud/wrangler.jsonc", import.meta.url), "utf8"));
+    return d;
+  };
+  const setup = (w: ReturnType<typeof accountWrangler>, dir: string, stateDir: string, extra: Partial<Parameters<typeof createControlPlane>[0]> = {}) =>
+    createControlPlane({ run: w.run, cloudDir: dir, stateDir, ...extra }).run("provision");
+  const accessCreates = (w: ReturnType<typeof accountWrangler>) =>
+    w.calls.filter((c) => c.slice(0, 3).join(" ") === "secrets-store secret create" && c.includes("oc_access_secret")).length;
+
+  it("two setups in a row leave the secret and the saved token exactly as the first made them", async () => {
+    const w = accountWrangler();
+    const dir = cloudDir();
+    const stateDir = mkdtempSync(path.join(tmpdir(), "oc-state-"));
+    const first = await setup(w, dir, stateDir);
+    expect(first.ok).toBe(true);
+    expect(first.detail).toContain("Created the database, bucket and access secret");
+    const token = readState(stateDir).token;
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    const secretId = w.secrets.get("oc_access_secret");
+    for (let i = 0; i < 3; i++) {
+      const again = await setup(w, dir, stateDir);
+      expect(again.ok).toBe(true);
+      expect(again.detail).toContain("The access token is unchanged.");
+    }
+    expect(readState(stateDir).token).toBe(token);
+    expect(w.secrets.get("oc_access_secret")).toBe(secretId);
+    expect(accessCreates(w)).toBe(1);
+    expect(w.calls.some((c) => c.slice(0, 3).join(" ") === "secrets-store secret delete")).toBe(false);
+  });
+
+  it("a deploy that follows does not touch the token either, and a url written later keeps it", async () => {
+    const w = accountWrangler();
+    const dir = cloudDir();
+    const stateDir = mkdtempSync(path.join(tmpdir(), "oc-state-"));
+    await setup(w, dir, stateDir);
+    const token = readState(stateDir).token;
+    writeState({ url: "https://open-computer-core.example.workers.dev" }, stateDir);
+    expect(readState(stateDir)).toEqual({ token, url: "https://open-computer-core.example.workers.dev" });
+    await setup(w, dir, stateDir);
+    expect(readState(stateDir).token).toBe(token);
+  });
+
+  it("an existing secret with no token saved on this computer is left alone and the row says what to do", async () => {
+    const w = accountWrangler();
+    w.secrets.set("oc_access_secret", "9".padStart(32, "0"));
+    const stateDir = mkdtempSync(path.join(tmpdir(), "oc-state-"));
+    const out = await setup(w, cloudDir(), stateDir);
+    expect(out.ok).toBe(true);
+    expect(out.detail).toContain("not saved on this computer");
+    expect(out.detail).toContain("--rotate-token");
+    expect(readState(stateDir).token).toBeUndefined();
+    expect(accessCreates(w)).toBe(0);
+  });
+
+  it("--rotate-token, and only that, issues a new token and says what else to update", async () => {
+    const w = accountWrangler();
+    const dir = cloudDir();
+    const stateDir = mkdtempSync(path.join(tmpdir(), "oc-state-"));
+    await setup(w, dir, stateDir);
+    const before = readState(stateDir).token;
+    const oldId = w.secrets.get("oc_access_secret");
+    const out = await setup(w, dir, stateDir, { rotateToken: true });
+    expect(out.ok).toBe(true);
+    const after = readState(stateDir).token;
+    expect(after).toMatch(/^[0-9a-f]{64}$/);
+    expect(after).not.toBe(before);
+    expect(w.secrets.get("oc_access_secret")).not.toBe(oldId);
+    expect(out.detail).toContain("NEW access token");
+    expect(out.detail).toContain("OC_CLOUD_TOKEN");
+    expect(JSON.stringify(out)).not.toContain(after as string);
+    // The next plain setup keeps the new one.
+    await setup(w, dir, stateDir);
+    expect(readState(stateDir).token).toBe(after);
+  });
+
+  it("a rotation that cannot remove the old secret changes nothing", async () => {
+    const w = accountWrangler();
+    const dir = cloudDir();
+    const stateDir = mkdtempSync(path.join(tmpdir(), "oc-state-"));
+    await setup(w, dir, stateDir);
+    const before = readState(stateDir).token;
+    const failing: Runner = async (args, o) => (args.slice(0, 3).join(" ") === "secrets-store secret delete" ? { code: 1, out: "denied" } : w.run(args, o));
+    const out = await createControlPlane({ run: failing, cloudDir: dir, stateDir, rotateToken: true }).run("provision");
+    expect(out.ok).toBe(false);
+    expect(readState(stateDir).token).toBe(before);
+  });
+
+  it("says plainly when the token saved here is not the core's, after the deploy", async () => {
+    const cloud = mkdtempSync(path.join(tmpdir(), "oc-cloud-"));
+    writeFileSync(path.join(cloud, "wrangler.deploy.jsonc"), "{}");
+    const stateDir = mkdtempSync(path.join(tmpdir(), "oc-state-"));
+    writeState({ token: "old-token-from-another-run" }, stateDir);
+    const run: Runner = async (args) =>
+      args[0] === "deploy" ? { code: 0, out: "Deployed https://open-computer-core.example.workers.dev" } : args.slice(0, 3).join(" ") === "secrets-store store list" ? { code: 0, out: `│ default_secrets_store │ ${STORE} │` } : { code: 0, out: "│ oc_model_key │ id │" };
+    const probe = async () => 401;
+    const out = await createControlPlane({ run, cloudDir: cloud, stateDir, probe }).run("deploy");
+    expect(out.ok).toBe(true);
+    expect(out.detail).toContain("not the core's");
+    expect(out.detail).toContain("--rotate-token");
+    expect(JSON.stringify(out)).not.toContain("old-token-from-another-run");
+  });
+});

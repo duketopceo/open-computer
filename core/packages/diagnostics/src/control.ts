@@ -72,6 +72,10 @@ export function wranglerRunner(cwd: string, wrangler: string[] = (process.env.OC
 
 export interface ControlOptions {
   run: Runner;
+  /** Issue a new access token even though one exists. Only `oc setup --rotate-token` sets it: every other run keeps the token. */
+  rotateToken?: boolean;
+  /** Asks the deployed core's health route with a token and returns the HTTP status (401: the token is not the core's). */
+  probe?: (url: string, token: string) => Promise<number>;
   /** Runs `wrangler deploy`; defaults to `run`. The CLI gives it this repository's own Wrangler. */
   deployRun?: Runner;
   /** The cloud package directory (holds wrangler.jsonc). */
@@ -148,6 +152,14 @@ export function createControlPlane(o: ControlOptions): ControlPlane {
     return r.out.split("\n").some((l) => l.includes(`│ ${name} `));
   }
 
+  /** The id of a secret in the store listing (its row holds the name and then the 32-character id), or null. */
+  async function secretId(store: string, name: string): Promise<string | null> {
+    const r = await run(["secrets-store", "secret", "list", store, "--remote"]);
+    if (r.code !== 0) return null;
+    const row = r.out.split("\n").find((l) => l.includes(`│ ${name} `));
+    return row ? (HEX32.exec(row)?.[0] ?? null) : null;
+  }
+
   async function putSecret(store: string, name: string, value: string): Promise<boolean> {
     const r = await run(["secrets-store", "secret", "create", store, "--name", name, "--scopes", "workers", "--remote"], { input: value });
     return r.code === 0;
@@ -221,20 +233,43 @@ export function createControlPlane(o: ControlOptions): ControlPlane {
           }
           const have = await hasSecret(sid, SECRET_NAMES.access);
           if (have === null) return fail("Secrets Store did not answer.", "Retry in a minute.");
+          // The access secret is created once and then kept: a run that finds it leaves it, and the token saved on this computer, alone.
+          // Issuing a new one breaks every other holder of the old token (the desktop's keyring, the CI secret, a second computer),
+          // so that only happens on an explicit `--rotate-token`.
           let created = false;
-          if (!have) {
+          let rotated = false;
+          if (have && o.rotateToken) {
+            const id = await secretId(sid, SECRET_NAMES.access);
+            if (!id) return fail("The access secret's id could not be read.", "Retry.");
+            const del = await run(["secrets-store", "secret", "delete", sid, "--secret-id", id, "--remote"]);
+            if (del.code !== 0) return fail("The old access secret could not be removed.", "Nothing was changed. Retry.");
+            const token = randomBytes(32).toString("hex");
+            if (!(await putSecret(sid, SECRET_NAMES.access, token))) {
+              return fail("The new access secret could not be stored; the old one is already removed.", "Run setup again: with no secret in the store it creates a new one.");
+            }
+            writeState({ token }, stateDir);
+            rotated = true;
+          } else if (!have) {
             const token = randomBytes(32).toString("hex");
             if (!(await putSecret(sid, SECRET_NAMES.access, token))) return fail("The access secret could not be stored.", "Retry.");
             writeState({ token }, stateDir);
             created = true;
           }
+          const savedHere = typeof readState(stateDir).token === "string" && readState(stateDir).token !== "";
           const cfg = renderDeployConfig(parseJsonc(readFileSync(path.join(o.cloudDir, "wrangler.jsonc"), "utf8")), { databaseId: db, storeId: sid, workerName: worker, ...(o.gatewayId ? { gatewayId: o.gatewayId } : {}) });
           writeFileSync(deployCfg, JSON.stringify(cfg, null, 2), { mode: 0o600 });
           const mig = await run(["d1", "migrations", "apply", dbName, "--remote", "-c", deployCfg]);
           if (mig.code !== 0) return fail("The database migration failed.", `Retry. Detail: ${scrub(mig.out).split("\n").slice(-3).join(" ").slice(0, 200)}`);
+          const detail = created
+            ? "Created the database, bucket and access secret, and applied the schema."
+            : rotated
+              ? "Issued a NEW access token and applied the schema. Update it wherever the old one is used: the OC_CLOUD_TOKEN secret in CI and any other computer (copy the \"token\" from ~/.config/open-computer/cloud.json). The desktop on this computer picks it up by itself."
+              : savedHere
+                ? "Everything already existed; schema is current. The access token is unchanged."
+                : "Everything already existed; schema is current. The access token exists but is not saved on this computer: use the cloud.json of the computer that ran setup first, or run setup with --rotate-token (then CI and other computers need the new token).";
           return {
             ok: true,
-            detail: created ? "Created the database, bucket and access secret, and applied the schema." : "Everything already existed; schema is current.",
+            detail,
             metrics: [{ label: "time", value: ms1(Date.now() - t0) }],
           };
         }
@@ -258,7 +293,12 @@ export function createControlPlane(o: ControlOptions): ControlPlane {
           }
           const url = /https:\/\/[a-z0-9.-]+\.workers\.dev/i.exec(r.out)?.[0];
           if (url) writeState({ url }, stateDir);
-          return { ok: true, detail: url ? "Deployed. The core is live on your workers.dev address (protected by its access token)." : "Deployed.", metrics: [{ label: "time", value: ms1(Date.now() - t0) }] };
+          let note = "";
+          const saved = readState(stateDir);
+          if (o.probe && url && saved.token && (await o.probe(url, saved.token)) === 401) {
+            note = " The token saved on this computer is not the core's: run setup with --rotate-token to issue a new one.";
+          }
+          return { ok: true, detail: (url ? "Deployed. The core is live on your workers.dev address (protected by its access token)." : "Deployed.") + note, metrics: [{ label: "time", value: ms1(Date.now() - t0) }] };
         }
         case "keys": {
           const sid = await storeId();

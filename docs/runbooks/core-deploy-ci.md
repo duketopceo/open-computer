@@ -23,7 +23,7 @@ The `deploy core (cloudflare)` job in `.github/workflows/ci.yml` deploys the Clo
 | --- | --- | --- |
 | Secret | `CLOUDFLARE_API_TOKEN` | An API token with the permissions below |
 | Secret | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account id |
-| Secret | `OC_CLOUD_TOKEN` | The core's access token (the `token` saved by your first local `oc setup`). The diagnostics call the core's `/v1` routes with it. CI cannot read it back from Secrets Store, and `setup` only creates one when none exists |
+| Secret | `OC_CLOUD_TOKEN` | The core's access token (the `token` saved by your first local `oc setup`). The diagnostics call the core's `/v1` routes with it. CI cannot read it back from Secrets Store. `setup` creates one only when none exists and never changes it on a later run (a test holds that); to issue a new one on purpose run `node src/cli.ts setup --rotate-token`, then update this secret, the desktop picks the new one up from `cloud.json` by itself, and any other computer needs it copied from there |
 | Variable | `OC_AI_GATEWAY_ID` | The AI Gateway name (`open-computer` unless you chose another) |
 
 One-time before the first CI deploy: run `oc setup` once on your own machine with `OC_OPENROUTER_KEY` set, so the OpenRouter
