@@ -12,6 +12,7 @@ import {
 import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import type { Env } from "./env.ts";
 import { buildProvider, providerTarget } from "./models/gateway.ts";
+import { isValidationError, openRouterSdk, sdkStatus } from "./models/sdk.ts";
 import { readSecret, SecretError } from "./models/secrets.ts";
 import type { SandboxFactory } from "./sandbox/port.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
@@ -53,7 +54,7 @@ function stats(samples: number[]): { n: number; p50: number; p95: number; min: n
   return { n: s.length, p50: round(percentile(s, 50)), p95: round(percentile(s, 95)), min: round(s[0] ?? 0), max: round(s[s.length - 1] ?? 0) };
 }
 
-/** Key-info call. Only allowlisted numeric fields leave this function. */
+/** Key-info call through the OpenRouter SDK. Only allowlisted numeric fields leave this function. */
 async function keyInfo(env: Env, deps: DiagDeps): Promise<Response> {
   let key: string;
   try {
@@ -63,24 +64,15 @@ async function keyInfo(env: Env, deps: DiagDeps): Promise<Response> {
     throw e;
   }
   const now = deps.now ?? (() => performance.now());
+  const sdk = openRouterSdk(key, deps.fetch);
+  const t0 = now();
   try {
-    const { value: res, ms } = await timed(now, () =>
-      deps.fetch(`${OPENROUTER_BASE_URL}/key`, {
-        method: "GET",
-        headers: { authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(8000),
-      }),
-    );
-    if (res.status === 401 || res.status === 403) return json({ ok: false, code: "key_invalid", ms: round(ms) });
-    if (res.status === 402) return json({ ok: false, code: "payment_required", ms: round(ms) });
-    if (res.status === 429) return json({ ok: false, code: "rate_limited", ms: round(ms) });
-    if (res.status < 200 || res.status >= 300) return json({ ok: false, code: "error", ms: round(ms) });
-    const body = (await res.json().catch(() => ({}))) as { data?: Record<string, unknown> };
-    const d = body.data ?? {};
+    const res = await sdk.apiKeys.getCurrentKeyMetadata();
+    const ms = now() - t0;
+    const d = res.data;
     const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
     const limit = n(d.limit);
-    const remaining = n(d.limit_remaining);
-    const usage = n(d.usage);
+    const remaining = n(d.limitRemaining);
     const lowCredit = remaining !== null && remaining <= 0;
     return json({
       ok: !lowCredit,
@@ -88,27 +80,78 @@ async function keyInfo(env: Env, deps: DiagDeps): Promise<Response> {
       ms: round(ms),
       limit,
       limit_remaining: remaining,
-      usage,
-      free_tier: d.is_free_tier === true,
+      usage: n(d.usage),
+      free_tier: d.isFreeTier === true,
     });
-  } catch {
-    return json({ ok: false, code: "unreachable" });
+  } catch (e) {
+    if (isValidationError(e)) return rawKeyInfo(key, deps, now);
+    const ms = round(now() - t0);
+    const status = sdkStatus(e);
+    if (status === 401 || status === 403) return json({ ok: false, code: "key_invalid", ms });
+    if (status === 402) return json({ ok: false, code: "payment_required", ms });
+    if (status === 429) return json({ ok: false, code: "rate_limited", ms });
+    return json({ ok: false, code: status === null ? "unreachable" : "error", ms });
   }
 }
 
 async function models(env: Env, deps: DiagDeps): Promise<Response> {
   const wanted = [defaults.default_model, defaults.worker_model];
   try {
+    let key = "";
+    try {
+      key = await readSecret(env.MODEL_KEY, "model_key");
+    } catch {
+      key = "";
+    }
+    const sdk = openRouterSdk(key, deps.fetch);
+    const found = new Map<string, { tools: boolean; reasoning: boolean }>();
+    for await (const page of await sdk.models.list()) {
+      for (const m of page.result.data) {
+        if (wanted.includes(m.id)) {
+          const params = (m.supportedParameters ?? []) as string[];
+          found.set(m.id, { tools: params.includes("tools"), reasoning: params.includes("reasoning") || params.includes("include_reasoning") });
+        }
+      }
+      if (found.size === wanted.length) break;
+    }
+    const out = wanted.map((id) => ({ id, available: found.has(id), tools: found.get(id)?.tools ?? false, reasoning: found.get(id)?.reasoning ?? false }));
+    return json({ ok: out.every((m) => m.available), models: out });
+  } catch (e) {
+    if (isValidationError(e)) return rawModels(deps, wanted);
+    return json({ ok: false, code: sdkStatus(e) === null ? "unreachable" : "error", models: [] });
+  }
+}
+
+/** Raw HTTP versions, used only when the SDK's strict response schema rejects a response the API really sent. */
+async function rawKeyInfo(key: string, deps: DiagDeps, now: () => number): Promise<Response> {
+  const t0 = now();
+  try {
+    const res = await deps.fetch(`${OPENROUTER_BASE_URL}/key`, { method: "GET", headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) });
+    const ms = round(now() - t0);
+    if (res.status === 401 || res.status === 403) return json({ ok: false, code: "key_invalid", ms });
+    if (res.status === 402) return json({ ok: false, code: "payment_required", ms });
+    if (res.status === 429) return json({ ok: false, code: "rate_limited", ms });
+    if (res.status < 200 || res.status >= 300) return json({ ok: false, code: "error", ms });
+    const d = ((await res.json().catch(() => ({}))) as { data?: Record<string, unknown> }).data ?? {};
+    const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const remaining = n(d.limit_remaining);
+    const low = remaining !== null && remaining <= 0;
+    return json({ ok: !low, code: low ? "payment_required" : "ok", ms, limit: n(d.limit), limit_remaining: remaining, usage: n(d.usage), free_tier: d.is_free_tier === true });
+  } catch {
+    return json({ ok: false, code: "unreachable" });
+  }
+}
+
+async function rawModels(deps: DiagDeps, wanted: string[]): Promise<Response> {
+  try {
     const res = await deps.fetch(`${OPENROUTER_BASE_URL}/models`, { method: "GET", headers: {}, signal: AbortSignal.timeout(10000) });
     if (!res.ok) return json({ ok: false, code: "error", models: [] });
-    const body = (await res.json()) as { data?: Array<{ id?: string; supported_parameters?: string[] }> };
-    const list = body.data ?? [];
+    const list = ((await res.json()) as { data?: Array<{ id?: string; supported_parameters?: string[] }> }).data ?? [];
     const out = wanted.map((id) => {
       const m = list.find((x) => x.id === id);
       const params = m?.supported_parameters ?? [];
       return { id, available: !!m, tools: params.includes("tools"), reasoning: params.includes("reasoning") || params.includes("include_reasoning") };
     });
-    void env;
     return json({ ok: out.every((m) => m.available), models: out });
   } catch {
     return json({ ok: false, code: "unreachable", models: [] });

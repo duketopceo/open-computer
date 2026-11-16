@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@cloudflare/sandbox": "1.0.3",
-    "@open-computer/agent-core": "workspace:*"
+    "@open-computer/agent-core": "workspace:*",
+    "@openrouter/sdk": "^1.5.104"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.8.2",

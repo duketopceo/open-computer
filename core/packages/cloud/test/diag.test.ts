@@ -83,6 +83,32 @@ describe("diagnostics routes", () => {
     expect(text).not.toContain("sk-or");
   });
 
+  it("reads key info through the SDK when the response matches its schema", async () => {
+    install([]);
+    const full = {
+      data: {
+        allowed_data_regions: [], budgets: [], byok_usage: 0, byok_usage_daily: 0, byok_usage_monthly: 0, byok_usage_weekly: 0,
+        creator_user_id: null, effective_budget: null, free_model_daily_requests: { limit: 50, used: 0, remaining: 50, reset_at: null },
+        include_byok_in_limit: false, is_free_tier: false, is_management_key: false, is_provisioning_key: false,
+        label: "sk-or-v1-abc...xyz", limit: 10, limit_remaining: 8.5, limit_reset: null, organization_id: null,
+        rate_limit: { interval: "10s", note: "deprecated", requests: -1 }, usage: 1.5, usage_daily: 0.1, usage_monthly: 1.5,
+        usage_weekly: 0.5, workspace_id: null,
+      },
+    };
+    const urls: string[] = [];
+    const auths: Array<string | null> = [];
+    setFetch(async (url, init) => {
+      urls.push(url);
+      auths.push(new Headers(init.headers).get("authorization"));
+      return new Response(JSON.stringify(full), { headers: { "content-type": "application/json" } });
+    });
+    const text = await (await api("/v1/diag/openrouter/auth")).text();
+    expect(JSON.parse(text)).toMatchObject({ ok: true, limit: 10, usage: 1.5, limit_remaining: 8.5 });
+    expect(urls).toHaveLength(1);
+    expect(auths).toEqual([`Bearer ${MODEL_KEY}`]);
+    expect(text).not.toContain("sk-or");
+  });
+
   it("maps a rejected key and an exhausted limit to plain codes", async () => {
     install([]);
     setFetch(async () => new Response("{}", { status: 401 }));
