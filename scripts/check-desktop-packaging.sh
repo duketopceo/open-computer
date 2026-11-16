@@ -4,8 +4,7 @@
 # launch left nothing to read. Both are fixed for launches from the installed entry by the launcher script, so the
 # packaging must keep doing it: the menu entry runs the launcher, and the launcher sets the PATH and logs.
 #
-# (The same lesson inside the app's own code, "spawn tools with the extended PATH and write a log file", needs the
-# desktop fixes on fix/oc-live-failures first; see the PR description. Add that check when they land.)
+# (The same lesson inside the app's own code is guarded by check-desktop-logging.sh.)
 set -uo pipefail
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "check-desktop-packaging: not inside a repository; refusing to report ok" >&2; exit 2; }
 cd "$root" || exit 2
