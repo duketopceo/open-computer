@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   OPENROUTER_BASE_URL,
   ProviderError,
+  accountRoute,
   recallHistory,
   toNdjson,
   verifyChain,
@@ -153,6 +154,24 @@ export async function handleRuntimeRoutes(c: RuntimeRouteContext, req: IncomingM
     } catch {
       h.send(res, 500, { ok: false });
     }
+    return true;
+  }
+
+  const orRoute = /^\/v1\/openrouter\/(key|credits|models|generations)$/.exec(p);
+  if (method === "GET" && orRoute) {
+    const apiKey = c.modelKey();
+    if (!apiKey) {
+      h.err(res, 409, "key_missing", "No OpenRouter key is stored on this core yet.");
+      return true;
+    }
+    const reply = await accountRoute(orRoute[1] as string, {
+      apiKey,
+      fetch: rt.opts.fetch,
+      ...(rt.opts.baseUrl ? { serverURL: rt.opts.baseUrl } : {}),
+      audit: () => readAll(store.audit, 500),
+    });
+    if (reply) h.send(res, reply.status, reply.body);
+    else h.err(res, 404, "not_found", "No such endpoint.");
     return true;
   }
 

@@ -77,6 +77,13 @@ oc admin gateway
 oc admin access --hostname core.example.com --emails you@example.com
 ```
 
-For the gateway, set `AI_GATEWAY_ACCOUNT` and `AI_GATEWAY_ID` in the deploy config and bind the token as the Secrets Store
-secret `oc_aig_token` (binding `AIG_TOKEN`); the core then sends `cf-aig-authorization` on every model call and the wizard
-reports the gateway overhead. Not verified live: it needs the gateway to exist.
+To route the core through a gateway you created, run setup with its name: `OC_AI_GATEWAY_ID=open-computer oc setup`. The
+rendered (never committed) deploy config gets the Workers AI binding (`AI`) and `AI_GATEWAY_ID`; the core asks the binding
+for the gateway address, so no account id is written anywhere. `/v1/diag/bindings` then reports `gateway: true` and
+`gateway_via: "binding"`, and the desktop's Routing and Cloudflare sections show it. A gateway with authentication off
+needs no token. With authentication on, bind a token as the Secrets Store secret `oc_aig_token` (binding `AIG_TOKEN`) and the
+core sends `cf-aig-authorization` on every model call. If the binding cannot give an address the core falls back to the
+`AI_GATEWAY_ACCOUNT` route, then to OpenRouter directly. Not verified against the live gateway: no model call was made.
+
+Cloudflare Access: do not turn it on yet. The desktop, `oc` and the web wizard call the core with a bearer token, and Access
+would answer those calls with a sign-in page. It needs service-token support in all three first.

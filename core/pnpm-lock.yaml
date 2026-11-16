@@ -10,6 +10,9 @@ importers:
 
   packages/agent-core:
     dependencies:
+      '@openrouter/sdk':
+        specifier: 1.5.104
+        version: 1.5.104
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -33,7 +36,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-core
       '@openrouter/sdk':
-        specifier: ^1.5.104
+        specifier: 1.5.104
         version: 1.5.104
     devDependencies:
       '@cloudflare/vitest-plugin':

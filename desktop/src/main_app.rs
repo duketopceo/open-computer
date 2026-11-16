@@ -64,6 +64,7 @@ impl App {
             cloud_url: self.onboarding.cloud_url().to_owned(),
             local_only: self.onboarding.local_only(),
             setup_done: true,
+            harness: config::load(&config::default_path()).harness,
         };
         let _ = config::save(&config::default_path(), &saved);
         self.main = Some(Main::new());
@@ -86,6 +87,9 @@ impl App {
             self.onboarding.set_cloud_url(url.clone());
             self.cloud_url.replace_text(&url);
             self.main = Some(Main::new());
+            if std::env::var_os("OC_SCREEN_FIXTURE").is_some() {
+                self.apply_screen_fixture();
+            }
             if let (Some(m), Ok(tab)) = (self.main.as_mut(), std::env::var("OC_START_TAB")) {
                 m.tab = match tab.as_str() {
                     "settings" => Tab::Settings,
@@ -100,6 +104,7 @@ impl App {
         if !saved.setup_done {
             return;
         }
+        self.harness = shell_core::harness::Harness::from_id(&saved.harness);
         self.onboarding.set_local_only(saved.local_only);
         self.onboarding.set_cloud_url(saved.cloud_url.clone());
         self.cloud_url.replace_text(&saved.cloud_url);
@@ -117,6 +122,7 @@ impl App {
             self.start_local_core();
             return;
         }
+        self.detect_harnesses();
         let url = self.onboarding.cloud_url().to_owned();
         match self.store.get(Slot::CloudAccess) {
             Ok(Some(t)) if !t.is_empty() && !url.is_empty() => {
@@ -184,7 +190,15 @@ impl App {
             return;
         };
         let (tx, waker) = (self.tx(), self.waker());
-        std::thread::spawn(move || notify(&tx, &waker, Msg::Settings(ep.settings())));
+        std::thread::spawn(move || {
+            notify(&tx, &waker, Msg::Settings(ep.settings()));
+            // The core says whether it routes through an AI Gateway; the Routing and Cloudflare sections show it.
+            let gateway = ep
+                .bindings()
+                .ok()
+                .map(|b| shell_core::signin::gateway_configured(&b));
+            notify(&tx, &waker, Msg::Gateway(gateway));
+        });
     }
 
     pub fn set_daily_cap(&mut self, usd: Option<f64>) {
@@ -200,6 +214,10 @@ impl App {
         let goal = self.composer.text.trim().to_owned();
         let Some(m) = self.main.as_mut() else { return };
         if goal.is_empty() || m.chat.is_busy() {
+            return;
+        }
+        if self.harness != shell_core::harness::Harness::BuiltIn {
+            self.send_via_harness(goal);
             return;
         }
         let Some(ep) = m.endpoint.clone() else {
@@ -239,6 +257,11 @@ impl App {
 
     /// Stops the running task.
     pub fn stop_task(&mut self) {
+        if self.harness_running {
+            self.harness_cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
         let Some(m) = self.main.as_ref() else { return };
         let (Some(ep), Some(task)) = (m.endpoint.clone(), m.chat.task_id.clone()) else {
             return;
@@ -338,21 +361,5 @@ impl App {
                 )
             }
         }
-    }
-}
-
-impl App {
-    /// "Sign in with Cloudflare": opens the browser to Cloudflare's own consent page. Click Allow, done.
-    pub fn sign_in_cloudflare(&mut self) {
-        if self.signing_in {
-            return;
-        }
-        self.signing_in = true;
-        self.cloudflare_line =
-            Some("Your browser opened Cloudflare's sign-in page. Click Allow there.".to_owned());
-        let (tx, waker) = (self.tx(), self.waker());
-        std::thread::spawn(move || {
-            notify(&tx, &waker, Msg::SignedIn(shell_core::signin::sign_in()))
-        });
     }
 }

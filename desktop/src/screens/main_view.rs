@@ -449,7 +449,11 @@ fn settings(s: &App, k: &Kit, m: &Main) -> El {
     let routing = section("Routing", "set-routing")
         .child(line(
             k,
-            "Direct to OpenRouter; AI Gateway is not configured on this core.".to_owned(),
+            match s.cf_gateway {
+                Some(true) => "Through your Cloudflare AI Gateway, then OpenRouter. The gateway keeps the logs.".to_owned(),
+                Some(false) => "Direct to OpenRouter; AI Gateway is not configured on this core.".to_owned(),
+                None => "Routing is checked when a core is connected.".to_owned(),
+            },
         ))
         .child(note(k, "Prices come from OpenRouter and refresh daily."));
 
@@ -534,7 +538,7 @@ fn settings(s: &App, k: &Kit, m: &Main) -> El {
 
     let dev = section("Developer", "set-dev")
         .child(line(k, "Same tests from the terminal: `oc doctor`. Same API as this app: /v1/tasks, /v1/sessions/:id/events.".to_owned()))
-        .child(note(k, "OpenRouter's TypeScript SDK is used for key and model checks."));
+        .child(note(k, "The desktop talks to OpenRouter with a small typed client; the cloud core uses its own checks."));
 
     let policy = section("Policy and diagnostics", "set-policy")
         .child(note(k, "An IT policy file can lock the daily cap, limit models and tools, and set an OpenTelemetry endpoint. Traces carry names, timings, tokens and cost only."))
@@ -549,6 +553,9 @@ fn settings(s: &App, k: &Kit, m: &Main) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .child(super::integrations::harness(s, k))
+        .child(super::integrations::openrouter(s, k))
+        .child(super::integrations::cloudflare(s, k))
         .child(models)
         .child(routing)
         .child(sandbox)

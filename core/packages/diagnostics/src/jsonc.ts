@@ -40,6 +40,8 @@ export interface DeployIds {
   storeId: string;
   gatewayAccount?: string;
   gatewayId?: string;
+  /** When true the Workers AI binding supplies the gateway address, so no account id is needed. */
+  gatewayViaBinding?: boolean;
   workerName?: string;
 }
 
@@ -52,5 +54,7 @@ export function renderDeployConfig(base: any, ids: DeployIds): any {
   for (const d of cfg.d1_databases ?? []) d.database_id = ids.databaseId;
   for (const s of cfg.secrets_store_secrets ?? []) s.store_id = ids.storeId;
   cfg.vars = { ...(cfg.vars ?? {}), AI_GATEWAY_ACCOUNT: ids.gatewayAccount ?? "", AI_GATEWAY_ID: ids.gatewayId ?? "" };
+  // The binding path: the core reads its gateway address from the Workers AI binding. The account id never appears here.
+  if (ids.gatewayId && (ids.gatewayViaBinding ?? !ids.gatewayAccount)) cfg.ai = { binding: "AI" };
   return cfg;
 }

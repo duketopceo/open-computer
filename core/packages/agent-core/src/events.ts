@@ -98,6 +98,8 @@ export const agentEventSchema = z.discriminatedUnion("type", [
     cached: z.number().int().nonnegative(),
     cost: z.number().nonnegative().nullable(),
     estimated: z.boolean(),
+    /** OpenRouter's id for this model call (`gen-...`), when the provider sent one. */
+    generation_id: z.string().min(1).optional(),
   }),
   z.object({
     ...base,

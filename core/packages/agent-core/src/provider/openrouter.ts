@@ -13,7 +13,7 @@ import {
 export interface OpenRouterOptions {
   fetch: FetchLike;
   /** Chat Completions base, for example the direct API or an AI Gateway route. No trailing slash needed. */
-  baseUrl: string;
+  baseUrl: string | (() => string | Promise<string>);
   /** Resolves the key per call so a rotated key is picked up; the key is never logged or put in a body. */
   apiKey: () => string | Promise<string>;
   /** Extra non-secret headers (attribution, gateway authorization). */
@@ -169,7 +169,8 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
     const signal = guard.signal;
     const key = await options.apiKey();
     const extra = typeof options.headers === "function" ? await options.headers() : (options.headers ?? {});
-    const url = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+    const baseUrl = typeof options.baseUrl === "function" ? await options.baseUrl() : options.baseUrl;
+    const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
     let response: Response;
     try {
       response = await options.fetch(url, {
@@ -205,6 +206,7 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
     const calls = new Map<number, { id: string; name: string; args: string }>();
     let finish: string | null = null;
     let usage: Usage | null = null;
+    let generationId: string | null = null;
 
     try {
       for await (const data of readSseData(response.body, guard.touch)) {
@@ -215,6 +217,8 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
           continue; // a malformed fragment is skipped; the stream's own error chunk is authoritative
         }
         if (!isObj(chunk)) continue;
+        // Every chunk of one response carries the same OpenRouter generation id (`gen-...`).
+        if (generationId === null && typeof chunk.id === "string" && chunk.id !== "") generationId = chunk.id;
         if (isObj(chunk.error)) {
           yield {
             t: "error",
@@ -329,7 +333,7 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
         : {}),
       ...(details.length > 0 ? { reasoning_details: details } : {}),
     };
-    const done: StreamPart = { t: "done", message, finishReason: finish, usage, reasoningKinds: [...kinds] };
+    const done: StreamPart = { t: "done", message, finishReason: finish, usage, generationId, reasoningKinds: [...kinds] };
     yield done;
   }
 }

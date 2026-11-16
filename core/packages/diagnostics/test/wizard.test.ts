@@ -203,6 +203,15 @@ describe("helpers", () => {
     expect(base.d1_databases[0].database_id).toBe("0");
   });
 
+  it("adds the Workers AI binding and the gateway id, and never an account id, when a gateway name is given", () => {
+    const base = parseJsonc('{"name":"n","vars":{}}');
+    const out = renderDeployConfig(base, { databaseId: "db", storeId: "st", gatewayId: "open-computer" });
+    expect(out.ai).toEqual({ binding: "AI" });
+    expect(out.vars).toMatchObject({ AI_GATEWAY_ID: "open-computer", AI_GATEWAY_ACCOUNT: "" });
+    expect(renderDeployConfig(base, { databaseId: "db", storeId: "st" }).ai).toBeUndefined();
+    expect(base.ai).toBeUndefined();
+  });
+
   it("formats rows for the terminal with timing and the fix", () => {
     const lines = formatRow({ id: "x", group: "g", title: "T", status: "fail", ms: 1500, detail: "bad", fix: { text: "do it" }, metrics: [{ label: "a", value: "1" }] });
     expect(lines.join("\n")).toContain("[FAIL] T  (1.5 s)");

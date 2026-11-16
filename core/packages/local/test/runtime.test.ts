@@ -11,6 +11,7 @@ const TOKEN = "daemon-token-for-tests";
 const MODEL_KEY = ["sk", "test", "runtime1234567890"].join("-");
 
 const open: Array<RunningServer | LocalStore> = [];
+let creditsForbidden = false;
 afterEach(async () => {
   while (open.length) {
     const x = open.pop();
@@ -49,6 +50,8 @@ async function boot(opts: { sandboxEnv?: (cmd: string) => { stdout: string; exit
   const fetchImpl: FetchLike = async (url, init) => {
     if (url.startsWith("http://127.0.0.1")) return fetch(url, init);
     if (url.endsWith("/chat/completions")) return (chat.shift() ?? (() => textTurn("done")))();
+    if (url.includes("/generation?id=gen-local-1")) return new Response(JSON.stringify({ data: { id: "gen-local-1", model: "z-ai/glm-5.3", total_cost: 0.001, tokens_prompt: 20, tokens_completion: 3, latency: 640, created_at: "2026-11-15T00:00:00Z" } }));
+    if (url.endsWith("/credits")) return creditsForbidden ? new Response('{"error":{"code":403}}', { status: 403 }) : new Response(JSON.stringify({ data: { total_credits: 20, total_usage: 3.5 } }));
     if (url.endsWith("/key")) return new Response(JSON.stringify({ data: { limit: 10, usage: 1, limit_remaining: 9, is_free_tier: false } }));
     if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: "z-ai/glm-5.3", pricing: { prompt: "0.0000006", completion: "0.0000022" }, supported_parameters: ["tools", "reasoning"] }, { id: "z-ai/glm-5.3-flash", pricing: { prompt: "0.0000001", completion: "0.0000004" }, supported_parameters: ["tools"] }] }));
     return new Response("{}", { status: 404 });
@@ -251,5 +254,37 @@ describe("local-only mode checks itself", () => {
     expect((await b.call("PUT", "/v1/settings", { cloud_url: "" })).status).toBe(200);
     const r = (await (await b.call("POST", "/v1/test-connection")).json()) as { all_ok: boolean; backend: { ok: boolean }; model: { ok: boolean }; memory: { ok: boolean } };
     expect(r).toMatchObject({ all_ok: true, backend: { ok: true }, model: { ok: true }, memory: { ok: true } });
+  });
+});
+
+describe("OpenRouter account routes and recent generations", () => {
+  it("refuses without the token, shows an empty list first, then the model call a task made", async () => {
+    const b = await boot();
+    for (const p of ["key", "credits", "models", "generations"]) expect((await b.call("GET", `/v1/openrouter/${p}`, undefined, null)).status, p).toBe(401);
+    expect(await (await b.call("GET", "/v1/openrouter/generations")).json()).toEqual({ generations: [] });
+
+    b.chat.push(() => sse([{ id: "gen-local-1", choices: [{ delta: { content: "hi" } }] }, { id: "gen-local-1", choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 20, completion_tokens: 3, cost: 0.001 } }]));
+    const started = (await (await b.call("POST", "/v1/tasks", { goal: "say hi" })).json()) as { session_id: string };
+    const events = await readEvents(b, started.session_id);
+    expect(events.find((e) => e.type === "usage")).toMatchObject({ generation_id: "gen-local-1" });
+
+    const gens = (await (await b.call("GET", "/v1/openrouter/generations")).json()) as { generations: Array<Record<string, unknown>> };
+    expect(gens.generations[0]).toMatchObject({ id: "gen-local-1", model: "z-ai/glm-5.3", cost: 0.001, prompt_tokens: 20, completion_tokens: 3, latency_ms: 640 });
+    expect(await (await b.call("GET", "/v1/openrouter/credits")).json()).toEqual({ available: true, total: 20, used: 3.5 });
+    const key = await (await b.call("GET", "/v1/openrouter/key")).text();
+    expect(JSON.parse(key)).toMatchObject({ limit: 10, usage: 1, limit_remaining: 9 });
+    expect(key).not.toContain(MODEL_KEY);
+  });
+
+  it("says credits need a management key on a 403 instead of calling a working key rejected", async () => {
+    const b = await boot();
+    creditsForbidden = true;
+    try {
+      const res = await b.call("GET", "/v1/openrouter/credits");
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ available: false, reason: "management_key_required" });
+    } finally {
+      creditsForbidden = false;
+    }
   });
 });

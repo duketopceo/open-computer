@@ -514,6 +514,10 @@
         },
         "estimated": {
           "type": "boolean"
+        },
+        "generation_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [

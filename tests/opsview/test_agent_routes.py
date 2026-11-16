@@ -107,8 +107,13 @@ def test_submit_budget_max_comes_from_env(console, monkeypatch):
 def test_new_routes_refuse_without_csrf_and_on_oversize(console):
     for path in ("/api/agent-jobs", ap(J, "ag_00000000", "approve"), ap(J, "ag_00000000", "deny")):
         assert post(console, path, {"goal": "g", "confirm": "1"}, csrf=False)[0] == 403
-        s, _, _ = console.request("POST", path, body="x" * 1_100_000,
-                                  headers={**JSON, "X-CSRF-Token": console.csrf()})
+        # The server rejects an oversize body and may close the connection before the client finishes
+        # sending it, so a closed connection counts as the refusal as well as the 413.
+        try:
+            s, _, _ = console.request("POST", path, body="x" * 1_100_000,
+                                      headers={**JSON, "X-CSRF-Token": console.csrf()})
+        except OSError:  # BrokenPipeError, ConnectionResetError, RemoteDisconnected
+            continue
         assert s == 413
 
 

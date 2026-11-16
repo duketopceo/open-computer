@@ -43,6 +43,8 @@ export interface ControlOptions {
   /** The cloud package directory (holds wrangler.jsonc). */
   cloudDir: string;
   workerName?: string;
+  /** Name of an existing AI Gateway to route model calls through (the Workers AI binding finds its address). */
+  gatewayId?: string;
   databaseName?: string;
   bucketName?: string;
   /** Where the access token and core URL are kept for the CLI and desktop (0600). */
@@ -192,7 +194,7 @@ export function createControlPlane(o: ControlOptions): ControlPlane {
             writeState({ token }, stateDir);
             created = true;
           }
-          const cfg = renderDeployConfig(parseJsonc(readFileSync(path.join(o.cloudDir, "wrangler.jsonc"), "utf8")), { databaseId: db, storeId: sid, workerName: worker });
+          const cfg = renderDeployConfig(parseJsonc(readFileSync(path.join(o.cloudDir, "wrangler.jsonc"), "utf8")), { databaseId: db, storeId: sid, workerName: worker, ...(o.gatewayId ? { gatewayId: o.gatewayId } : {}) });
           writeFileSync(deployCfg, JSON.stringify(cfg, null, 2), { mode: 0o600 });
           const mig = await run(["d1", "migrations", "apply", dbName, "--remote", "-c", deployCfg]);
           if (mig.code !== 0) return fail("The database migration failed.", `Retry. Detail: ${scrub(mig.out).split("\n").slice(-3).join(" ").slice(0, 200)}`);

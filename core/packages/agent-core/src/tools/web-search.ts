@@ -10,7 +10,7 @@ const SEARCH_ESTIMATE_USD = 0.02;
 export interface WebSearchOptions {
   fetch: FetchLike;
   /** Chat Completions base; a direct OpenRouter URL or an AI Gateway route. */
-  baseUrl?: string;
+  baseUrl?: string | (() => string | Promise<string>);
   apiKey: () => string | Promise<string>;
   guard: CostGuard;
   model?: string;
@@ -43,7 +43,6 @@ function citationsOf(body: Record<string, unknown>): Citation[] {
  * answer, one numbered source per line, so the model can quote them and memory can store them as a source.
  */
 export function webSearchTool(o: WebSearchOptions): Tool {
-  const base = (o.baseUrl ?? OPENROUTER_BASE_URL).replace(/\/+$/, "");
   const maxChars = o.maxChars ?? 6000;
   return {
     spec: {
@@ -67,7 +66,8 @@ export function webSearchTool(o: WebSearchOptions): Tool {
       }
       let res: Response;
       try {
-        res = await o.fetch(`${base}/chat/completions`, {
+        const rawBase = typeof o.baseUrl === "function" ? await o.baseUrl() : (o.baseUrl ?? OPENROUTER_BASE_URL);
+        res = await o.fetch(`${rawBase.replace(/\/+$/, "")}/chat/completions`, {
           method: "POST",
           headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
           body: JSON.stringify({ model: o.model ?? DEFAULT_SEARCH_MODEL, messages: [{ role: "user", content: query }], stream: false }),

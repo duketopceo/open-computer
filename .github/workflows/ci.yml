@@ -184,6 +184,29 @@ jobs:
         env:
           OC_CORE_BIN: ${{ github.workspace }}/core/packages/local/out/oc-core
         run: cargo test -p shell-core --test e2e -- --ignored
+      # The real opencode and hermes-agent programs, driven through the desktop adapter, and the real wrangler signed out.
+      # No key, no account, no spend: each agent talks to desktop/scripts/fake_openai.py on loopback. Versions are pinned.
+      # (A step here, not a new job, so the production gate list does not change.)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: opencode-ai 1.19.5 (npm)
+        run: |
+          mkdir -p "$RUNNER_TEMP/opencode"
+          cd "$RUNNER_TEMP/opencode"
+          npm init -y >/dev/null
+          npm install opencode-ai@1.19.5 --no-audit --no-fund
+          (cd node_modules/opencode-ai && node postinstall.mjs)
+          "$PWD/node_modules/.bin/opencode" --version
+          echo "OC_OPENCODE_BIN=$PWD/node_modules/.bin/opencode" >> "$GITHUB_ENV"
+      - name: hermes-agent 0.19.0 (PyPI, Nous Research)
+        run: |
+          uv venv "$RUNNER_TEMP/hermes"
+          uv pip install --python "$RUNNER_TEMP/hermes/bin/python" "hermes-agent==0.19.0"
+          "$RUNNER_TEMP/hermes/bin/hermes" --version
+          echo "OC_HERMES_BIN=$RUNNER_TEMP/hermes/bin/hermes" >> "$GITHUB_ENV"
+      - name: real binaries through the adapter (text, tool call, error, Stop) and wrangler signed out
+        env:
+          OC_WRANGLER_CMD: pnpm --dir ${{ github.workspace }}/core/packages/cloud exec wrangler
+        run: bash desktop/scripts/real_harness_check.sh
 
   console-e2e:
     name: console e2e (playwright + axe)

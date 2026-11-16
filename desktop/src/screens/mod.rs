@@ -1,6 +1,7 @@
 //! The four onboarding screens and the frame they share.
 
 mod connect;
+pub(crate) mod integrations;
 mod main_view;
 mod memory;
 mod model_key;

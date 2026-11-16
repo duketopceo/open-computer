@@ -38,10 +38,10 @@ export function api(path: string, init: RequestInit & { token?: string | null; i
 
 export const usage = (cost = 0.001): Usage => ({ prompt: 10, completion: 5, reasoning: 0, cached: 0, cost });
 
-export function textTurn(text: string, u: Usage = usage()): StreamPart[] {
+export function textTurn(text: string, u: Usage = usage(), generationId: string | null = null): StreamPart[] {
   return [
     { t: "text", text },
-    { t: "done", message: { role: "assistant", content: text }, finishReason: "stop", usage: u, reasoningKinds: [] },
+    { t: "done", message: { role: "assistant", content: text }, finishReason: "stop", usage: u, generationId, reasoningKinds: [] },
   ];
 }
 
