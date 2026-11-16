@@ -81,3 +81,16 @@ describe("models and custom endpoint settings", () => {
     void fromNdjson;
   });
 });
+
+describe("private profile", () => {
+  it("changes the default model without touching the public file, and a saved choice still wins", async () => {
+    const store = new LocalStore(":memory:");
+    open.push(store);
+    const running = await startLocalServer({ token: TOKEN, runtime: { store, sandboxKind: "none", sandbox: async () => { throw new Error("none"); }, profileJson: '{"default_model":"me/private"}' } });
+    open.push(running);
+    const call = (method: string, body?: unknown) => fetch(`http://127.0.0.1:${running.port}/v1/settings`, { method, headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    expect(await (await call("GET")).json()).toMatchObject({ default_model: "me/private", worker_model: "z-ai/glm-5.3-flash" });
+    await call("PUT", { default_model: "me/chosen" });
+    expect(await (await call("GET")).json()).toMatchObject({ default_model: "me/chosen" });
+  });
+});

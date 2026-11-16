@@ -38,6 +38,7 @@ export interface LocalServerOptions {
     baseUrl?: string;
     policyJson?: string;
     otlpEndpoint?: string;
+    profileJson?: string;
     /** File holding the model key (daemon mode); read at start. */
     modelKeyFile?: string;
   };
@@ -110,6 +111,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
           return k;
         },
         customKey: () => secrets.get("custom_key") ?? null,
+        ...(options.runtime.profileJson ? { profileJson: options.runtime.profileJson } : {}),
         ...(options.runtime.baseUrl ? { baseUrl: options.runtime.baseUrl } : {}),
         sandbox: options.runtime.sandbox,
         ...(options.runtime.policyJson ? { policyJson: options.runtime.policyJson } : {}),

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createControlPlane, readState, wranglerRunner } from "./control.ts";
 import { updateCore } from "./update.ts";
+import { ensureAccess, ensureGateway } from "./admin.ts";
 import { buildReport, runWizard, stepsFor, type Backend, type Ctx, type Row } from "./wizard.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,24 @@ export function formatRow(r: Row, frame = 0): string[] {
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...args] = argv;
+  if (cmd === "admin") {
+    // Needs a scoped token: OC_CF_ADMIN_TOKEN="$(omaseal get cloudflare oc-admin)" and OC_CF_ACCOUNT_ID.
+    const token = process.env.OC_CF_ADMIN_TOKEN ?? "";
+    const accountId = process.env.OC_CF_ACCOUNT_ID ?? "";
+    if (!token || !accountId) {
+      console.log("oc admin needs OC_CF_ADMIN_TOKEN (scopes: AI Gateway Edit and Read; Access Apps and Policies Edit) and OC_CF_ACCOUNT_ID in the environment.\nStore the token with: omaseal set cloudflare oc-admin");
+      return 2;
+    }
+    const what = args[0];
+    const out =
+      what === "gateway"
+        ? await ensureGateway((u, i) => fetch(u, i), { token, accountId })
+        : what === "access"
+          ? await ensureAccess((u, i) => fetch(u, i), { token, accountId, hostname: flag(args, "hostname") ?? "", emails: (flag(args, "emails") ?? "").split(",").filter(Boolean) })
+          : { ok: false, message: "usage: oc admin <gateway | access --hostname H --emails a@b.c,d@e.f>" };
+    console.log(out.message);
+    return out.ok ? 0 : 1;
+  }
   if (cmd === "update") {
     const state = readState();
     const url = flag(args, "url") ?? process.env.OC_CLOUD_URL ?? state.url ?? "";
@@ -60,7 +79,7 @@ async function main(argv: string[]): Promise<number> {
     return result.ok ? 0 : 1;
   }
   if (cmd !== "doctor" && cmd !== "setup") {
-    console.log("usage: oc <doctor|setup|update> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N] [--skip-model]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
+    console.log("usage: oc <doctor|setup|update|admin> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N] [--skip-model]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
     return 2;
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;

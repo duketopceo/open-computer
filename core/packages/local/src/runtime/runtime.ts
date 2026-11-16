@@ -8,6 +8,7 @@ import {
   Memory,
   OPENROUTER_BASE_URL,
   ProviderError,
+  applyProfile,
   SandboxManager,
   ToolRegistry,
   createState,
@@ -46,6 +47,8 @@ export interface RuntimeOptions {
   /** Optional OTLP/HTTP traces endpoint; the policy's otlp_endpoint takes precedence. */
   otlpEndpoint?: string;
   now?: () => number;
+  /** The owner's private profile overlay (JSON text), layered over the public defaults. */
+  profileJson?: string;
   /** The key for the custom OpenAI-compatible endpoint, or null when none is stored. */
   customKey?: () => string | null;
   /** Test hook: replaces the OpenRouter provider. */
@@ -121,9 +124,10 @@ export class Runtime {
 
   /** The user's model choices and custom endpoint, as saved. Keys are never part of this. */
   userSettings(): { default_model: string; worker_model: string; custom_endpoint_url: string | null; custom_endpoint_model: string | null } {
+    const base = applyProfile(this.opts.profileJson);
     return {
-      default_model: this.store.getSetting("default_model") ?? defaults.default_model,
-      worker_model: this.store.getSetting("worker_model") ?? defaults.worker_model,
+      default_model: this.store.getSetting("default_model") ?? base.default_model,
+      worker_model: this.store.getSetting("worker_model") ?? base.worker_model,
       custom_endpoint_url: this.store.getSetting("custom_endpoint_url"),
       custom_endpoint_model: this.store.getSetting("custom_endpoint_model"),
     };

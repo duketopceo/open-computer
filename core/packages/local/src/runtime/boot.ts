@@ -43,6 +43,7 @@ export function runtimeFromEnv(env: Record<string, string | undefined>): NonNull
     sandboxKind: kind,
     ...(env.OC_CORE_MODEL_KEY_FILE ? { modelKeyFile: env.OC_CORE_MODEL_KEY_FILE } : {}),
     ...(policyJson ? { policyJson } : {}),
+    ...(env.OC_PROFILE_FILE ? { profileJson: readFileSync(env.OC_PROFILE_FILE, "utf8") } : {}),
     ...(env.OC_OTLP_ENDPOINT ? { otlpEndpoint: env.OC_OTLP_ENDPOINT } : {}),
   };
 }

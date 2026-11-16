@@ -17,7 +17,7 @@ export interface OpenRouterOptions {
   /** Resolves the key per call so a rotated key is picked up; the key is never logged or put in a body. */
   apiKey: () => string | Promise<string>;
   /** Extra non-secret headers (attribution, gateway authorization). */
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   timeouts?: Partial<ProviderTimeouts>;
 }
 
@@ -168,6 +168,7 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
   async function* attempt(request: ProviderRequest, guard: Guard): AsyncGenerator<StreamPart> {
     const signal = guard.signal;
     const key = await options.apiKey();
+    const extra = typeof options.headers === "function" ? await options.headers() : (options.headers ?? {});
     const url = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
     let response: Response;
     try {
@@ -176,7 +177,7 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${key}`,
-          ...(options.headers ?? {}),
+          ...extra,
         },
         body: JSON.stringify(buildRequestBody(request)),
         ...(signal ? { signal } : {}),

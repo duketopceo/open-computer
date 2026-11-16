@@ -53,3 +53,15 @@ container application first (`wrangler containers delete <id>`); Wrangler cannot
 
 `wrangler delete --name open-computer-core`, `wrangler containers delete <id>`, then the D1 database
 (`open-computer`), the R2 bucket (`open-computer-artifacts`) and the two `oc_` secrets in your Secrets Store.
+
+## AI Gateway and Cloudflare Access (needs an admin token)
+
+Wrangler has no commands for these, so they need a scoped API token with AI Gateway Edit and Read and Access Apps and Policies Edit. Store it once (`omaseal set cloudflare oc-admin`), then:
+
+```sh
+export OC_CF_ADMIN_TOKEN="$(omaseal get cloudflare oc-admin)" OC_CF_ACCOUNT_ID=<your account id>
+oc admin gateway                                  # creates the authenticated gateway open-computer
+oc admin access --hostname core.example.com --emails you@example.com
+```
+
+For the gateway, set `AI_GATEWAY_ACCOUNT` and `AI_GATEWAY_ID` in the deploy config and bind the same token as the Secrets Store secret `oc_aig_token` (binding `AIG_TOKEN`); the core then sends `cf-aig-authorization` on every model call and the wizard reports the gateway overhead. Not verified live: this needs the token.

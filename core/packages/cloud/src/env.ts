@@ -12,6 +12,8 @@ export interface Env {
   ARTIFACTS: R2Bucket;
   ACCESS_SECRET: SecretsStoreSecret;
   MODEL_KEY: SecretsStoreSecret;
+  /** Optional: a Cloudflare API token that may run AI Gateway requests (cf-aig-authorization). Bound only when a gateway is set up. */
+  AIG_TOKEN?: SecretsStoreSecret;
   /** Model call limits in milliseconds, as text (Wrangler vars are strings). Unset or invalid means the default. */
   MODEL_CONNECT_TIMEOUT_MS?: string;
   MODEL_IDLE_TIMEOUT_MS?: string;
