@@ -294,12 +294,17 @@ def run_turn(tid: str, d: Deps, max_passes: int = chat.MAX_PASSES, waiting_on: s
                 # immediately before the LAST user message with the live
                 # text: an earlier message could repeat the same words
                 # verbatim, and the memory belongs beside the live turn
-                # only. FINAL_NOTE, appended after it by build_messages,
-                # stays the last thing in context.
+                # only. When fit() compacted the live turn away (no match),
+                # insert before FINAL_NOTE if present — it must stay the
+                # last thing in context.
                 cut = len(msgs)
                 if user:
                     for i, m in enumerate(msgs):
                         if m["role"] == "user" and m.get("content") == user.get("text"):
+                            cut = i
+                if cut == len(msgs):
+                    for i, m in enumerate(msgs):
+                        if m["content"] == chat.FINAL_NOTE:
                             cut = i
                 msgs.insert(cut, mem)
             dec = chat.parse_decision(d.engine(msgs + restored))

@@ -389,3 +389,24 @@ def test_a_plan_decision_resumes_the_chat_that_owns_the_run(tdir, monkeypatch):
     assert server.resume_after_plan("goal_0000abcd", "luke")
     assert calls == [(t["id"], "goal_0000abcd")]
     assert not server.resume_after_plan("goal_ffffffff", "luke")  # a run no chat started: nothing to resume
+
+
+def test_memory_splices_before_final_note_when_fit_ate_the_live_turn(tdir):
+    """On the final pass fit() can compact the live user message away;
+    the memory then lands after FINAL_NOTE, which must stay last."""
+    from services import compact as oc_compact
+
+    t = threads.create("long research thread", PLAN)
+    for i in range(4):
+        threads.append(t["id"], "user", f"filler {i}: {'words ' * 60}")
+        threads.append(t["id"], "assistant", f"reply {i}: {'notes ' * 60}")
+    threads.append(t["id"], "user", "the live question")
+    oc_compact.write_memory(t["id"], "goal: keep visible")
+    d, _ = deps(Script(decision("reply", "wrapping up")))
+    # final pass (n == max_passes) so build_messages appends FINAL_NOTE
+    threads.run_turn(t["id"], d, max_passes=0)
+    second = d.engine.seen[0]
+    final_idx = next(i for i, m in enumerate(second) if m["content"] == chat.FINAL_NOTE)
+    mem_idx = next(i for i, m in enumerate(second)
+                   if m["content"].startswith(oc_compact.MEMORY_HEADER))
+    assert mem_idx < final_idx  # memory before the note; the note stays last
