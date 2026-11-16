@@ -81,8 +81,10 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
         if (!ID_RE.test(sessionId)) return problem(400, "bad_request", "session_id may use letters, digits, dot, dash and underscore.");
         const taskCap = body.task_cap === undefined ? 1 : Number(body.task_cap);
         if (!Number.isFinite(taskCap) || taskCap <= 0 || taskCap > 100) return problem(400, "bad_request", "task_cap must be above 0 and at most 100.");
-        const dayCap = body.day_cap === undefined || body.day_cap === null ? null : Number(body.day_cap);
-        if (dayCap !== null && (!Number.isFinite(dayCap) || dayCap <= 0)) return problem(400, "bad_request", "day_cap must be above 0.");
+        // The daily cap is not optional: the account default always applies, and a task can only lower it.
+        const askedDayCap = body.day_cap === undefined || body.day_cap === null ? defaults.daily_cap_usd : Number(body.day_cap);
+        if (!Number.isFinite(askedDayCap) || askedDayCap <= 0) return problem(400, "bad_request", "day_cap must be above 0.");
+        const dayCap = Math.min(askedDayCap, defaults.daily_cap_usd);
         const model = typeof body.model === "string" && body.model !== "" ? body.model : defaults.default_model;
         const taskId = crypto.randomUUID();
         const session = env.SESSION.get(env.SESSION.idFromName(sessionId));
@@ -104,7 +106,7 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
           await session.failTask(taskId, "The task could not be started.");
           return problem(503, "workflow_unavailable", "The task could not be started. Try again shortly.");
         }
-        return json({ task_id: taskId, session_id: sessionId }, 202);
+        return json({ task_id: taskId, session_id: sessionId, day_cap: dayCap }, 202);
       }
 
       const sessionMatch = /^\/v1\/sessions\/([^/]+)\/(.*)$/.exec(path);

@@ -187,10 +187,10 @@ export async function readSseUntil(res: Response, done: (r: SseResult) => boolea
   return result;
 }
 
-export async function startTask(body: Record<string, unknown>): Promise<{ task_id: string; session_id: string }> {
+export async function startTask(body: Record<string, unknown>): Promise<{ task_id: string; session_id: string; day_cap: number }> {
   const res = await api("/v1/tasks", { method: "POST", body: JSON.stringify(body) });
   if (res.status !== 202) throw new Error(`task not accepted: ${res.status} ${await res.text()}`);
-  return (await res.json()) as { task_id: string; session_id: string };
+  return (await res.json()) as { task_id: string; session_id: string; day_cap: number };
 }
 
 export async function waitFor<T>(fn: () => Promise<T | undefined>, what: string, tries = 300): Promise<T> {

@@ -72,8 +72,10 @@ test("the default model has one owner: neither Wrangler config defines it", () =
   assert.equal(prod.vars.DEFAULT_MODEL, undefined);
   assert.equal(testCfg.vars.DEFAULT_MODEL, undefined);
   const shared = JSON.parse(read("../../contracts/defaults.json"));
-  assert.equal(typeof shared.default_model, "string");
-  assert.ok(shared.default_model.length > 0);
+  assert.equal(shared.default_model, "z-ai/glm-5.3");
+  assert.equal(shared.worker_model, "z-ai/glm-5.3-flash");
+  assert.equal(shared.daily_cap_usd, 5);
+  assert.equal(prod.vars.DAILY_CAP_USD, undefined);
 });
 
 test("model call limits are configured as positive millisecond counts", () => {

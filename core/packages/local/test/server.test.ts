@@ -111,6 +111,7 @@ describe("local core server", () => {
     const { req } = await boot();
     const body = (await (await req("/v1/settings")).json()) as { model: string };
     expect(body.model).toBe(defaults.default_model);
+    expect(body.model).toBe("z-ai/glm-5.3");
   });
 
   it("rejects an unknown setting field and a non-boolean memory flag", async () => {

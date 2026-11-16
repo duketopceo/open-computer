@@ -40,7 +40,7 @@ export interface StartTaskInput {
   goal: string;
   model: string;
   taskCap: number;
-  dayCap: number | null;
+  dayCap: number;
   memoryEnabled: boolean;
 }
 
