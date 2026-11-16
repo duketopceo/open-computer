@@ -38,7 +38,11 @@
   ],
 
   // One Container class, one fresh sandbox per task. amd64 only, no keys inside the image.
-  "containers": [{ "class_name": "Sandbox", "image": "./sandbox/Dockerfile", "instance_type": "lite", "max_instances": 10 }],
+  // The Durable Object picks the image and size when it starts the container (scheduling_policy durable_object), so the
+  // image arrives as ctx.container.images.sandbox.
+  "containers": [
+    { "class_name": "Sandbox", "scheduling_policy": "durable_object", "images": { "sandbox": { "dockerfile": "./sandbox/Dockerfile" } } }
+  ],
 
   "vars": {
     // Model call limits (ms): time to first byte, silence once streaming, and the whole call.

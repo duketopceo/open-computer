@@ -22,3 +22,4 @@ export * from "./memory/blocks.ts";
 export * from "./memory/history.ts";
 export * from "./memory/recall.ts";
 export * from "./memory/memory.ts";
+export * from "./tools/web-search.ts";

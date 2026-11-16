@@ -1,8 +1,8 @@
 import { introspectWorkflow } from "cloudflare:test";
 import { env } from "./env.ts";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ProviderError, type AgentEvent, type StreamPart } from "@open-computer/agent-core";
-import { api, install, readSse, seedSecrets, startTask, textTurn, toolTurn, waitFor } from "./support.ts";
+import { ProviderError, type AgentEvent, type FetchLike, type StreamPart } from "@open-computer/agent-core";
+import { api, install, MODEL_KEY, readSse, seedSecrets, startTask, textTurn, toolTurn, waitFor } from "./support.ts";
 
 beforeEach(async () => {
   await seedSecrets();
@@ -203,3 +203,29 @@ async function using_<T extends { dispose(): Promise<void> }>(resource: T, body:
     await resource.dispose();
   }
 }
+
+describe("web search through the model key", () => {
+  const SONAR = { choices: [{ message: { content: "Answer from the web." } }], citations: ["https://example.test/source"], usage: { cost: 0.006 } };
+
+  it("asks first, then searches with the stored key, returns the sources and counts the cost", async () => {
+    install([toolTurn([{ id: "c1", name: "web.search", args: '{"query":"latest rust release"}' }]), textTurn("done")]);
+    const seen: Array<{ url: string; auth: string | null; body: string }> = [];
+    (globalThis as unknown as { __doubles: { fetch: FetchLike } }).__doubles.fetch = async (url, init) => {
+      seen.push({ url, auth: new Headers(init.headers).get("authorization"), body: String(init.body) });
+      return new Response(JSON.stringify(SONAR));
+    };
+    const { session_id, task_id } = await startTask({ goal: "look it up" });
+    const pending = await pendingApproval(session_id);
+    expect(seen).toHaveLength(0); // nothing left the core before approval
+    await waitFor(async () => ((await session(session_id).taskState(task_id))?.status === "waiting" ? true : undefined), "the task to be saved as waiting");
+    expect((await decide(session_id, pending.id, { hash: pending.hash, approved: true })).status).toBe(200);
+    const { events } = await readSse(await api(eventsUrl(session_id)));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.url).toContain("/chat/completions");
+    expect(seen[0]?.auth).toBe(`Bearer ${MODEL_KEY}`);
+    expect(JSON.parse(seen[0]?.body ?? "{}")).toMatchObject({ model: "perplexity/sonar", stream: false });
+    expect(JSON.stringify(events)).toContain("https://example.test/source");
+    const spent = await env.DB.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM spend WHERE step_id LIKE 'search:%'").first<{ s: number }>();
+    expect(spent?.s).toBeCloseTo(0.006, 6);
+  });
+});

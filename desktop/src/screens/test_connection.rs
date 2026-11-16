@@ -2,6 +2,7 @@
 
 use rune::{El, col, row, text};
 use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, Kit};
+use shell_core::diagnostics::{Row, Status};
 use shell_core::onboarding::{Outcome, PieceStatus, Step};
 
 use super::caption;
@@ -23,6 +24,65 @@ pub fn view(s: &App, k: &Kit) -> El {
         .w_full()
         .child(caption(k, intro))
         .child(list)
+        .child(full_tests(s, k))
+}
+
+/// The full chain: one row per check with its state and time, a failure's reason and fix underneath.
+fn full_tests(s: &App, k: &Kit) -> El {
+    let mut group = "";
+    let mut list = col().key("full-tests").gap(6.0).w_full();
+    for r in &s.diag_rows {
+        if r.group != group {
+            group = r.group;
+            list = list.child(text(r.group).font(k.ty.ui_medium).color(k.c.text_strong));
+        }
+        list = list.child(diag_row(k, r));
+    }
+    list
+}
+
+fn diag_row(k: &Kit, r: &Row) -> El {
+    let (mark, color) = match r.status {
+        Status::Pending => ("[ . ]", k.c.text_muted),
+        Status::Running => ("[ ... ]", k.c.text_strong),
+        Status::Pass => ("[ ok ]", k.c.text_strong),
+        Status::Fail => ("[FAILED]", k.c.danger.fg),
+        Status::Skip => ("[skip]", k.c.text_muted),
+    };
+    let time = r.ms.map_or(String::new(), |ms| {
+        if ms >= 1000.0 {
+            format!("  {:.1} s", ms / 1000.0)
+        } else {
+            format!("  {ms:.0} ms")
+        }
+    });
+    let mut block = col().key(r.id).gap(2.0).w_full().child(
+        text(format!("{mark} {}{time}", r.title))
+            .font(k.ty.ui)
+            .color(color),
+    );
+    if !r.detail.is_empty() && r.status != Status::Pending {
+        block = block.child(
+            text(r.detail.clone())
+                .font(k.ty.caption())
+                .color(k.c.text_muted),
+        );
+    }
+    for (label, value) in &r.metrics {
+        block = block.child(
+            text(format!("    {label}: {value}"))
+                .font(k.ty.caption())
+                .color(k.c.text_muted),
+        );
+    }
+    if let Some(fix) = &r.fix {
+        block = block.child(
+            text(format!("Fix: {fix}"))
+                .font(k.ty.caption())
+                .color(k.c.danger.fg),
+        );
+    }
+    block
 }
 
 fn piece_row(s: &App, k: &Kit, p: &PieceStatus) -> El {

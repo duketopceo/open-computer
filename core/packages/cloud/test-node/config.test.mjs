@@ -19,7 +19,8 @@ const testCfg = jsonc("wrangler.test.jsonc");
 test("declares the container class, the image and the Durable Object binding for it", () => {
   assert.equal(prod.containers.length, 1);
   assert.equal(prod.containers[0].class_name, "Sandbox");
-  assert.equal(prod.containers[0].image, "./sandbox/Dockerfile");
+  assert.equal(prod.containers[0].scheduling_policy, "durable_object");
+  assert.equal(prod.containers[0].images.sandbox.dockerfile, "./sandbox/Dockerfile");
   const binding = prod.durable_objects.bindings.find((b) => b.name === "SANDBOX");
   assert.equal(binding?.class_name, "Sandbox");
   assert.ok(prod.migrations[0].new_sqlite_classes.includes("Sandbox"));

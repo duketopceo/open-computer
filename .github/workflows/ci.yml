@@ -86,6 +86,11 @@ jobs:
       - name: event schema file is up to date
         working-directory: core/packages/agent-core
         run: node scripts/gen-schema.ts --check
+      - name: web setup wizard page is up to date
+        working-directory: core
+        run: pnpm --filter @open-computer/diagnostics check:wizard
+      - name: no purple, violet or indigo in product colours
+        run: node scripts/check-no-purple.mjs
 
   desktop:
     name: desktop (fmt, clippy, tests, sidecar e2e)
@@ -188,7 +193,10 @@ jobs:
   # (build, backup, swap, health check, rollback on failure).
   deploy:
     name: deploy (production)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Retired: the Python stack on the server is replaced by the Cloudflare core (docs/runbooks/legacy-server-stack.md).
+    # The job only runs when the repository variable OC_LEGACY_DEPLOY is set to 'true', so it can be revived by
+    # setting a variable, not by editing the workflow.
+    if: vars.OC_LEGACY_DEPLOY == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [production-approval]
     runs-on: ubuntu-latest
     environment: production

@@ -9,3 +9,5 @@ deploy/temporal.env
 
 # codebase-memory-mcp local index cache
 .codebase-memory/
+core/packages/cloud/wrangler.deploy.jsonc
+core/packages/cloud/dist/

@@ -32,6 +32,9 @@ importers:
       '@open-computer/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@openrouter/sdk':
+        specifier: ^1.5.104
+        version: 1.5.104
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 1.8.2
@@ -51,6 +54,21 @@ importers:
       wrangler:
         specifier: 4.162.0
         version: 4.162.0(@cloudflare/workers-types@5.20261115.1)(@types/node@24.19.2)
+
+  packages/diagnostics:
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2))
 
   packages/local:
     dependencies:
@@ -458,6 +476,9 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
+
+  '@openrouter/sdk@1.5.104':
+    resolution: {integrity: sha512-xn6WQHOTuPyZdddzEcYYP4gZ64/Lm4ScKzG1KB531QxCj6N/sXtCOwwezedXqEbN6rAh1vU/B/tTk7QTEcG1PQ==}
 
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
@@ -1266,6 +1287,10 @@ snapshots:
       '@emnapi/runtime': 2.0.0-beta.2
       '@tybys/wasm-util': 0.10.4
     optional: true
+
+  '@openrouter/sdk@1.5.104':
+    dependencies:
+      zod: 4.4.3
 
   '@oxc-project/types@0.156.0': {}
 

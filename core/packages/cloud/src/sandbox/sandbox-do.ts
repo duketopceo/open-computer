@@ -7,6 +7,7 @@ import { createOutboundHandler, type OutboundRule } from "./outbound.ts";
 import type { ExecResult } from "./port.ts";
 
 const decoder = new TextDecoder();
+const START_WAIT_MS = 60_000;
 
 /**
  * The Container behind one task's sandbox (class name `Sandbox`, bound as SANDBOX). It starts the instance
@@ -20,10 +21,25 @@ export class Sandbox extends DurableObject<Env> {
     if (!container.running) {
       container.start({
         image: container.images.sandbox ?? Object.values(container.images)[0] ?? "",
+        instance: "lite",
+        // The image's default command is not a long-running process; commands arrive through exec().
+        entrypoint: ["sleep", "infinity"],
         enableInternet: false,
         env: buildSandboxEnv({ set: { OC_TASK_ID: taskId } }),
       });
       await container.interceptOutboundHttps("*:443", this.ctx.exports.OutboundProxy({ props: { taskId } }));
+    }
+    // start() returns before the instance is up; commands only work once it reports running.
+    const deadline = Date.now() + START_WAIT_MS;
+    let exited: string | null = null;
+    container.monitor().then(
+      () => void (exited = "The container exited right after it started."),
+      (e: unknown) => void (exited = `The container failed to start: ${e instanceof Error ? e.message : String(e)}`.slice(0, 240)),
+    );
+    while (!container.running) {
+      if (exited) throw new Error(exited);
+      if (Date.now() > deadline) throw new Error("The container did not start in time.");
+      await new Promise((r) => setTimeout(r, 100));
     }
     return container;
   }

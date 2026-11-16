@@ -190,3 +190,21 @@ in "Look" above for the web console. Status colours, overlays and the high-contr
   what it opened. Loading is a static skeleton plus the word "Loading"; empty and error states are explicit and error has Retry.
 - **Demo:** a fixtures-only build (`build:demo`) with a permanent banner. It is a different artifact from the real console, never a
   mode of it. See `docs/runbooks/demo-deploy.md`.
+
+## Black and white, setup and tests (2026-11-15)
+
+Owner direction: super-high-contrast black and white, no purple. This section tightens the palette for every surface (desktop
+app, setup wizard served by the cloud core, console) and supersedes the status hues above for the setup wizard.
+
+- **Palette:** dark is the default, white on black (`#ffffff` on `#000000`, 21:1). Light mode is the exact inverse, black on white.
+  Muted text is `#c8c8c8` on black and `#3c3c3c` on white (both above 12:1). There is no hue anywhere: no accent colour at all in the
+  wizard, and at most one optional neutral-graphite accent elsewhere, as already defined above.
+- **Status without colour:** pass is a filled square with a check, fail is a heavy outlined row with a thick left bar and a cross,
+  skipped and pending are dashed, running is a spinning ring. Meaning never depends on hue. Reduced motion stops the ring's rotation.
+- **Slanted background, in black and white:** faint diagonal hairlines at -14 degrees (`--faint`: `#3a3a3a` on black, `#c4c4c4` on white).
+- **Forbidden:** purple, violet and indigo, in any token, CSS, SVG, TypeScript or Rust UI colour. `scripts/check-no-purple.mjs` fails CI
+  on the colour words and on any colour whose hue is 225 to 325 degrees with saturation above 0.15. Greys never match.
+- **Setup and tests wizard:** one vertical chain in nine groups (Cloudflare account, provision and deploy, store keys, backend health,
+  OpenRouter, connection speed and latency, sandbox, memory, audit and spend). Each row shows a spinner while it runs, then pass or fail
+  with its time; a failure gives a plain reason, a fix and Retry. The end card gives Run tests again and Export results JSON. The same
+  rows run as `oc doctor`. Source: `core/packages/diagnostics`.
