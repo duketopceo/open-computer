@@ -82,6 +82,10 @@ pub struct App {
     pub set_custom_model: TextEdit,
     pub set_custom_key: TextEdit,
     pub set_model_key: TextEdit,
+    /// Rows of the test chain the person opened (failures open themselves).
+    pub expanded_rows: std::collections::BTreeSet<String>,
+    /// Keep the running row in view while the chain runs; opening a row stops it.
+    pub follow_running: bool,
     last_tick: u64,
     waker: Option<Waker>,
     tx: Sender<Msg>,
@@ -93,6 +97,11 @@ impl App {
         let store: Arc<dyn SecretStore> = Arc::new(shell_core::secrets::ResilientSecrets::new(
             Box::new(KeyringSecrets::new()),
         ));
+        Self::with_store(store)
+    }
+
+    /// The app over a given secret store (the keyring in the app, memory in tests).
+    pub fn with_store(store: Arc<dyn SecretStore>) -> App {
         let mut onboarding = Onboarding::new();
         onboarding.sync_secrets(&*store);
         let (tx, rx) = channel();
@@ -128,6 +137,8 @@ impl App {
             set_custom_model: TextEdit::new(""),
             set_custom_key: TextEdit::new("").secure(),
             set_model_key: TextEdit::new("").secure(),
+            expanded_rows: Default::default(),
+            follow_running: true,
             last_tick: 0,
             waker: None,
             tx,
@@ -149,7 +160,7 @@ impl App {
     }
 
     /// Drain results from the test thread. True when state changed.
-    pub fn poll(&mut self, seconds: f64, _tx: &mut Tx) -> bool {
+    pub fn poll(&mut self, seconds: f64, tx: &mut Tx) -> bool {
         // The "Working" timer ticks once a second while a task runs.
         let tick = seconds.floor() as u64;
         let mut changed =
@@ -158,7 +169,17 @@ impl App {
         while let Ok(msg) = self.rx.try_recv() {
             changed = true;
             match msg {
-                Msg::DiagRows(rows) => self.diag_rows = rows,
+                Msg::DiagRows(rows) => {
+                    // Keep the row that is running in view; the wheel, or opening a row, ends the following.
+                    if self.follow_running
+                        && let Some(r) = rows
+                            .iter()
+                            .find(|r| r.status == shell_core::diagnostics::Status::Running)
+                    {
+                        tx.scroll_into_view(format!("row-{}", r.id));
+                    }
+                    self.diag_rows = rows;
+                }
                 Msg::DiagDone => self.diag_running = false,
                 Msg::ChatEvent(e) => {
                     if let Some(m) = self.main.as_mut() {
@@ -295,6 +316,14 @@ impl App {
         self.onboarding.set_local_only(!on);
     }
 
+    /// Opens or closes one row of the test chain.
+    pub fn toggle_row(&mut self, id: &str) {
+        self.follow_running = false;
+        if !self.expanded_rows.remove(id) {
+            self.expanded_rows.insert(id.to_owned());
+        }
+    }
+
     pub fn toggle_memory(&mut self) {
         let on = self.onboarding.memory_enabled();
         self.onboarding.set_memory_enabled(!on);
@@ -348,6 +377,7 @@ impl App {
             return;
         }
         self.notice = None;
+        self.follow_running = true;
         if self.onboarding.local_only() {
             self.run_local_full_tests();
             return;
