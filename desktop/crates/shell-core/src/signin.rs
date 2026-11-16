@@ -157,15 +157,16 @@ pub fn who_am_i() -> Result<SignIn, String> {
 mod tests {
     use super::*;
 
-    /// A 32-character id assembled at run time so no literal id sits in the source.
-    fn id() -> String {
+    // Built at runtime so the source never holds a 32-hex literal (the open-source hygiene test reads any
+    // such string as a Cloudflare account id).
+    fn fake_account_id() -> String {
         "0123456789abcdef".repeat(2)
     }
 
     fn signed_in(extra_missing: &[&str]) -> String {
+        let id = fake_account_id();
         let mut s = format!(
-            "👋 You are logged in with an OAuth Token, associated with the email someone@example.com.\n│ Account Name │ Account ID │\n│ Someone's Account │ {} │\nScope (Access)\n",
-            id()
+            "👋 You are logged in with an OAuth Token, associated with the email someone@example.com.\n│ Account Name │ Account ID │\n│ Someone's Account │ {id} │\nScope (Access)\n"
         );
         for name in [
             "user",
@@ -200,7 +201,7 @@ mod tests {
         assert!(s.signed_in && s.missing.is_empty());
         assert_eq!(s.email.as_deref(), Some("someone@example.com"));
         assert_eq!(s.accounts, ["Someone's Account"]);
-        assert!(!format!("{s:?}").contains(&id()));
+        assert!(!format!("{s:?}").contains(&fake_account_id()));
         assert!(
             s.summary()
                 .starts_with("Signed in as someone@example.com (Someone's Account).")
