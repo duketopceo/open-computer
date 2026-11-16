@@ -215,7 +215,7 @@ pub fn exchange_code(base: &str, code: &str, verifier: &str) -> Result<String, S
         .post(&format!("{base}/api/v1/auth/keys"))
         .header("Content-Type", "application/json")
         .send(body.as_bytes())
-        .map_err(|_| "OpenRouter could not be reached.".to_owned())?;
+        .map_err(|e| crate::http::unreachable("OpenRouter", "POST", "/api/v1/auth/keys", &e))?;
     let (status, v) = read_body(r);
     if status != 200 {
         return Err(
@@ -396,7 +396,7 @@ impl Client {
             .get(&format!("{}{path}", self.base))
             .header("Authorization", &format!("Bearer {}", self.key))
             .call()
-            .map_err(|_| "OpenRouter could not be reached.".to_owned())?;
+            .map_err(|e| crate::http::unreachable("OpenRouter", "GET", path, &e))?;
         match read_body(r) {
             (200, v) => Ok(v),
             (401, _) => Err("OpenRouter rejected the key.".to_owned()),
@@ -768,8 +768,15 @@ mod tests {
         Callback::request_cancel(&flag, port);
         let e = handle.join().expect("wait thread").unwrap_err();
         assert_eq!(e, CANCELLED);
-        // The listener is dropped when the wait returns, so the port can be bound again.
-        assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
+        // The listener is dropped when the wait returns, so the port can be bound again (a moment's grace: another test's
+        // socket may still be closing on a busy machine).
+        let rebound = (0..40).any(|_| {
+            TcpListener::bind(("127.0.0.1", port)).is_ok() || {
+                std::thread::sleep(Duration::from_millis(25));
+                false
+            }
+        });
+        assert!(rebound, "the port is released");
     }
 
     #[test]

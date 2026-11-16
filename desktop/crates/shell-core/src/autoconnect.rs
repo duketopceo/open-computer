@@ -41,8 +41,77 @@ pub fn default_state_path() -> PathBuf {
     base.join("open-computer").join("cloud.json")
 }
 
+/// What the saved connection file holds, without ever carrying the token: for logs, the self-test and the screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedInspect {
+    pub exists: bool,
+    pub url: Option<String>,
+    pub token_present: bool,
+    /// Why the file cannot be used, in words.
+    pub problem: Option<String>,
+}
+
+pub fn inspect_saved_core(path: &Path) -> SavedInspect {
+    let mut out = SavedInspect {
+        exists: false,
+        url: None,
+        token_present: false,
+        problem: None,
+    };
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            out.problem = Some("no saved connection file".to_owned());
+            return out;
+        }
+        Err(e) => {
+            out.exists = true;
+            out.problem = Some(format!(
+                "the saved connection file cannot be read ({})",
+                e.kind()
+            ));
+            return out;
+        }
+    };
+    out.exists = true;
+    let Ok(v) = serde_json::from_str::<Value>(&text) else {
+        out.problem = Some("the saved connection file is not valid JSON".to_owned());
+        return out;
+    };
+    out.url = v
+        .get("url")
+        .and_then(Value::as_str)
+        .map(|u| u.trim().trim_end_matches('/').to_owned())
+        .filter(|u| !u.is_empty());
+    out.token_present = v
+        .get("token")
+        .and_then(Value::as_str)
+        .is_some_and(|t| !t.trim().is_empty());
+    out.problem = match (&out.url, out.token_present) {
+        (None, _) => Some("the saved connection file has no address".to_owned()),
+        (Some(u), _) if !(u.starts_with("https://") || u.starts_with("http://")) => {
+            Some("the saved address is not http(s)".to_owned())
+        }
+        (Some(_), false) => Some("the saved connection file has no token".to_owned()),
+        _ => None,
+    };
+    out
+}
+
 /// Reads `{ "url": ..., "token": ... }`. Returns none unless both are present and the address is http(s).
 pub fn read_saved_core(path: &Path) -> Option<SavedCore> {
+    let report = inspect_saved_core(path);
+    match &report.problem {
+        Some(p) => crate::log_info!("connect", "saved connection not usable: {p}"),
+        None => crate::log_info!(
+            "connect",
+            "saved connection found: url {}, token present",
+            report.url.as_deref().unwrap_or("")
+        ),
+    }
+    if report.problem.is_some() {
+        return None;
+    }
     let text = std::fs::read_to_string(path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
     let url = v
@@ -52,18 +121,50 @@ pub fn read_saved_core(path: &Path) -> Option<SavedCore> {
         .trim_end_matches('/')
         .to_owned();
     let token = v.get("token")?.as_str()?.trim().to_owned();
-    if token.is_empty() || !(url.starts_with("https://") || url.starts_with("http://")) {
-        return None;
-    }
     Some(SavedCore { url, token })
 }
 
-/// Moves the token into the secret store (the OS keyring) and returns the address. The token is not returned.
+/// Moves the token into the secret store (the OS keyring) and returns the address. The token is not returned. A keyring that
+/// refuses is an error here, with its reason, not a silent in-memory copy: the caller decides what to offer next.
 pub fn adopt_saved_core(core: SavedCore, store: &dyn SecretStore) -> Result<String, String> {
-    store
-        .set(Slot::CloudAccess, &core.token)
-        .map_err(|e| format!("The access token could not be saved to your keyring: {e}"))?;
-    Ok(core.url)
+    match store.set_persistent(Slot::CloudAccess, &core.token) {
+        Ok(()) => {
+            crate::log_info!(
+                "connect",
+                "adopted the saved token into the keyring for {}",
+                core.url
+            );
+            Ok(core.url)
+        }
+        Err(e) => {
+            crate::log_warn!("connect", "adopting the saved token failed: {e}");
+            Err(e.0)
+        }
+    }
+}
+
+/// A 401 with the token the keyring holds: does the saved connection file name the same core with a different token? Compares
+/// without showing either token. False when the file is missing, unusable, for another core, or holds the same token.
+pub fn saved_token_differs(path: &Path, url: &str, current_token: &str) -> bool {
+    let norm = |u: &str| u.trim().trim_end_matches('/').to_ascii_lowercase();
+    read_saved_core(path).is_some_and(|c| norm(&c.url) == norm(url) && c.token != current_token)
+}
+
+/// What to say when the core refuses the token and the saved file cannot replace it.
+pub const REFUSED_SAVED: &str =
+    "The core refused the saved token. Run setup or paste the token under Advanced.";
+
+impl SavedCore {
+    /// Takes the token for this session only (never the keyring): used when the person agrees to use the saved file instead.
+    pub fn use_for_session(self, store: &dyn SecretStore) -> Result<String, String> {
+        store.set(Slot::CloudAccess, &self.token).map_err(|e| e.0)?;
+        crate::log_info!(
+            "connect",
+            "using the saved token for this session for {}",
+            self.url
+        );
+        Ok(self.url)
+    }
 }
 
 // ---------- 2. finding the deployed core through Wrangler ----------
@@ -98,8 +199,9 @@ impl CfApi for HttpCfApi {
             .get(&format!("https://api.cloudflare.com/client/v4{path}"))
             .header("Authorization", &format!("Bearer {}", self.token))
             .call()
-            .map_err(|_| "Cloudflare could not be reached.".to_owned())?;
+            .map_err(|e| crate::http::unreachable("Cloudflare", "GET", path, &e))?;
         let status = r.status().as_u16();
+        crate::http::answered("Cloudflare", "GET", path, status);
         let text = r.body_mut().read_to_string().unwrap_or_default();
         Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
     }
@@ -905,5 +1007,79 @@ mod tests {
             );
             assert!(link, "offer the dashboard link instead");
         }
+    }
+
+    #[test]
+    fn the_saved_connection_is_inspected_without_ever_carrying_the_token() {
+        let dir = std::env::temp_dir().join(format!("oc-inspect-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("cloud.json");
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(
+            inspect_saved_core(&f).problem.as_deref(),
+            Some("no saved connection file")
+        );
+        std::fs::write(
+            &f,
+            r#"{"url":"https://core.example/","token":"sekret-token-value"}"#,
+        )
+        .unwrap();
+        let ok = inspect_saved_core(&f);
+        assert_eq!(
+            (ok.url.as_deref(), ok.token_present, ok.problem.clone()),
+            (Some("https://core.example"), true, None)
+        );
+        assert!(!format!("{ok:?}").contains("sekret-token-value"));
+        std::fs::write(&f, r#"{"url":"https://core.example"}"#).unwrap();
+        let no_token = inspect_saved_core(&f);
+        assert!(
+            !no_token.token_present && no_token.problem.as_deref().unwrap().contains("no token")
+        );
+        std::fs::write(&f, r#"{"url":"ftp://x","token":"t"}"#).unwrap();
+        assert!(
+            inspect_saved_core(&f)
+                .problem
+                .as_deref()
+                .unwrap()
+                .contains("not http(s)")
+        );
+        std::fs::write(&f, "{not json").unwrap();
+        assert!(
+            inspect_saved_core(&f)
+                .problem
+                .as_deref()
+                .unwrap()
+                .contains("not valid JSON")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_adoption_returns_the_keyring_reason_and_stores_nothing() {
+        struct Refusing;
+        impl SecretStore for Refusing {
+            fn set(&self, _: Slot, _: &str) -> Result<(), crate::secrets::SecretError> {
+                Err(crate::secrets::SecretError(
+                    "Your system keyring refused to save the access token: locked.".into(),
+                ))
+            }
+            fn get(&self, _: Slot) -> Result<Option<String>, crate::secrets::SecretError> {
+                Ok(None)
+            }
+            fn delete(&self, _: Slot) -> Result<(), crate::secrets::SecretError> {
+                Ok(())
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("oc-adopt-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("cloud.json");
+        std::fs::write(&f, r#"{"url":"https://core.example","token":"t0k"}"#).unwrap();
+        let core = read_saved_core(&f).unwrap();
+        let err = adopt_saved_core(core, &Refusing).unwrap_err();
+        assert!(
+            err.starts_with("Your system keyring refused to save the access token"),
+            "{err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

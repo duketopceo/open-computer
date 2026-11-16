@@ -346,6 +346,16 @@ pub fn run_lines_env(
     on_silence: &mut dyn FnMut(),
 ) -> Result<bool, String> {
     let (program, rest) = cmd.split_first().ok_or("Wrangler was not found.")?;
+    crate::log_info!(
+        "wrangler",
+        "running {} {}",
+        program,
+        rest.iter()
+            .chain(extra.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     let mut child = Command::new(program)
         .args(rest)
         .args(extra)
@@ -355,7 +365,11 @@ pub fn run_lines_env(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| spawn_failure_words(program, &e))?;
+        .map_err(|e| {
+            let words = spawn_failure_words(program, &e);
+            crate::log_error!("wrangler", "{program} could not be started: {e} ({words})");
+            words
+        })?;
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let mut readers = Vec::new();
     if let Some(o) = child.stdout.take() {
@@ -385,7 +399,9 @@ pub fn run_lines_env(
     for r in readers {
         let _ = r.join();
     }
-    Ok(child.wait().map(|s| s.success()).unwrap_or(false))
+    let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+    crate::log_info!("wrangler", "{program} finished, success: {ok}");
+    Ok(ok)
 }
 
 pub fn run_lines(
@@ -398,11 +414,37 @@ pub fn run_lines(
 
 pub fn whoami_with(cmd: &[String]) -> Result<SignIn, String> {
     let mut text = String::new();
-    run_lines(cmd, &["whoami".to_owned()], &mut |l| {
+    let ok = run_lines(cmd, &["whoami".to_owned()], &mut |l| {
         text.push_str(l);
         text.push('\n');
     })?;
-    Ok(parse_whoami(&text))
+    let state = parse_whoami(&text);
+    if !ok && !state.signed_in {
+        // A failure that is not "nobody is signed in" is shown as Wrangler said it, not hidden behind "not signed in".
+        let said = strip_ansi_text(&text);
+        let lower = said.to_ascii_lowercase();
+        let not_signed_in = lower.contains("not authenticated")
+            || lower.contains("not logged in")
+            || lower.contains("wrangler login");
+        let said = crate::applog::redact(said.trim());
+        if !not_signed_in {
+            let words = if said.is_empty() {
+                "Wrangler failed and printed nothing.".to_owned()
+            } else {
+                format!("Wrangler failed: {said}")
+            };
+            crate::log_warn!("wrangler", "whoami failed: {words}");
+            return Err(words);
+        }
+    }
+    crate::log_info!(
+        "wrangler",
+        "whoami: signed in {}, {} account(s), missing scopes {}",
+        state.signed_in,
+        state.accounts.len(),
+        state.missing.len()
+    );
+    Ok(state)
 }
 
 /// One progress update for the screen: the words, and a Cloudflare page the person can open by hand when Wrangler could

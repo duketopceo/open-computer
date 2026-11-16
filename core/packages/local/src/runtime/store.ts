@@ -150,8 +150,19 @@ export class LocalStore {
   };
 
   // ---- tasks and events ----
-  insertTask(t: { taskId: string; sessionId: string; goal: string }): void {
-    this.run("INSERT INTO tasks (task_id, session_id, goal, status, created_at) VALUES (?, ?, ?, 'running', ?)", t.taskId, t.sessionId, t.goal, new Date().toISOString());
+  insertTask(t: { taskId: string; sessionId: string; goal: string; createdAt?: string }): void {
+    this.run("INSERT INTO tasks (task_id, session_id, goal, status, created_at) VALUES (?, ?, ?, 'running', ?)", t.taskId, t.sessionId, t.goal, t.createdAt ?? new Date().toISOString());
+  }
+  taskStatus(taskId: string): string | null {
+    return (this.one("SELECT status FROM tasks WHERE task_id = ?", taskId)?.status as string | undefined) ?? null;
+  }
+  /** When the task last showed progress: its newest event, else when it was created. */
+  lastProgressMs(taskId: string): number | null {
+    const ev = this.one("SELECT data FROM events WHERE task_id = ? ORDER BY id DESC LIMIT 1", taskId);
+    const fromEvent = ev ? Date.parse((JSON.parse(String(ev.data)) as { ts?: string }).ts ?? "") : Number.NaN;
+    if (Number.isFinite(fromEvent)) return fromEvent;
+    const created = Date.parse(String(this.one("SELECT created_at FROM tasks WHERE task_id = ?", taskId)?.created_at ?? ""));
+    return Number.isFinite(created) ? created : null;
   }
   setTaskStatus(taskId: string, status: string): void {
     this.run("UPDATE tasks SET status = ? WHERE task_id = ?", status, taskId);

@@ -14,6 +14,7 @@ before the tests. `scripts/check-*` is in `.github/CODEOWNERS`, so weakening a c
 | `check-wizard-fresh.sh` | The generated web setup wizard page is regenerated after a source change |
 | `check-403-not-key-invalid.sh` | HTTP 403 is "forbidden", not "key invalid" (ratchet: existing sites are listed in the script, new ones fail) |
 | `check-desktop-packaging.sh` | The menu entry runs the launcher, which sets the PATH (`~/.local/bin`, mise shims) and logs to `~/.local/state/open-computer/desktop.log` |
+| `check-desktop-logging.sh` | The app starts its own file log (`applog::init()`), redacts it, starts children with the extended PATH, and keeps the transport error reason |
 | `check-workflow-hardening.sh` | No `pull_request_target`; every action pinned to a commit SHA |
 
 To add one: write `scripts/check-<topic>.sh` that prints `check-<topic>: ok` or the offending lines plus a "Fix:" paragraph,

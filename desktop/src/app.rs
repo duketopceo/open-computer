@@ -20,15 +20,38 @@ use shell_core::secrets::{KeyringSecrets, SecretStore, Slot};
 /// Names the local core binary, or `node <script>`. Packaging (a later unit) bundles it.
 const CORE_BIN_ENV: &str = "OC_CORE_BIN";
 
+/// Whether the core answered a real request just now. The sidebar chip says "core connected" only for `Ok`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CoreCheck {
+    #[default]
+    Unknown,
+    Checking,
+    Ok,
+    Failed(String),
+}
+
+/// The goal that could not start, and the conversation whose running task was in the way.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BusyConflict {
+    pub session: String,
+    pub goal: String,
+}
+
 pub(crate) enum DataMsg {
     Bindings(Result<serde_json::Value, String>),
     CoreInfo(Result<shell_core::settings_data::CoreInfo, String>),
     Spend(Result<shell_core::settings_data::SpendReport, String>),
     Memory(Result<shell_core::settings_data::MemoryStats, String>),
     MemoryCleared(Result<u64, String>),
+    /// What the core says became of each task: `task id -> status`.
+    RunStatuses(Result<std::collections::HashMap<String, String>, String>),
 }
 
 pub(crate) enum Msg {
+    /// The core refused the keyring's token while the saved connection file holds a different one for the same core.
+    StaleToken,
+    /// The answer of a real request to the core (`/v1/diag/bindings`).
+    CoreChecked(Result<(), String>),
     TestDone(Result<TestConnection, String>),
     DiagRows(Vec<Row>),
     DiagDone,
@@ -141,6 +164,32 @@ pub struct App {
     pub confirm_clear: bool,
     pub models_query: TextEdit,
     pub models_sort: (shell_core::settings_data::ModelSort, bool),
+    /// Whether the core answered a real request, for the sidebar chip.
+    pub core_check: CoreCheck,
+    /// A stale keyring token was already replaced from the saved file once this run; a second 401 is reported, not retried.
+    pub readopt_tried: bool,
+    /// A task could not start because one is still running in this conversation: the goal waits for the person's choice.
+    pub busy_conflict: Option<BusyConflict>,
+    /// The last task sent to the core, so a retry can send it again: (session, goal).
+    pub last_sent: Option<(String, String)>,
+    /// Earlier conversations were checked against the core once this run.
+    pub reconciled: bool,
+    /// Why the keyring could not hold a secret, in words (from the keyring's own error), shown until a save works.
+    pub keyring_problem: Option<String>,
+    /// The keyring refused the saved token: offer to use `cloud.json` for this session instead (needs the person's yes).
+    pub file_token_offer: bool,
+    /// Where finished conversations are kept (none in tests and screenshots).
+    pub history_dir: Option<std::path::PathBuf>,
+    /// The person agreed to hand their OpenRouter key to Hermes and OpenCode.
+    pub harness_key: bool,
+    /// Harness ids that use their own default model instead of Open Computer's.
+    pub harness_native: Vec<String>,
+    /// Text for the clipboard, sent on the next poll (the clipboard belongs to the window).
+    pub copy_request: Option<String>,
+    pub diag_copied: bool,
+    /// `desktop.json` and the saved connection `cloud.json`; tests point these at a temporary folder.
+    pub config_path: std::path::PathBuf,
+    pub saved_core_path: std::path::PathBuf,
     last_tick: u64,
     waker: Option<Waker>,
     tx: Sender<Msg>,
@@ -157,7 +206,14 @@ impl App {
                 KeyringSecrets::new(),
             )))
         };
-        Self::with_store(store)
+        let mut app = Self::with_store(store);
+        // Screenshot runs keep no history on the real disk either.
+        if std::env::var_os("OC_SCREEN_START").is_none()
+            && std::env::var_os("OC_SCREEN_FIXTURE").is_none()
+        {
+            app.history_dir = Some(shell_core::history::default_dir());
+        }
+        app
     }
 
     /// The app over a given secret store (the keyring in the app, memory in tests).
@@ -222,11 +278,48 @@ impl App {
             confirm_clear: false,
             models_query: TextEdit::new(""),
             models_sort: (shell_core::settings_data::ModelSort::Prompt, true),
+            core_check: CoreCheck::Unknown,
+            readopt_tried: false,
+            busy_conflict: None,
+            last_sent: None,
+            reconciled: false,
+            keyring_problem: None,
+            file_token_offer: false,
+            history_dir: None,
+            harness_key: false,
+            harness_native: Vec::new(),
+            copy_request: None,
+            diag_copied: false,
+            // Tests never touch the person's real configuration.
+            config_path: if cfg!(test) {
+                std::env::temp_dir()
+                    .join(format!("oc-test-{}", std::process::id()))
+                    .join("desktop.json")
+            } else {
+                shell_core::config::default_path()
+            },
+            saved_core_path: if cfg!(test) {
+                std::env::temp_dir()
+                    .join(format!("oc-test-{}", std::process::id()))
+                    .join("cloud.json")
+            } else {
+                shell_core::autoconnect::default_state_path()
+            },
             last_tick: 0,
             waker: None,
             tx,
             rx,
         }
+    }
+
+    /// What the message loop does with a chat failure, callable from a test.
+    #[cfg(test)]
+    pub(crate) fn on_data_for_test_chat_failed(&mut self, sid: &str, words: &str) {
+        self.tx()
+            .send(Msg::ChatFailed(sid.to_owned(), words.to_owned()))
+            .ok();
+        let mut tx = rune::Tx::default();
+        self.poll(0.0, &mut tx);
     }
 
     pub(crate) fn tx(&self) -> Sender<Msg> {
@@ -238,6 +331,7 @@ impl App {
     }
 
     pub fn setup(&mut self, waker: Waker) {
+        shell_core::log_info!("app", "started, version {}", env!("CARGO_PKG_VERSION"));
         self.waker = Some(waker);
         self.resume_from_config();
         self.auto_connect_on_start();
@@ -251,6 +345,10 @@ impl App {
             || self.diag_running)
             && tick != self.last_tick;
         self.last_tick = tick;
+        if let Some(text) = self.copy_request.take() {
+            tx.copy(text);
+            changed = true;
+        }
         if self.show_advanced && self.scroll_advanced > 0 {
             tx.scroll_into_view("advanced");
             self.scroll_advanced -= 1;
@@ -280,7 +378,12 @@ impl App {
                     self.diag_rows = rows;
                 }
                 Msg::DiagDone => self.diag_running = false,
+                Msg::CoreChecked(r) => self.on_core_checked(r),
+                Msg::StaleToken => self.readopt_saved_token(),
                 Msg::ChatEvent(sid, e) => {
+                    if let Some(dir) = &self.history_dir {
+                        shell_core::history::append(dir, &sid, &e);
+                    }
                     if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid)) {
                         chat.apply(&e);
                     }
@@ -346,8 +449,25 @@ impl App {
                 }
                 Msg::ChatFailed(sid, words) => {
                     self.harness_running = false;
-                    self.notice = Some(words);
+                    if words == shell_core::chat::SESSION_BUSY {
+                        // Not a failure of the task: it never started. The person chooses what to do about the one in the way.
+                        let goal = self
+                            .last_sent
+                            .as_ref()
+                            .filter(|(s, _)| *s == sid)
+                            .map(|(_, g)| g.clone())
+                            .unwrap_or_default();
+                        self.busy_conflict = Some(BusyConflict {
+                            session: sid.clone(),
+                            goal,
+                        });
+                    } else {
+                        self.notice = Some(words.clone());
+                    }
                     if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid)) {
+                        if words == shell_core::chat::KEY_MISSING {
+                            chat.items.push(shell_core::chat::Item::Note(words));
+                        }
                         chat.status = "failed".to_owned();
                     }
                 }

@@ -68,6 +68,9 @@ export interface StartTaskInput {
 export type Subscriber = { send(id: number, event: AgentEvent): void; close(): void };
 
 /** The self-hosted agent runtime: the same loop, approvals, memory, audit and spend as the cloud core, in one process. */
+/** How long a running task may go without progress before a new task in its session ends it as failed. */
+export const STALE_RUN_MS = 15 * 60 * 1000;
+
 export class Runtime {
   readonly store: LocalStore;
   readonly opts: RuntimeOptions;
@@ -178,7 +181,16 @@ export class Runtime {
   }
 
   async startTask(input: StartTaskInput): Promise<{ taskId: string; sessionId: string; dayCap: number } | { busy: true }> {
-    if (this.store.activeTaskInSession(input.sessionId) !== null) return { busy: true };
+    const open = this.store.activeTaskInSession(input.sessionId);
+    if (open !== null) {
+      // A running task with no progress for 15 minutes cannot be making any; end it so the session is not blocked forever. One
+      // waiting for an approval is waiting on a person and stays.
+      const last = this.store.lastProgressMs(open);
+      if (this.store.taskStatus(open) !== "running" || last === null || this.now() - last < STALE_RUN_MS) return { busy: true };
+      this.aborts.get(open)?.abort();
+      this.store.setTaskStatus(open, "failed");
+      this.store.appendEvent(input.sessionId, { type: "run", status: "failed", reason: `No progress for ${STALE_RUN_MS / 60000} minutes, so the task was ended and a new one can start.`, task_id: open, seq: 0, ts: new Date(this.now()).toISOString() } as AgentEvent);
+    }
     const refused = modelRefusal(parseItPolicy(this.opts.policyJson), input.model ?? this.userSettings().default_model);
     if (refused) throw new PolicyRefusal(refused);
     const caps = this.caps();

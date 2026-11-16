@@ -40,6 +40,56 @@ fn badge(k: &Kit, label: &str, on: bool) -> El {
         .build(k)
 }
 
+fn opt(k: &Kit, key: String, label: &str, on: bool, press: impl Fn(&mut App) + 'static) -> El {
+    Button::new(label.to_owned())
+        .variant(if on {
+            ButtonVariant::Submit
+        } else {
+            ButtonVariant::Neutral
+        })
+        .on_press(press)
+        .build(k)
+        .key(key)
+}
+
+/// Which model a harness runs: Open Computer's own, translated to the harness's naming, or the harness's default.
+fn model_choice(s: &App, k: &Kit, h: Harness) -> El {
+    if h == Harness::BuiltIn {
+        return col().key("harness-model-builtin");
+    }
+    let native = s.harness_native.iter().any(|id| id == h.id());
+    let how = match h {
+        Harness::Hermes => "Hermes is told `--provider openrouter` with the model id.",
+        _ => {
+            "OpenCode is given `openrouter/<model>` when it lists that model; if it does not, it uses its default and the chat says so."
+        }
+    };
+    col()
+        .key(format!("harness-model-{}", h.id()))
+        .gap(4.0)
+        .w_full()
+        .child(note(k, "Model"))
+        .child(
+            row()
+                .gap(8.0)
+                .child(opt(
+                    k,
+                    format!("harness-model-oc-{}", h.id()),
+                    "Use Open Computer's model",
+                    !native,
+                    move |s: &mut App| s.set_harness_native(h, false),
+                ))
+                .child(opt(
+                    k,
+                    format!("harness-model-native-{}", h.id()),
+                    "Harness default",
+                    native,
+                    move |s: &mut App| s.set_harness_native(h, true),
+                )),
+        )
+        .child(note(k, how))
+}
+
 pub fn harness(s: &App, k: &Kit) -> El {
     let mut sec = section(k, "Agent harness", "set-harness").child(note(
         k,
@@ -85,7 +135,8 @@ pub fn harness(s: &App, k: &Kit) -> El {
                         )),
                 )
                 .child(note(k, h.describe()))
-                .child(line(k, summary)),
+                .child(line(k, summary))
+                .child(model_choice(s, k, h)),
         );
     }
     sec.child(

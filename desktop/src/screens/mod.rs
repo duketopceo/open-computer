@@ -210,6 +210,8 @@ pub(crate) fn openrouter_action_label(busy: bool, retry: bool) -> &'static str {
 }
 
 #[cfg(test)]
+mod live_tests;
+#[cfg(test)]
 mod settings_tests;
 
 #[cfg(test)]

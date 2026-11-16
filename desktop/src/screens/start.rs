@@ -261,7 +261,34 @@ pub fn view(s: &App, k: &Kit) -> El {
         two = two.child(setup_rows(k, &s.setup_rows));
     }
     if let Some(l) = &s.core_line {
-        two = two.child(text(l.clone()).font(k.ty.ui).color(k.c.text_base).w_full());
+        two = two.child(
+            text(l.clone())
+                .font(k.ty.ui)
+                .color(k.c.text_base)
+                .w_full()
+                .wrap(),
+        );
+    }
+    if let Some(p) = &s.keyring_problem {
+        two = two.child(
+            text(p.clone())
+                .key("keyring-problem")
+                .font(k.ty.ui)
+                .color(k.c.text_strong)
+                .w_full()
+                .wrap(),
+        );
+    }
+    if s.file_token_offer {
+        two = two.child(
+            row().gap(8.0).center_y().child(
+                Button::new("Use the saved token for now")
+                    .variant(ButtonVariant::Neutral)
+                    .on_press(|s: &mut App| s.use_saved_token())
+                    .build(k)
+                    .key("use-saved-token"),
+            ),
+        );
     }
     if s.gateway_link && !connected && (s.setup_running || !s.setup_rows.is_empty()) {
         two = two.child(

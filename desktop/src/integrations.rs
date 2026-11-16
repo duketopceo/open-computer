@@ -52,9 +52,80 @@ impl App {
         });
     }
 
+    /// The model Open Computer asks a harness to use: its own default model, mapped to the harness's naming by the adapter, or
+    /// none when the person chose the harness's default.
+    pub fn harness_model(&self, h: Harness) -> Option<String> {
+        if self.harness_native.iter().any(|id| id == h.id()) {
+            return None;
+        }
+        let from_core = self
+            .main
+            .as_ref()
+            .and_then(|m| m.settings.as_ref())
+            .and_then(|v| v.get("default_model"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        Some(from_core.unwrap_or_else(shell_core::defaults::default_model))
+    }
+
+    pub fn set_harness_native(&mut self, h: Harness, native: bool) {
+        self.harness_native.retain(|id| id != h.id());
+        if native {
+            self.harness_native.push(h.id().to_owned());
+        }
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.harness_native_model = self.harness_native.clone();
+        let _ = config::save(&path, &saved);
+        shell_core::log_info!("harness", "{} uses its own default model: {native}", h.id());
+    }
+
+    /// `OPENROUTER_API_KEY` for Hermes and OpenCode, only when the person opted in and a real key is on this computer (a core-managed
+    /// key never leaves the core). Both programs read that variable; nothing is passed as an argument.
+    pub fn harness_env(&self) -> Vec<(String, String)> {
+        if !self.harness_key {
+            return Vec::new();
+        }
+        match self.store.get(Slot::ModelKey) {
+            Ok(Some(k)) if !k.is_empty() && k != "managed-by-the-cloud-core" => {
+                vec![("OPENROUTER_API_KEY".to_owned(), k)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether a real OpenRouter key is on this computer that could be handed to a local agent.
+    pub fn has_shareable_key(&self) -> bool {
+        matches!(self.store.get(Slot::ModelKey), Ok(Some(k)) if !k.is_empty() && k != "managed-by-the-cloud-core")
+    }
+
+    pub fn set_harness_key(&mut self, on: bool) {
+        self.harness_key = on;
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.harness_key = on;
+        let _ = config::save(&path, &saved);
+        shell_core::log_info!("harness", "hand the OpenRouter key to local agents: {on}");
+    }
+
+    /// Puts the last 200 log lines, redacted, on the clipboard.
+    pub fn copy_diagnostics(&mut self) {
+        let mut text = format!(
+            "Open Computer {} diagnostics\ncore check: {:?}\nkeyring: {}\n---\n",
+            env!("CARGO_PKG_VERSION"),
+            self.core_check,
+            self.keyring_problem
+                .as_deref()
+                .unwrap_or("no problem recorded")
+        );
+        text.push_str(&shell_core::applog::tail(200));
+        self.copy_request = Some(text);
+        self.diag_copied = true;
+    }
+
     pub fn set_harness(&mut self, h: Harness) {
         self.harness = h;
-        let path = config::default_path();
+        let path = self.config_path.clone();
         let mut saved = config::load(&path);
         saved.harness = h.id().to_owned();
         let _ = config::save(&path, &saved);
@@ -80,6 +151,7 @@ impl App {
             ));
             return;
         }
+        let model = self.harness_model(h);
         let Some(m) = self.main.as_mut() else { return };
         self.notice = None;
         m.chat.push_user(&goal);
@@ -90,12 +162,23 @@ impl App {
         self.harness_running = true;
         self.harness_cancel.store(false, Ordering::Relaxed);
         let cancel = self.harness_cancel.clone();
+        if let Some(dir) = &self.history_dir {
+            shell_core::history::append_user(dir, &session, &goal);
+        }
+        let env = self.harness_env();
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || {
             let sid = session.clone();
-            let r = harness::run_task(&mut *adapter, &goal, None, None, None, &cancel, &mut |ev| {
-                notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev))
-            });
+            let r = harness::run_task_with(
+                &mut *adapter,
+                &goal,
+                model.as_deref(),
+                None,
+                None,
+                &env,
+                &cancel,
+                &mut |ev| notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev)),
+            );
             match r {
                 Ok(()) => notify(&tx, &waker, Msg::ChatEnd(session.clone())),
                 Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),

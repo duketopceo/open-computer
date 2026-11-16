@@ -132,6 +132,8 @@ impl Chat {
                 }
                 self.status = status;
             }
+            // Written by the history store for what the person typed; replaying a saved conversation applies it.
+            "user" => self.push_user(&s("text")),
             "reasoning.delta" => match self.items.last_mut() {
                 Some(Item::Thinking { text, done: false }) => text.push_str(&s("text")),
                 _ => self.items.push(Item::Thinking {
@@ -329,9 +331,19 @@ pub struct Started {
     pub session_id: String,
 }
 
+/// What a 401 from the core is called on screen.
+pub const REFUSED: &str = "The core refused the access token.";
+
+/// A task is already running in this conversation (the core's 409 `session_busy`).
+pub const SESSION_BUSY: &str = "A task is still running in this conversation.";
+
+/// The core has no OpenRouter key stored (its 409 `key_missing`), with the fix.
+pub const KEY_MISSING: &str =
+    "This core has no OpenRouter key yet. Open Settings, OpenRouter, and connect one.";
+
 fn plain(status: u16) -> String {
     match status {
-        401 => "The core refused the access token.".to_owned(),
+        401 => REFUSED.to_owned(),
         403 => "Your IT policy does not allow that.".to_owned(),
         409 => "A task is already running in this session.".to_owned(),
         s if s >= 500 => "The core had an error. Try again.".to_owned(),
@@ -372,10 +384,18 @@ impl Endpoint {
                 .send(b.to_string()),
             _ => agent.get(&url).header("authorization", &auth).call(),
         };
-        let mut res = res.map_err(|_| "The core could not be reached.".to_owned())?;
+        let mut res = res.map_err(|e| crate::http::unreachable("The core", method, path, &e))?;
         let status = res.status().as_u16();
         let text = res.body_mut().read_to_string().unwrap_or_default();
-        Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+        let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        crate::http::answered_with(
+            "core",
+            method,
+            path,
+            status,
+            &crate::http::problem_detail(&body),
+        );
+        Ok((status, body))
     }
 
     pub fn start_task(&self, goal: &str, session_id: &str) -> Result<Started, String> {
@@ -385,9 +405,13 @@ impl Endpoint {
             Some(&serde_json::json!({ "goal": goal, "session_id": session_id })),
         )?;
         if status != 202 {
-            return Err(body["error"]["message"]
-                .as_str()
-                .map_or_else(|| plain(status), str::to_owned));
+            return Err(match (status, body["error"]["code"].as_str()) {
+                (409, Some("session_busy")) => SESSION_BUSY.to_owned(),
+                (409, Some("key_missing")) => KEY_MISSING.to_owned(),
+                _ => body["error"]["message"]
+                    .as_str()
+                    .map_or_else(|| plain(status), str::to_owned),
+            });
         }
         Ok(Started {
             task_id: body["task_id"].as_str().unwrap_or("").to_owned(),
@@ -480,8 +504,9 @@ impl Endpoint {
         } else {
             agent.get(&url).header("authorization", &auth).call()
         };
-        let mut res = res.map_err(|_| "The core could not be reached.".to_owned())?;
+        let mut res = res.map_err(|e| crate::http::unreachable("The core", method, path, &e))?;
         let status = res.status().as_u16();
+        crate::http::answered("core", method, path, status);
         let headers = res
             .headers()
             .iter()
@@ -538,7 +563,14 @@ impl Endpoint {
             .get(&url)
             .header("authorization", &format!("Bearer {}", self.token))
             .call()
-            .map_err(|_| "The core could not be reached.".to_owned())?;
+            .map_err(|e| {
+                crate::http::unreachable(
+                    "The core",
+                    "GET",
+                    &format!("/v1/sessions/{session_id}/events"),
+                    &e,
+                )
+            })?;
         if res.status().as_u16() != 200 {
             return Err(plain(res.status().as_u16()));
         }
