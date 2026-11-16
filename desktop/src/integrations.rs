@@ -3,7 +3,6 @@
 //! OpenRouter callback, which goes straight to the keyring.
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use shell_core::config;
 use shell_core::harness::{self, Harness};
@@ -128,18 +127,41 @@ impl App {
                 Some("The browser could not be opened. Paste a key below instead.".to_owned());
             return;
         }
+        self.or_connect_id = self.or_connect_id.wrapping_add(1);
+        let id = self.or_connect_id;
+        self.or_cancel = cb.cancel_flag();
+        self.or_port = Some(cb.port);
         self.or_busy = true;
         self.or_line = Some("Your browser opened OpenRouter. Click Authorize there.".to_owned());
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || {
-            let r =
-                openrouter::finish_connect(openrouter::BASE, &cb, &pkce, Duration::from_secs(300));
-            notify(&tx, &waker, Msg::OrKey(r));
+            let r = openrouter::finish_connect(
+                openrouter::BASE,
+                &cb,
+                &pkce,
+                openrouter::CONNECT_TIMEOUT,
+            );
+            notify(&tx, &waker, Msg::OrKey(id, r));
         });
+    }
+
+    /// Stops a running OpenRouter wait, closes the localhost listener, and enables Try again.
+    pub fn cancel_openrouter(&mut self) {
+        if let Some(port) = self.or_port.take() {
+            openrouter::Callback::request_cancel(&self.or_cancel, port);
+        } else {
+            self.or_cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        // Ignore a result that arrives after this cancel.
+        self.or_connect_id = self.or_connect_id.wrapping_add(1);
+        self.or_busy = false;
+        self.or_line = Some(openrouter::CANCELLED.to_owned());
     }
 
     /// Saves the key from the callback (keyring first), hands it to the connected core, then loads the account view.
     pub fn on_openrouter_key(&mut self, r: Result<String, String>) {
+        self.or_port = None;
         let key = match r {
             Ok(k) => k,
             Err(e) => {

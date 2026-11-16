@@ -4,6 +4,7 @@
 //! cleared; the onboarding machine and the screens see set flags.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::main_app::Main;
@@ -62,8 +63,8 @@ pub(crate) enum Msg {
     /// Whether the connected core routes model calls through an AI Gateway.
     Gateway(Option<bool>),
     GatewayReason(Option<String>),
-    /// The key from "Connect OpenRouter", or why it did not finish.
-    OrKey(Result<String, String>),
+    /// The key from "Connect OpenRouter", or why it did not finish. `id` matches the attempt that started it.
+    OrKey(u64, Result<String, String>),
     OrAccount(shell_core::openrouter::Account),
 }
 
@@ -99,6 +100,12 @@ pub struct App {
     pub or_busy: bool,
     pub or_line: Option<String>,
     pub or_account: Option<shell_core::openrouter::Account>,
+    /// Stops a running "Connect OpenRouter" wait and identifies the attempt.
+    pub or_cancel: Arc<AtomicBool>,
+    pub or_port: Option<u16>,
+    pub or_connect_id: u64,
+    /// When Advanced opens, scroll it into view for this many frames.
+    pub scroll_advanced: u8,
     /// The note typed on an approval card, sent with the decision.
     pub approval_note: TextEdit,
     /// Settings > Models and keys fields. Key fields are secure and are cleared once sent.
@@ -184,6 +191,10 @@ impl App {
             or_busy: false,
             or_line: None,
             or_account: None,
+            or_cancel: Arc::new(AtomicBool::new(false)),
+            or_port: None,
+            or_connect_id: 0,
+            scroll_advanced: 0,
             approval_note: TextEdit::new(""),
             set_default_model: TextEdit::new(""),
             set_worker_model: TextEdit::new(""),
@@ -240,6 +251,11 @@ impl App {
             || self.diag_running)
             && tick != self.last_tick;
         self.last_tick = tick;
+        if self.show_advanced && self.scroll_advanced > 0 {
+            tx.scroll_into_view("advanced");
+            self.scroll_advanced -= 1;
+            changed = true;
+        }
         while let Ok(msg) = self.rx.try_recv() {
             changed = true;
             match msg {
@@ -310,7 +326,11 @@ impl App {
                         self.cf_gateway = g;
                     }
                 }
-                Msg::OrKey(r) => self.on_openrouter_key(r),
+                Msg::OrKey(id, r) => {
+                    if id == self.or_connect_id {
+                        self.on_openrouter_key(r);
+                    }
+                }
                 Msg::OrAccount(a) => {
                     self.or_busy = false;
                     self.or_account = Some(a);
@@ -430,6 +450,9 @@ impl App {
 
     pub fn back(&mut self) {
         self.notice = None;
+        if self.or_busy {
+            self.cancel_openrouter();
+        }
         self.onboarding.back();
     }
 
