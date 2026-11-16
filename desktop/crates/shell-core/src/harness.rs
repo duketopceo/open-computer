@@ -157,6 +157,11 @@ pub fn detect_all(probe: &dyn Probe) -> Vec<Detected> {
 /// How to start a harness and how to read what it prints.
 pub trait Adapter: Send {
     fn program(&self) -> String;
+    /// Called once before the process starts, with the program that will run and the model Open Computer wants. May look the
+    /// model up in the program (OpenCode's list) and returns a line to show the person when it changes or drops the model.
+    fn prepare(&mut self, _program: &str, _oc_model: Option<&str>) -> Option<String> {
+        None
+    }
     fn args(&self, goal: &str, model: Option<&str>) -> Vec<String>;
     /// Maps one output line to zero or more core events. Must not panic on any input.
     fn map_line(&mut self, line: &str) -> Vec<Value>;
@@ -198,6 +203,12 @@ impl Adapter for HermesAdapter {
     fn args(&self, goal: &str, model: Option<&str>) -> Vec<String> {
         let mut a = vec!["-z".to_owned(), goal.to_owned()];
         if let Some(m) = model.filter(|m| !m.is_empty()) {
+            // An id like `z-ai/glm-5.3` is an OpenRouter id. Hermes would otherwise guess the provider from its own config, so it
+            // is named (`--provider`: "Provider override for this invocation", applies to -z).
+            if m.contains('/') {
+                a.push("--provider".to_owned());
+                a.push("openrouter".to_owned());
+            }
             a.push("-m".to_owned());
             a.push(m.to_owned());
         }
@@ -218,17 +229,123 @@ pub struct OpenCodeAdapter {
     text_open: bool,
     /// OpenCode reports a failed model call as an `error` event and still exits 0.
     errored: bool,
+    /// The model to pass, decided in `prepare` (none: leave OpenCode on its own default).
+    plan: Option<ModelPlan>,
+}
+
+/// What to pass OpenCode as `--model`, and what to tell the person.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModelPlan {
+    pub model: Option<String>,
+    pub note: Option<String>,
+}
+
+/// OpenCode reads the first segment of `--model` as the PROVIDER, so Open Computer's `z-ai/glm-5.3` (an OpenRouter id) must be
+/// `openrouter/z-ai/glm-5.3`. `known` is `opencode models` (none when it could not be listed). An id whose first segment is
+/// already a provider OpenCode lists is passed as it is; an id OpenCode does not list at all is dropped so OpenCode uses its own
+/// default model, and the note says so.
+pub fn plan_opencode_model(oc_model: Option<&str>, known: Option<&[String]>) -> ModelPlan {
+    let Some(m) = oc_model.map(str::trim).filter(|m| !m.is_empty()) else {
+        return ModelPlan::default();
+    };
+    let listed = |id: &str| known.is_some_and(|k| k.iter().any(|x| x == id));
+    let provider_known =
+        |p: &str| known.is_some_and(|k| k.iter().any(|x| x.split('/').next() == Some(p)));
+    let first = m.split('/').next().unwrap_or("");
+    if m.contains('/') && provider_known(first) && listed(m) {
+        return ModelPlan {
+            model: Some(m.to_owned()),
+            note: None,
+        };
+    }
+    let mapped = format!("openrouter/{m}");
+    match known {
+        None => ModelPlan {
+            model: Some(mapped),
+            note: None,
+        },
+        Some(_) if listed(&mapped) => ModelPlan {
+            model: Some(mapped),
+            note: None,
+        },
+        Some(_) => ModelPlan {
+            model: None,
+            note: Some(format!(
+                "OpenCode doesn't know {m}; using its default model."
+            )),
+        },
+    }
+}
+
+/// `program models` (offline and quick), one id per line; cached for the life of the app, per program.
+fn opencode_models(program: &str) -> Option<Vec<String>> {
+    static CACHE: std::sync::Mutex<Vec<(String, Vec<String>)>> = std::sync::Mutex::new(Vec::new());
+    if let Some((_, v)) = CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(p, _)| p == program)
+    {
+        return Some(v.clone());
+    }
+    let exe = resolve_program(program);
+    let out = crate::secrets::bounded(std::time::Duration::from_secs(20), move || {
+        Command::new(exe)
+            .arg("models")
+            .env("PATH", crate::signin::child_path())
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+    })
+    .flatten()?;
+    if !out.status.success() {
+        crate::log_warn!("harness", "`{program} models` exited with {}", out.status);
+        return None;
+    }
+    let list: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| crate::signin::strip_ansi_text(l).trim().to_owned())
+        .filter(|l| l.contains('/'))
+        .collect();
+    if list.is_empty() {
+        return None;
+    }
+    crate::log_info!("harness", "{program} lists {} models", list.len());
+    CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((program.to_owned(), list.clone()));
+    Some(list)
 }
 
 impl Adapter for OpenCodeAdapter {
     fn program(&self) -> String {
         "opencode".to_owned()
     }
+    fn prepare(&mut self, program: &str, oc_model: Option<&str>) -> Option<String> {
+        let known = oc_model.and_then(|_| opencode_models(program));
+        let plan = plan_opencode_model(oc_model, known.as_deref());
+        crate::log_info!(
+            "harness",
+            "opencode model: asked {:?}, passing {:?}",
+            oc_model,
+            plan.model
+        );
+        let note = plan.note.clone();
+        self.plan = Some(plan);
+        note
+    }
     fn args(&self, goal: &str, model: Option<&str>) -> Vec<String> {
         let mut a = vec!["run".to_owned(), "--format".to_owned(), "json".to_owned()];
-        if let Some(m) = model.filter(|m| !m.is_empty()) {
+        // `prepare` decided; without it (a direct call) map without a lookup.
+        let plan = self
+            .plan
+            .clone()
+            .unwrap_or_else(|| plan_opencode_model(model, None));
+        if let Some(m) = plan.model {
             a.push("--model".to_owned());
-            a.push(m.to_owned());
+            a.push(m);
         }
         a.push(goal.to_owned());
         a
@@ -448,6 +565,7 @@ pub fn run_task_with(
     emit: &mut dyn FnMut(Value),
 ) -> Result<(), String> {
     let program = program_override.map_or_else(|| adapter.program(), str::to_owned);
+    let model_note = adapter.prepare(&program, model);
     let exe = resolve_program(&program);
     let mut cmd = Command::new(&exe);
     cmd.args(adapter.args(goal, model))
@@ -474,6 +592,9 @@ pub fn run_task_with(
         format!("{program} could not be started ({e}). Check that it is installed.")
     })?;
     emit(json!({"type": "run", "status": "running"}));
+    if let Some(note) = model_note {
+        emit(json!({"type": "error", "message": note}));
+    }
     let stdout = child.stdout.take().ok_or("The agent has no output.")?;
     let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
     let err_reader = child.stderr.take().map(|e| {
@@ -588,12 +709,126 @@ mod tests {
     #[test]
     fn adapters_build_the_documented_commands() {
         let h = HermesAdapter::default();
-        assert_eq!(h.args("fix it", Some("m/x")), ["-z", "fix it", "-m", "m/x"]);
+        assert_eq!(h.args("fix it", None), ["-z", "fix it"]);
+        // An OpenRouter id names its provider for Hermes.
+        assert_eq!(
+            h.args("fix it", Some("z-ai/glm-5.3")),
+            [
+                "-z",
+                "fix it",
+                "--provider",
+                "openrouter",
+                "-m",
+                "z-ai/glm-5.3"
+            ]
+        );
+        // A bare name has no provider to name.
+        assert_eq!(
+            h.args("fix it", Some("gpt-x")),
+            ["-z", "fix it", "-m", "gpt-x"]
+        );
         let o = OpenCodeAdapter::default();
         assert_eq!(
             o.args("fix it", None),
             ["run", "--format", "json", "fix it"]
         );
+        // Without a lookup, a bare OpenRouter id becomes `openrouter/<id>`.
+        assert_eq!(
+            o.args("fix it", Some("z-ai/glm-5.3")),
+            [
+                "run",
+                "--format",
+                "json",
+                "--model",
+                "openrouter/z-ai/glm-5.3",
+                "fix it"
+            ]
+        );
+    }
+
+    fn listed() -> Vec<String> {
+        [
+            "openrouter/z-ai/glm-5.3",
+            "openrouter/z-ai/glm-5.3-flash",
+            "anthropic/claude-sonnet-5",
+            "github-copilot/auto",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect()
+    }
+
+    #[test]
+    fn opencode_gets_the_openrouter_provider_in_front_of_an_openrouter_id() {
+        let k = listed();
+        let p = plan_opencode_model(Some("z-ai/glm-5.3"), Some(&k));
+        assert_eq!(p.model.as_deref(), Some("openrouter/z-ai/glm-5.3"));
+        assert_eq!(p.note, None);
+        // Already provider-qualified and listed: untouched.
+        let p = plan_opencode_model(Some("anthropic/claude-sonnet-5"), Some(&k));
+        assert_eq!(p.model.as_deref(), Some("anthropic/claude-sonnet-5"));
+        let p = plan_opencode_model(Some("openrouter/z-ai/glm-5.3-flash"), Some(&k));
+        assert_eq!(p.model.as_deref(), Some("openrouter/z-ai/glm-5.3-flash"));
+        // No lookup possible: map and let the real error speak.
+        assert_eq!(
+            plan_opencode_model(Some("z-ai/glm-5.3"), None)
+                .model
+                .as_deref(),
+            Some("openrouter/z-ai/glm-5.3")
+        );
+        assert_eq!(plan_opencode_model(None, Some(&k)), ModelPlan::default());
+    }
+
+    #[test]
+    fn a_model_opencode_does_not_list_is_dropped_with_a_line_saying_so() {
+        let k = listed();
+        let p = plan_opencode_model(Some("acme/unheard-of-7"), Some(&k));
+        assert_eq!(p.model, None, "OpenCode keeps its own default");
+        assert_eq!(
+            p.note.as_deref(),
+            Some("OpenCode doesn't know acme/unheard-of-7; using its default model.")
+        );
+        let mut a = OpenCodeAdapter::default();
+        a.plan = Some(p);
+        assert_eq!(
+            a.args("x", Some("acme/unheard-of-7")),
+            ["run", "--format", "json", "x"]
+        );
+    }
+
+    #[test]
+    fn prepare_lists_the_programs_models_once_and_reports_a_dropped_model() {
+        let dir = std::env::temp_dir().join(format!("oc-fake-opencode-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let script = dir.join("opencode.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nif [ \"$1\" = models ]; then printf 'openrouter/z-ai/glm-5.3\\nanthropic/claude-sonnet-5\\n'; fi\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let p = script.to_str().unwrap();
+        let mut a = OpenCodeAdapter::default();
+        assert_eq!(a.prepare(p, Some("z-ai/glm-5.3")), None);
+        assert!(
+            a.args("g", Some("z-ai/glm-5.3"))
+                .contains(&"openrouter/z-ai/glm-5.3".to_owned())
+        );
+        let mut b = OpenCodeAdapter::default();
+        assert!(
+            b.prepare(p, Some("nope/model"))
+                .unwrap()
+                .contains("doesn't know nope/model")
+        );
+        assert!(
+            !b.args("g", Some("nope/model"))
+                .contains(&"--model".to_owned())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

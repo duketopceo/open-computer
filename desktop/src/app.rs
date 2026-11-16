@@ -156,6 +156,8 @@ pub struct App {
     pub history_dir: Option<std::path::PathBuf>,
     /// The person agreed to hand their OpenRouter key to Hermes and OpenCode.
     pub harness_key: bool,
+    /// Harness ids that use their own default model instead of Open Computer's.
+    pub harness_native: Vec<String>,
     /// Text for the clipboard, sent on the next poll (the clipboard belongs to the window).
     pub copy_request: Option<String>,
     pub diag_copied: bool,
@@ -251,6 +253,7 @@ impl App {
             file_token_offer: false,
             history_dir: None,
             harness_key: false,
+            harness_native: Vec::new(),
             copy_request: None,
             diag_copied: false,
             // Tests never touch the person's real configuration.

@@ -21,6 +21,9 @@ pub struct Saved {
     /// The person agreed to use the token in `cloud.json` for this session when the keyring refuses to hold it.
     #[serde(default)]
     pub file_token_ok: bool,
+    /// Harness ids (`hermes`, `opencode`) told to use their own default model instead of Open Computer's.
+    #[serde(default)]
+    pub harness_native_model: Vec<String>,
     /// The person agreed to hand their OpenRouter key to Hermes or OpenCode through `OPENROUTER_API_KEY`.
     #[serde(default)]
     pub harness_key: bool,
@@ -72,6 +75,7 @@ mod tests {
             harness: "hermes".into(),
             file_token_ok: true,
             harness_key: true,
+            harness_native_model: vec!["opencode".into()],
         };
         save(&p, &s).unwrap();
         assert_eq!(load(&p), s);

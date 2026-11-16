@@ -342,6 +342,7 @@ impl App {
         }
         self.harness = shell_core::harness::Harness::from_id(&saved.harness);
         self.harness_key = saved.harness_key;
+        self.harness_native = saved.harness_native_model.clone();
         self.onboarding.set_local_only(saved.local_only);
         self.onboarding.set_cloud_url(saved.cloud_url.clone());
         self.cloud_url.replace_text(&saved.cloud_url);

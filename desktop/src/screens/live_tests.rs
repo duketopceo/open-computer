@@ -307,3 +307,57 @@ fn the_about_page_has_the_log_and_the_copy_button_and_the_agent_page_says_how_mo
     );
     assert!(find(&runtime(app), "harness-key-toggle"));
 }
+
+#[test]
+fn each_local_agent_can_use_open_computers_model_or_its_own_default_and_the_choice_is_saved() {
+    use shell_core::harness::Harness;
+    let dir = temp_dir("agentmodel");
+    let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+    app.config_path = dir.join("desktop.json");
+    let mut m = Main::new();
+    m.settings = Some(serde_json::json!({"default_model": "z-ai/glm-5.3"}));
+    app.main = Some(m);
+    // Open Computer's model is the default for both agents.
+    assert_eq!(
+        app.harness_model(Harness::OpenCode).as_deref(),
+        Some("z-ai/glm-5.3")
+    );
+    assert_eq!(
+        app.harness_model(Harness::Hermes).as_deref(),
+        Some("z-ai/glm-5.3")
+    );
+    app.set_harness_native(Harness::OpenCode, true);
+    assert_eq!(
+        app.harness_model(Harness::OpenCode),
+        None,
+        "the agent's own default"
+    );
+    assert_eq!(
+        app.harness_model(Harness::Hermes).as_deref(),
+        Some("z-ai/glm-5.3")
+    );
+    assert_eq!(
+        shell_core::config::load(&dir.join("desktop.json")).harness_native_model,
+        vec!["opencode".to_owned()]
+    );
+    app.set_harness_native(Harness::OpenCode, false);
+    assert!(app.harness_native.is_empty());
+    // The Settings page shows the choice per agent, and none for Built-in.
+    {
+        let m = app.main.as_mut().unwrap();
+        m.tab = Tab::Settings;
+        m.section = crate::main_app::Section::Agent;
+    }
+    let rt = runtime(app);
+    for key in [
+        "harness-model-oc-hermes",
+        "harness-model-native-hermes",
+        "harness-model-oc-opencode",
+        "harness-model-native-opencode",
+    ] {
+        assert!(find(&rt, key), "{key}");
+    }
+    assert!(!find(&rt, "harness-model-oc-builtin"));
+    assert!(has(&rt, "--provider openrouter") && has(&rt, "openrouter/<model>"));
+    let _ = std::fs::remove_dir_all(dir);
+}

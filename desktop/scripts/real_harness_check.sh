@@ -54,6 +54,13 @@ exec "$OC_OPENCODE_BIN" "\$@"
 EOF
     chmod +x "$work/opencode-$name.sh"
   done
+  # The mapped model: a provider named openrouter (what `z-ai/glm-5.3` becomes) whose base URL is the fake server.
+  cat > "$work/opencode-mapped.json" <<EOF
+{"\$schema":"https://opencode.ai/config.json","autoupdate":false,"provider":{"openrouter":{"npm":"@ai-sdk/openai-compatible","name":"OpenRouter","options":{"baseURL":"http://127.0.0.1:$nport/v1","apiKey":"not-a-key"},"models":{"z-ai/glm-5.3":{"name":"GLM"}}}}}
+EOF
+  sed "s#opencode-normal.json#opencode-mapped.json#" "$work/opencode-normal.sh" > "$work/opencode-mapped.sh"
+  chmod +x "$work/opencode-mapped.sh"
+  export OC_REAL_OPENCODE_MAPPED="$work/opencode-mapped.sh"
   export OC_REAL_OPENCODE="$work/opencode-normal.sh" OC_REAL_OPENCODE_SLOW="$work/opencode-slow.sh" OC_REAL_OPENCODE_DEAD="$work/opencode-dead.sh"
 fi
 

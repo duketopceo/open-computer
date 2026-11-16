@@ -53,6 +53,34 @@ impl App {
         });
     }
 
+    /// The model Open Computer asks a harness to use: its own default model, mapped to the harness's naming by the adapter, or
+    /// none when the person chose the harness's default.
+    pub fn harness_model(&self, h: Harness) -> Option<String> {
+        if self.harness_native.iter().any(|id| id == h.id()) {
+            return None;
+        }
+        let from_core = self
+            .main
+            .as_ref()
+            .and_then(|m| m.settings.as_ref())
+            .and_then(|v| v.get("default_model"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        Some(from_core.unwrap_or_else(shell_core::defaults::default_model))
+    }
+
+    pub fn set_harness_native(&mut self, h: Harness, native: bool) {
+        self.harness_native.retain(|id| id != h.id());
+        if native {
+            self.harness_native.push(h.id().to_owned());
+        }
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.harness_native_model = self.harness_native.clone();
+        let _ = config::save(&path, &saved);
+        shell_core::log_info!("harness", "{} uses its own default model: {native}", h.id());
+    }
+
     /// `OPENROUTER_API_KEY` for Hermes and OpenCode, only when the person opted in and a real key is on this computer (a core-managed
     /// key never leaves the core). Both programs read that variable; nothing is passed as an argument.
     pub fn harness_env(&self) -> Vec<(String, String)> {
@@ -124,6 +152,7 @@ impl App {
             ));
             return;
         }
+        let model = self.harness_model(h);
         let Some(m) = self.main.as_mut() else { return };
         self.notice = None;
         m.chat.push_user(&goal);
@@ -144,7 +173,7 @@ impl App {
             let r = harness::run_task_with(
                 &mut *adapter,
                 &goal,
-                None,
+                model.as_deref(),
                 None,
                 None,
                 &env,
