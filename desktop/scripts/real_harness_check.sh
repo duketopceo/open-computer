@@ -5,7 +5,8 @@
 #
 #   OC_OPENCODE_BIN   path to the opencode program
 #   OC_HERMES_BIN     path to the hermes program
-#   OC_WRANGLER_CMD   the wrangler command, for example "pnpm --dir /abs/core/packages/cloud exec wrangler"
+#   OC_WRANGLER_CMD   the wrangler command, for example /abs/core/packages/cloud/node_modules/.bin/wrangler
+#                     (not `pnpm exec`: the check runs wrangler with an empty home, where corepack cannot find its pnpm)
 #
 # Usage: desktop/scripts/real_harness_check.sh   (any of the three may be left unset; its tests are then skipped)
 set -euo pipefail
