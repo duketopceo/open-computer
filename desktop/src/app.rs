@@ -180,6 +180,10 @@ pub struct App {
     pub last_sent: Option<(String, String)>,
     /// Earlier conversations were checked against the core once this run.
     pub reconciled: bool,
+    /// When the token was last re-checked after the core refused it, so a refusal is looked into at most once a minute.
+    pub last_recheck: Option<std::time::Instant>,
+    /// This session uses the token saved in cloud.json because the keyring could not be read.
+    pub file_fallback: bool,
     /// Why the keyring could not hold a secret, in words (from the keyring's own error), shown until a save works.
     pub keyring_problem: Option<String>,
     /// The keyring refused the saved token: offer to use `cloud.json` for this session instead (needs the person's yes).
@@ -292,6 +296,8 @@ impl App {
             busy_conflict: None,
             last_sent: None,
             reconciled: false,
+            last_recheck: None,
+            file_fallback: false,
             keyring_problem: None,
             file_token_offer: false,
             history_dir: None,
@@ -471,7 +477,8 @@ impl App {
                             goal,
                         });
                     } else {
-                        self.notice = Some(words.clone());
+                        let shown = self.after_core_error(&words);
+                        self.notice = Some(shown);
                     }
                     if let Some(chat) = self.main.as_mut().and_then(|m| m.chat_for(&sid)) {
                         if words == shell_core::chat::KEY_MISSING {
@@ -492,7 +499,10 @@ impl App {
                             m.settings = Some(v);
                         }
                     }
-                    Err(words) => self.notice = Some(words),
+                    Err(words) => {
+                        let words = self.after_core_error(&words);
+                        self.notice = Some(words);
+                    }
                 },
                 Msg::LocalReady(r) => match r {
                     Ok((process, endpoint)) => {

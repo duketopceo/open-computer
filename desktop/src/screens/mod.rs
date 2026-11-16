@@ -95,6 +95,45 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     )
 }
 
+/// The keyring banner, when the keyring cannot be read: one clear sentence, a Retry button and a way to the diagnostics.
+pub(crate) fn keyring_banner(s: &App, k: &Kit) -> Option<El> {
+    let words = s.keyring_banner()?;
+    Some(
+        col()
+            .key("keyring-banner")
+            .w_full()
+            .gap(8.0)
+            .padding(12.0)
+            .radius(12.0)
+            .border(1.0, k.c.border_strong)
+            .child(
+                text(words)
+                    .font(k.ty.ui_medium)
+                    .color(k.c.text_strong)
+                    .w_full()
+                    .wrap(),
+            )
+            .child(
+                row()
+                    .gap(8.0)
+                    .child(
+                        Button::new("Retry")
+                            .variant(ButtonVariant::Submit)
+                            .on_press(|s: &mut App| s.retry_keyring())
+                            .build(k)
+                            .key("keyring-retry"),
+                    )
+                    .child(
+                        Button::new("Copy diagnostics")
+                            .variant(ButtonVariant::Neutral)
+                            .on_press(|s: &mut App| s.open_diagnostics_page())
+                            .build(k)
+                            .key("keyring-diagnostics"),
+                    ),
+            ),
+    )
+}
+
 /// The accent button: the one thing to do now on a screen. Black text on the gradient, in both appearances.
 pub(crate) fn accent_button(
     k: &Kit,

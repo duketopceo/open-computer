@@ -97,7 +97,11 @@ impl App {
             }
             Err(reason) => {
                 self.keyring_problem = Some(reason.clone());
-                if config::load(&self.config_path.clone()).file_token_ok {
+                // The saved file may stand in when the person said so, or when only its owner can read it (mode 0600).
+                if config::load(&self.config_path.clone()).file_token_ok
+                    || self.file_fallback_allowed()
+                {
+                    self.file_fallback = true;
                     return self.use_saved_token_inner(&reason);
                 }
                 self.file_token_offer = true;
@@ -160,6 +164,129 @@ impl App {
                 self.core_line = Some(e);
                 false
             }
+        }
+    }
+
+    /// The one banner for a keyring that cannot be read (locked, a prompt dismissed or refused): what it is, what to do, and when
+    /// this session is using the token saved in cloud.json instead.
+    pub fn keyring_banner(&self) -> Option<String> {
+        let _ = self.store.lock_reason()?;
+        let mut words = shell_core::secrets::locked_words();
+        if self.file_fallback {
+            words.push_str(". Until then this session uses the token saved in cloud.json (readable only by you)");
+        }
+        words.push('.');
+        Some(words)
+    }
+
+    /// Whether the saved connection file may stand in for a keyring that cannot be read: it exists, is usable, and only its owner
+    /// can read it (mode 0600 or tighter).
+    pub fn file_fallback_allowed(&self) -> bool {
+        shell_core::autoconnect::file_is_private(&self.saved_core_path)
+            && shell_core::autoconnect::inspect_saved_core(&self.saved_core_path)
+                .problem
+                .is_none()
+    }
+
+    /// Uses the token in cloud.json for this session (only when [`Self::file_fallback_allowed`]).
+    pub fn use_file_fallback(&mut self) -> bool {
+        if !self.file_fallback_allowed() {
+            return false;
+        }
+        let Some(core) = autoconnect::read_saved_core(&self.saved_core_path.clone()) else {
+            return false;
+        };
+        match core.use_for_session(&*self.store) {
+            Ok(_) => {
+                shell_core::log_info!(
+                    "keyring",
+                    "the keyring cannot be read; using the token in cloud.json for this session"
+                );
+                self.file_fallback = true;
+                self.onboarding.sync_secrets(&*self.store);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Reads the token again (the keyring first, the saved file when the keyring cannot be read), rebuilds the endpoint and asks the
+    /// core. The Retry button, a refusal in the middle of a session and the start all use it.
+    pub fn refresh_token(&mut self) {
+        let url = self.onboarding.cloud_url().to_owned();
+        let mut token = self
+            .store
+            .get(Slot::CloudAccess)
+            .ok()
+            .flatten()
+            .filter(|t| !t.is_empty());
+        if token.is_none() && self.store.lock_reason().is_some() && self.use_file_fallback() {
+            token = self
+                .store
+                .get(Slot::CloudAccess)
+                .ok()
+                .flatten()
+                .filter(|t| !t.is_empty());
+        }
+        let Some(token) = token.filter(|_| !url.is_empty()) else {
+            return;
+        };
+        if let Some(m) = self.main.as_mut() {
+            m.endpoint = Some(Endpoint::new(&url, &token));
+        }
+        self.verify_core();
+        self.load_settings();
+        if self.main.is_some() {
+            self.bindings = Default::default();
+            self.core_info = Default::default();
+            self.spend = Default::default();
+            self.memory = Default::default();
+            self.load_section();
+        }
+    }
+
+    /// The Retry button: forget the failed read, use the keyring again if it is unlocked, otherwise the saved file when allowed.
+    pub fn retry_keyring(&mut self) {
+        self.store.forget_session(Slot::CloudAccess);
+        self.store.retry();
+        self.keyring_problem = None;
+        self.file_fallback = false;
+        self.readopt_tried = false;
+        self.refresh_token();
+    }
+
+    /// Opens Settings > About, where Copy diagnostics is.
+    pub fn open_diagnostics_page(&mut self) {
+        self.show_tab(crate::main_app::Tab::Settings);
+        self.open_section(crate::main_app::Section::About);
+    }
+
+    /// Called with the words of any core error. A refused (or missing) token is looked into, at most once a minute: the keyring
+    /// is read again, then the saved file; the words shown say what is wrong, never a raw 401 when the keyring is the cause.
+    pub fn after_core_error(&mut self, words: &str) -> String {
+        let refused = words == shell_core::chat::REFUSED || words == shell_core::chat::NO_TOKEN;
+        if !refused {
+            return words.to_owned();
+        }
+        let due = self
+            .last_recheck
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(60));
+        if due {
+            self.last_recheck = Some(std::time::Instant::now());
+            shell_core::log_info!(
+                "connect",
+                "the core refused the token mid-session; reading it again"
+            );
+            self.readopt_tried = false;
+            self.refresh_token();
+        }
+        if self.store.lock_reason().is_some() {
+            "The keyring is locked, so the core could not be asked. See the message at the top."
+                .to_owned()
+        } else if words == shell_core::chat::REFUSED {
+            "The core refused the token; it is being checked again.".to_owned()
+        } else {
+            words.to_owned()
         }
     }
 

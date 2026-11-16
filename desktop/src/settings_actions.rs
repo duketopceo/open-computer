@@ -125,6 +125,14 @@ impl App {
     }
 
     pub fn on_data(&mut self, d: DataMsg) {
+        // A refused token is looked into (at most once a minute) and never shown as a raw 401 when the keyring is the cause.
+        let d = match d {
+            DataMsg::Bindings(Err(e)) => DataMsg::Bindings(Err(self.after_core_error(&e))),
+            DataMsg::CoreInfo(Err(e)) => DataMsg::CoreInfo(Err(self.after_core_error(&e))),
+            DataMsg::Spend(Err(e)) => DataMsg::Spend(Err(self.after_core_error(&e))),
+            DataMsg::Memory(Err(e)) => DataMsg::Memory(Err(self.after_core_error(&e))),
+            other => other,
+        };
         match d {
             DataMsg::Bindings(r) => {
                 if let Ok(b) = &r {

@@ -183,7 +183,11 @@ pub fn view(s: &App, k: &Kit, m: &Main) -> El {
         // Settings is a full page of its own, with a section list on the left; Diagnostics is one of its sections.
         Tab::Settings | Tab::Diagnostics => super::settings_page::page(s, k, m),
     };
-    let mut content = col().key("content").grow(1.0).h_full().child(body);
+    let mut content = col().key("content").grow(1.0).h_full();
+    if let Some(banner) = super::keyring_banner(s, k) {
+        content = content.child(col().w_full().padding(12.0).child(banner));
+    }
+    content = content.child(body);
     if let Some(n) = &s.notice {
         content = content.child(
             text(n.clone())
