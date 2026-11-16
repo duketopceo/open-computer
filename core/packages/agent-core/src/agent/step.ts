@@ -237,6 +237,7 @@ async function modelTurn(start: AgentState, deps: AgentDeps, capJustRaised: bool
             cached: usage?.cached ?? 0,
             cost: usage?.cost ?? null,
             estimated: usage?.cost == null,
+            ...(part.generationId ? { generation_id: part.generationId } : {}),
           });
           await deps.guard.settle(stepId, usage?.cost ?? null);
           const totals = await deps.guard.totals(state.taskId);

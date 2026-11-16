@@ -467,6 +467,11 @@ impl Endpoint {
         }
     }
 
+    /// A GET on one of the core's own routes: the status and the JSON body.
+    pub fn get(&self, path: &str) -> Result<(u16, Value), String> {
+        self.json("GET", path, None)
+    }
+
     pub fn settings(&self) -> Result<Value, String> {
         let (status, body) = self.json("GET", "/v1/settings", None)?;
         if status == 200 {

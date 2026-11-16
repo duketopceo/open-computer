@@ -58,6 +58,8 @@ export type StreamPart =
       message: Extract<ChatMessage, { role: "assistant" }>;
       finishReason: string | null;
       usage: Usage | null;
+      /** The provider's id for this response, used to look the call up later. Null when none was sent. */
+      generationId?: string | null;
       reasoningKinds: Array<"text" | "summary">;
     };
 

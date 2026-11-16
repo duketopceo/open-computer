@@ -124,6 +124,7 @@ pub fn openrouter(s: &App, k: &Kit) -> El {
         sec = sec.child(line(k, l.clone()));
     }
     let Some(a) = &s.or_account else { return sec };
+    sec = sec.child(note(k, a.source.words()));
     if let Some(key) = &a.key {
         let limit = key.limit.map_or_else(|| "no limit".to_owned(), dollars);
         let left = key

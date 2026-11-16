@@ -349,9 +349,27 @@ impl Client {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Source {
+    #[default]
+    Direct,
+    Core,
+}
+
+impl Source {
+    pub fn words(self) -> &'static str {
+        match self {
+            Source::Core => "Source: your core, through the official OpenRouter SDK.",
+            Source::Direct => "Source: this computer, straight to OpenRouter (no core connected).",
+        }
+    }
+}
+
 /// Everything the data view shows, fetched in one go. A part that fails is left out and named in `problems`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Account {
+    /// Where the data came from: the connected core (official OpenRouter SDK) or this computer talking to OpenRouter directly.
+    pub source: Source,
     pub key: Option<KeyInfo>,
     pub credits: Option<Credits>,
     pub models: Vec<ModelPrice>,
@@ -360,7 +378,10 @@ pub struct Account {
 }
 
 pub fn load_account(c: &Client, recent_generation_ids: &[String]) -> Account {
-    let mut a = Account::default();
+    let mut a = Account {
+        source: Source::Direct,
+        ..Account::default()
+    };
     match c.key_info() {
         Ok(k) => a.key = Some(k),
         Err(e) => a.problems.push(e),
@@ -388,6 +409,87 @@ pub fn load_account(c: &Client, recent_generation_ids: &[String]) -> Account {
         }
     }
     a
+}
+
+/// The same view from a connected core's authenticated `/v1/openrouter/*` routes (the core holds the key and uses the SDK).
+/// Returns `None` when the core has no key stored or does not have these routes, so the caller can fall back to direct.
+pub fn load_account_via_core(ep: &crate::chat::Endpoint) -> Option<Account> {
+    let mut a = Account {
+        source: Source::Core,
+        ..Account::default()
+    };
+    let get = |name: &str| ep.get(&format!("/v1/openrouter/{name}"));
+    match get("key") {
+        Ok((200, v)) => {
+            a.key = Some(KeyInfo {
+                label: v["label"].as_str().unwrap_or("").to_owned(),
+                usage: num(&v, "usage"),
+                limit: opt(&v, "limit"),
+                limit_remaining: opt(&v, "limit_remaining"),
+                is_free_tier: v["is_free_tier"].as_bool().unwrap_or(false),
+            });
+        }
+        Ok((401, _)) => a
+            .problems
+            .push("OpenRouter rejected the core's key.".to_owned()),
+        // No key on the core, or an older core without these routes: use the direct path instead.
+        Ok((404 | 409, _)) | Err(_) => return None,
+        Ok((c, _)) => a
+            .problems
+            .push(format!("OpenRouter answered with an error ({c}).")),
+    }
+    if let Ok((200, v)) = get("credits") {
+        a.credits = Some(Credits {
+            total: num(&v, "total"),
+            used: num(&v, "used"),
+        });
+    }
+    if let Ok((200, v)) = get("models") {
+        let mut m: Vec<ModelPrice> = v["models"]
+            .as_array()
+            .map(|l| {
+                l.iter()
+                    .map(|m| ModelPrice {
+                        id: m["id"].as_str().unwrap_or("").to_owned(),
+                        name: m["name"].as_str().unwrap_or("").to_owned(),
+                        context: m["context"].as_u64().unwrap_or(0),
+                        prompt_per_m: num(m, "prompt_per_m"),
+                        completion_per_m: num(m, "completion_per_m"),
+                    })
+                    .filter(|m| !m.id.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        m.sort_by(|x, y| {
+            x.prompt_per_m
+                .partial_cmp(&y.prompt_per_m)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(x.id.cmp(&y.id))
+        });
+        a.models = m;
+    }
+    if let Ok((200, v)) = get("generations") {
+        a.generations = v["generations"]
+            .as_array()
+            .map(|l| {
+                l.iter()
+                    .map(|g| Generation {
+                        id: g["id"].as_str().unwrap_or("").to_owned(),
+                        model: if g["pending"].as_bool() == Some(true) {
+                            "waiting for OpenRouter's record".to_owned()
+                        } else {
+                            g["model"].as_str().unwrap_or("").to_owned()
+                        },
+                        cost: num(g, "cost"),
+                        prompt_tokens: g["prompt_tokens"].as_u64().unwrap_or(0),
+                        completion_tokens: g["completion_tokens"].as_u64().unwrap_or(0),
+                        latency_ms: opt(g, "latency_ms"),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    Some(a)
 }
 
 pub fn dollars(v: f64) -> String {
@@ -532,5 +634,31 @@ mod tests {
         let (base, _) = fake_server(vec![]);
         let a = load_account(&Client::new(&base, "k"), &[]);
         assert!(a.key.is_none() && a.problems.len() >= 2);
+    }
+
+    #[test]
+    fn a_connected_core_is_the_source_when_it_has_the_routes_and_a_missing_key_falls_back() {
+        let (base, seen) = fake_server(vec![
+            ("/v1/openrouter/key", r#"{"label":"k","usage":1.0,"limit":10,"limit_remaining":9,"is_free_tier":false}"#.to_owned()),
+            ("/v1/openrouter/credits", r#"{"total":20,"used":3.5}"#.to_owned()),
+            ("/v1/openrouter/models", r#"{"models":[{"id":"b/x","name":"X","context":8000,"prompt_per_m":3,"completion_per_m":9},{"id":"a/y","name":"Y","context":4000,"prompt_per_m":0.1,"completion_per_m":0.4}]}"#.to_owned()),
+            ("/v1/openrouter/generations", r#"{"generations":[{"id":"gen-1","model":"a/y","cost":0.002,"prompt_tokens":10,"completion_tokens":5,"latency_ms":700},{"id":"gen-2","pending":true}]}"#.to_owned()),
+        ]);
+        let ep = crate::chat::Endpoint::new(&base, "core-token");
+        let a = load_account_via_core(&ep).unwrap();
+        assert_eq!(a.source, Source::Core);
+        assert!(a.source.words().contains("official OpenRouter SDK"));
+        assert_eq!(a.credits.as_ref().unwrap().remaining(), 16.5);
+        assert_eq!(a.models[0].id, "a/y");
+        assert_eq!(a.generations.len(), 2);
+        assert_eq!(a.generations[0].completion_tokens, 5);
+        assert!(a.generations[1].model.contains("waiting"));
+        assert!(seen.lock().unwrap().iter().all(|r| {
+            r.to_lowercase()
+                .contains("authorization: bearer core-token")
+        }));
+        // A core with no key (404 from the fake) means: use the direct client.
+        let (empty, _) = fake_server(vec![]);
+        assert!(load_account_via_core(&crate::chat::Endpoint::new(&empty, "t")).is_none());
     }
 }

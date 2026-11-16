@@ -205,6 +205,7 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
     const calls = new Map<number, { id: string; name: string; args: string }>();
     let finish: string | null = null;
     let usage: Usage | null = null;
+    let generationId: string | null = null;
 
     try {
       for await (const data of readSseData(response.body, guard.touch)) {
@@ -215,6 +216,8 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
           continue; // a malformed fragment is skipped; the stream's own error chunk is authoritative
         }
         if (!isObj(chunk)) continue;
+        // Every chunk of one response carries the same OpenRouter generation id (`gen-...`).
+        if (generationId === null && typeof chunk.id === "string" && chunk.id !== "") generationId = chunk.id;
         if (isObj(chunk.error)) {
           yield {
             t: "error",
@@ -329,7 +332,7 @@ export function openRouterProvider(options: OpenRouterOptions): Provider {
         : {}),
       ...(details.length > 0 ? { reasoning_details: details } : {}),
     };
-    const done: StreamPart = { t: "done", message, finishReason: finish, usage, reasoningKinds: [...kinds] };
+    const done: StreamPart = { t: "done", message, finishReason: finish, usage, generationId, reasoningKinds: [...kinds] };
     yield done;
   }
 }

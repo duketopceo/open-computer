@@ -1,4 +1,4 @@
-import { OPENROUTER_BASE_URL, toNdjson, verifyChain, type FetchLike } from "@open-computer/agent-core";
+import { OPENROUTER_BASE_URL, accountRoute, toNdjson, verifyChain, type FetchLike } from "@open-computer/agent-core";
 import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import { authenticate } from "./auth.ts";
 import type { Env } from "./env.ts";
@@ -162,6 +162,20 @@ export function createHandler(deps: {
       }
 
       if (method === "GET" && path === "/v1/model/health") return modelHealth(env, deps.fetch);
+
+      // Account data for the desktop and console: the official OpenRouter SDK behind this core's own authenticated routes.
+      const orRoute = /^\/v1\/openrouter\/(key|credits|models|generations)$/.exec(path);
+      if (method === "GET" && orRoute) {
+        let apiKey: string;
+        try {
+          apiKey = await readSecret(env.MODEL_KEY, "model_key");
+        } catch (e) {
+          if (e instanceof SecretError) return problem(409, "key_missing", "No OpenRouter key is stored on this core yet.");
+          throw e;
+        }
+        const reply = await accountRoute(orRoute[1] as string, { apiKey, fetch: deps.fetch, audit: () => readAllAudit(env) });
+        return reply ? json(reply.body, reply.status) : problem(404, "not_found", "No such endpoint.");
+      }
 
       if (method === "POST" && path === "/v1/memory/probe") {
         try {

@@ -164,28 +164,37 @@ impl App {
         self.refresh_openrouter();
     }
 
-    /// Loads key usage and limit, credits, models with prices and recent generation stats.
+    /// Loads key usage and limit, credits, models with prices and recent generation stats. A connected core answers through
+    /// the official OpenRouter SDK; with no core (or one without a key) this computer asks OpenRouter directly.
     pub fn refresh_openrouter(&mut self) {
+        let ep = self.main.as_ref().and_then(|m| m.endpoint.clone());
         let key = match self.store.get(Slot::ModelKey) {
-            Ok(Some(k)) if !k.is_empty() && k != "managed-by-the-cloud-core" => k,
-            _ => {
-                self.or_busy = false;
-                self.or_line = Some(
-                    "No OpenRouter key is saved on this computer. Click Connect OpenRouter."
-                        .to_owned(),
-                );
-                return;
-            }
+            Ok(Some(k)) if !k.is_empty() && k != "managed-by-the-cloud-core" => Some(k),
+            _ => None,
         };
+        if ep.is_none() && key.is_none() {
+            self.or_busy = false;
+            self.or_line = Some(
+                "No OpenRouter key is saved on this computer. Click Connect OpenRouter.".to_owned(),
+            );
+            return;
+        }
         self.or_busy = true;
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || {
-            let c = openrouter::Client::new(openrouter::BASE, &key);
-            notify(
-                &tx,
-                &waker,
-                Msg::OrAccount(openrouter::load_account(&c, &[])),
-            );
+            let via_core = ep.as_ref().and_then(openrouter::load_account_via_core);
+            let account = via_core.or_else(|| {
+                key.map(|k| {
+                    openrouter::load_account(&openrouter::Client::new(openrouter::BASE, &k), &[])
+                })
+            });
+            let account = account.unwrap_or_else(|| openrouter::Account {
+                problems: vec![
+                    "The core has no OpenRouter key yet. Click Connect OpenRouter.".to_owned(),
+                ],
+                ..openrouter::Account::default()
+            });
+            notify(&tx, &waker, Msg::OrAccount(account));
         });
     }
 
@@ -292,6 +301,7 @@ impl App {
             },
         ];
         self.or_account = Some(Account {
+            source: shell_core::openrouter::Source::Core,
             key: Some(KeyInfo {
                 label: "sk-or-v1-abc...xyz".into(),
                 usage: 1.25,
