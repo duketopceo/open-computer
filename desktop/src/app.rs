@@ -11,6 +11,7 @@ use rune::{Tx, Waker};
 use shell_core::checks::run_test_connection;
 use shell_core::core_client::TestConnection;
 use shell_core::core_process::{CoreProcess, LaunchSpec, generate_token};
+use shell_core::diagnostics::{Row, UreqTransport, initial_rows, run_chain};
 use shell_core::onboarding::{Onboarding, Piece, Step};
 use shell_core::secrets::{KeyringSecrets, SecretStore, Slot};
 
@@ -19,6 +20,8 @@ const CORE_BIN_ENV: &str = "OC_CORE_BIN";
 
 enum Msg {
     TestDone(Result<TestConnection, String>),
+    DiagRows(Vec<Row>),
+    DiagDone,
 }
 
 pub struct App {
@@ -30,6 +33,9 @@ pub struct App {
     /// A plain-words message for the person, or none.
     pub notice: Option<String>,
     pub testing: bool,
+    /// The full test chain's rows, shown with a spinner on the running one.
+    pub diag_rows: Vec<Row>,
+    pub diag_running: bool,
     waker: Option<Waker>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -49,6 +55,8 @@ impl App {
             model_key: TextEdit::new("").secure(),
             notice: None,
             testing: false,
+            diag_rows: initial_rows(),
+            diag_running: false,
             waker: None,
             tx,
             rx,
@@ -65,6 +73,8 @@ impl App {
         while let Ok(msg) = self.rx.try_recv() {
             changed = true;
             match msg {
+                Msg::DiagRows(rows) => self.diag_rows = rows,
+                Msg::DiagDone => self.diag_running = false,
                 Msg::TestDone(result) => {
                     self.testing = false;
                     match result {
@@ -170,6 +180,44 @@ impl App {
                         .map_err(|e| e.to_string())
                 });
             let _ = tx.send(Msg::TestDone(outcome));
+            if let Some(wake) = waker {
+                wake();
+            }
+        });
+    }
+}
+
+impl App {
+    /// Runs the full setup and test chain against the saved cloud core, streaming rows to the screen.
+    pub fn run_full_tests(&mut self) {
+        if self.diag_running {
+            return;
+        }
+        self.notice = None;
+        let url = self.onboarding.cloud_url().to_owned();
+        let token = match self.store.get(Slot::CloudAccess) {
+            Ok(Some(t)) if !t.is_empty() => t,
+            _ => {
+                self.notice = Some("Save the access secret for your cloud core first.".to_owned());
+                return;
+            }
+        };
+        if url.is_empty() {
+            self.notice = Some("Enter the address of your cloud core first.".to_owned());
+            return;
+        }
+        self.diag_running = true;
+        let tx = self.tx.clone();
+        let waker = self.waker.clone();
+        std::thread::spawn(move || {
+            let transport = UreqTransport::new(&url, &token);
+            run_chain(&transport, env!("CARGO_PKG_VERSION"), 20, |rows| {
+                let _ = tx.send(Msg::DiagRows(rows.to_vec()));
+                if let Some(wake) = &waker {
+                    wake();
+                }
+            });
+            let _ = tx.send(Msg::DiagDone);
             if let Some(wake) = waker {
                 wake();
             }

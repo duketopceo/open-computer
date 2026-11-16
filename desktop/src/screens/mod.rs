@@ -81,6 +81,17 @@ fn footer(s: &App, k: &Kit) -> El {
                     .build(k),
             );
             bar = bar.child(
+                Button::new("Run full tests")
+                    .variant(if s.diag_running {
+                        ButtonVariant::Loading
+                    } else {
+                        ButtonVariant::Ghost
+                    })
+                    .disabled(s.diag_running)
+                    .on_press(|s: &mut App| s.run_full_tests())
+                    .build(k),
+            );
+            bar = bar.child(
                 Button::new("Finish")
                     .variant(ButtonVariant::Submit)
                     .disabled(!s.onboarding.can_advance())

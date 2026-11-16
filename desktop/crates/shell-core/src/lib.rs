@@ -11,5 +11,6 @@
 pub mod checks;
 pub mod core_client;
 pub mod core_process;
+pub mod diagnostics;
 pub mod onboarding;
 pub mod secrets;
