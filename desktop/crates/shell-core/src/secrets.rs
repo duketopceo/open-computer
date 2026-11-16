@@ -69,6 +69,40 @@ pub trait SecretStore: Send + Sync {
     fn is_volatile(&self) -> bool {
         false
     }
+
+    /// Why the keyring cannot be read right now (locked, a prompt dismissed or refused), until [`SecretStore::retry`].
+    fn lock_reason(&self) -> Option<String> {
+        None
+    }
+
+    /// Holds a secret for this session only: in memory, never written to the keyring.
+    fn set_session(&self, slot: Slot, value: &str) -> Result<(), SecretError> {
+        self.set(slot, value)
+    }
+
+    /// Forgets a secret held for this session only (a value from `cloud.json`), without touching the keyring.
+    fn forget_session(&self, _slot: Slot) {}
+
+    /// Forgets that a read failed and what was cached, so the next read asks the keyring again (the Retry button).
+    fn retry(&self) {}
+}
+
+/// Whether a keyring failure means "locked, dismissed or refused" (the person can fix it) rather than a missing service.
+pub fn is_locked_failure(text: &str) -> bool {
+    // Every message starts "Your system keyring refused to <read|save> ...:"; only what follows says why.
+    let why = text.split_once(": ").map_or(text, |(_, rest)| rest);
+    let t = why.to_ascii_lowercase();
+    [
+        "locked",
+        "dismissed",
+        "refused",
+        "no answer",
+        "prompt",
+        "denied",
+        "cancel",
+    ]
+    .iter()
+    .any(|w| t.contains(w))
 }
 
 /// The keyring first; when it cannot be used (locked, no service, a prompt nobody answered) a secret is kept in memory for
@@ -77,6 +111,12 @@ pub trait SecretStore: Send + Sync {
 pub struct ResilientSecrets {
     primary: Box<dyn SecretStore>,
     session: InMemorySecrets,
+    /// What the keyring already gave this session: read once, so one approved prompt is enough.
+    cache: InMemorySecrets,
+    /// Slots the keyring answered "nothing stored" for: asked once, not on every call.
+    missing: Mutex<std::collections::BTreeSet<Slot>>,
+    /// A read failed (locked, dismissed, refused): do not ask again, and so not show another prompt, until Retry.
+    blocked: std::sync::atomic::AtomicBool,
     volatile: std::sync::atomic::AtomicBool,
     failure: Mutex<Option<String>>,
 }
@@ -86,6 +126,9 @@ impl ResilientSecrets {
         Self {
             primary,
             session: InMemorySecrets::new(),
+            cache: InMemorySecrets::new(),
+            missing: Mutex::new(std::collections::BTreeSet::new()),
+            blocked: std::sync::atomic::AtomicBool::new(false),
             volatile: std::sync::atomic::AtomicBool::new(false),
             failure: Mutex::new(None),
         }
@@ -101,6 +144,11 @@ impl SecretStore for ResilientSecrets {
         match self.primary.set(slot, value) {
             Ok(()) => {
                 let _ = self.session.delete(slot);
+                let _ = self.cache.set(slot, value);
+                self.missing
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&slot);
                 self.note(None);
                 Ok(())
             }
@@ -113,6 +161,10 @@ impl SecretStore for ResilientSecrets {
                 self.note(Some(e.0));
                 self.volatile
                     .store(true, std::sync::atomic::Ordering::Relaxed);
+                self.missing
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&slot);
                 self.session.set(slot, value)
             }
         }
@@ -122,6 +174,7 @@ impl SecretStore for ResilientSecrets {
         match self.primary.set(slot, value) {
             Ok(()) => {
                 let _ = self.session.delete(slot);
+                let _ = self.cache.set(slot, value);
                 self.note(None);
                 Ok(())
             }
@@ -133,13 +186,40 @@ impl SecretStore for ResilientSecrets {
     }
 
     fn get(&self, slot: Slot) -> Result<Option<String>, SecretError> {
+        use std::sync::atomic::Ordering;
         if let Ok(Some(v)) = self.session.get(slot) {
             return Ok(Some(v));
         }
+        if let Ok(Some(v)) = self.cache.get(slot) {
+            return Ok(Some(v));
+        }
+        if self.blocked.load(Ordering::Relaxed)
+            || self
+                .missing
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&slot)
+        {
+            return Ok(None);
+        }
         match self.primary.get(slot) {
-            Ok(v) => Ok(v),
+            Ok(Some(v)) => {
+                let _ = self.cache.set(slot, &v);
+                self.note(None);
+                Ok(Some(v))
+            }
+            Ok(None) => {
+                self.missing
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(slot);
+                Ok(None)
+            }
             Err(e) => {
-                crate::log_debug!("keyring", "read of {} failed: {e}", slot.api_name());
+                crate::log_warn!("keyring", "read of {} failed: {e}", slot.api_name());
+                if is_locked_failure(&e.0) {
+                    self.blocked.store(true, Ordering::Relaxed);
+                }
                 self.note(Some(e.0));
                 Ok(None)
             }
@@ -148,7 +228,46 @@ impl SecretStore for ResilientSecrets {
 
     fn delete(&self, slot: Slot) -> Result<(), SecretError> {
         let _ = self.session.delete(slot);
+        let _ = self.cache.delete(slot);
+        self.missing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&slot);
         self.primary.delete(slot)
+    }
+
+    fn lock_reason(&self) -> Option<String> {
+        if self.blocked.load(std::sync::atomic::Ordering::Relaxed) {
+            self.last_failure()
+        } else {
+            None
+        }
+    }
+
+    fn set_session(&self, slot: Slot, value: &str) -> Result<(), SecretError> {
+        self.missing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&slot);
+        self.session.set(slot, value)
+    }
+
+    fn forget_session(&self, slot: Slot) {
+        let _ = self.session.delete(slot);
+    }
+
+    fn retry(&self) {
+        crate::log_info!("keyring", "retry: reading the keyring again");
+        self.blocked
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.note(None);
+        for slot in Slot::ALL {
+            let _ = self.cache.delete(slot);
+        }
+        self.missing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     fn last_failure(&self) -> Option<String> {
@@ -316,6 +435,16 @@ fn refused(verb: &str, slot: Slot, reason: &str) -> SecretError {
     SecretError(words)
 }
 
+/// The banner for a keyring that cannot be read: what it is and the one thing to do.
+pub fn locked_words() -> String {
+    if omaseal_present() {
+        "Your keyring is locked (omaseal). Unlock it: `omaseal agent unlock`, then click Retry"
+            .to_owned()
+    } else {
+        "Your keyring is locked. Unlock it, then click Retry".to_owned()
+    }
+}
+
 fn omaseal_present() -> bool {
     std::env::var_os("HOME")
         .map(|h| std::path::PathBuf::from(h).join(".config/omaseal"))
@@ -477,5 +606,140 @@ mod tests {
         assert!(e.0.starts_with(
             "Your system keyring refused to save the access token: no answer after 8 s."
         ));
+    }
+
+    /// A keyring that counts the reads it is asked for and can be locked, as omaseal is when its unlock has expired.
+    struct Counting {
+        reads: std::sync::atomic::AtomicUsize,
+        locked: std::sync::atomic::AtomicBool,
+        fail_with: &'static str,
+    }
+    impl SecretStore for Counting {
+        fn set(&self, _: Slot, _: &str) -> Result<(), SecretError> {
+            Ok(())
+        }
+        fn get(&self, _: Slot) -> Result<Option<String>, SecretError> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if self.locked.load(std::sync::atomic::Ordering::Relaxed) {
+                Err(SecretError(format!(
+                    "Your system keyring refused to read the access token: {}.",
+                    self.fail_with
+                )))
+            } else {
+                Ok(Some("the-token".into()))
+            }
+        }
+        fn delete(&self, _: Slot) -> Result<(), SecretError> {
+            Ok(())
+        }
+    }
+
+    fn counting(fail_with: &'static str, locked: bool) -> std::sync::Arc<Counting> {
+        std::sync::Arc::new(Counting {
+            reads: std::sync::atomic::AtomicUsize::new(0),
+            locked: std::sync::atomic::AtomicBool::new(locked),
+            fail_with,
+        })
+    }
+
+    struct Shared(std::sync::Arc<Counting>);
+    impl SecretStore for Shared {
+        fn set(&self, s: Slot, v: &str) -> Result<(), SecretError> {
+            self.0.set(s, v)
+        }
+        fn get(&self, s: Slot) -> Result<Option<String>, SecretError> {
+            self.0.get(s)
+        }
+        fn delete(&self, s: Slot) -> Result<(), SecretError> {
+            self.0.delete(s)
+        }
+    }
+
+    #[test]
+    fn the_token_is_read_once_per_session_so_one_approved_prompt_is_enough() {
+        let k = counting("unused", false);
+        let s = ResilientSecrets::new(Box::new(Shared(k.clone())));
+        for _ in 0..50 {
+            assert_eq!(
+                s.get(Slot::CloudAccess).unwrap().as_deref(),
+                Some("the-token")
+            );
+            assert!(s.is_set(Slot::CloudAccess));
+        }
+        assert_eq!(
+            k.reads.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the keyring was asked once"
+        );
+        assert_eq!(s.lock_reason(), None);
+    }
+
+    #[test]
+    fn a_locked_dismissed_or_refused_keyring_is_one_failure_not_a_prompt_per_request_until_retry() {
+        for words in [
+            "SS error: prompt dismissed",
+            "the keyring is locked",
+            "access refused by the user",
+            "no answer after 8 s; the keyring may be locked",
+        ] {
+            let k = counting(words, true);
+            let s = ResilientSecrets::new(Box::new(Shared(k.clone())));
+            for _ in 0..20 {
+                assert_eq!(s.get(Slot::CloudAccess).unwrap(), None);
+            }
+            assert_eq!(
+                k.reads.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "{words}: asked once, not on every call"
+            );
+            assert!(
+                s.lock_reason().unwrap().contains("refused to read"),
+                "{words}"
+            );
+            // The person unlocks it and presses Retry: the next read asks again and succeeds.
+            k.locked.store(false, std::sync::atomic::Ordering::Relaxed);
+            s.retry();
+            assert_eq!(s.lock_reason(), None);
+            assert_eq!(
+                s.get(Slot::CloudAccess).unwrap().as_deref(),
+                Some("the-token"),
+                "{words}"
+            );
+            assert_eq!(k.reads.load(std::sync::atomic::Ordering::Relaxed), 2);
+        }
+    }
+
+    #[test]
+    fn a_failure_that_is_not_about_locking_is_not_latched() {
+        let k = counting("the Secret Service is not running", true);
+        let s = ResilientSecrets::new(Box::new(Shared(k.clone())));
+        s.get(Slot::CloudAccess).unwrap();
+        s.get(Slot::CloudAccess).unwrap();
+        assert_eq!(k.reads.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(s.lock_reason(), None);
+        assert!(
+            is_locked_failure("SS error: prompt dismissed")
+                && !is_locked_failure("no such service")
+        );
+    }
+
+    #[test]
+    fn a_saved_secret_is_served_from_memory_and_a_delete_forgets_it() {
+        let k = counting("unused", false);
+        let s = ResilientSecrets::new(Box::new(Shared(k.clone())));
+        s.set(Slot::ModelKey, "abc").unwrap();
+        assert_eq!(s.get(Slot::ModelKey).unwrap().as_deref(), Some("abc"));
+        assert_eq!(
+            k.reads.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a value this session saved needs no read"
+        );
+        s.delete(Slot::ModelKey).unwrap();
+        assert_eq!(
+            s.get(Slot::ModelKey).unwrap().as_deref(),
+            Some("the-token"),
+            "after a delete the keyring is asked"
+        );
     }
 }

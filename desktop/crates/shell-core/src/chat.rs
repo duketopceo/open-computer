@@ -334,6 +334,9 @@ pub struct Started {
 /// What a 401 from the core is called on screen.
 pub const REFUSED: &str = "The core refused the access token.";
 
+/// No token to send (the keyring could not be read), so nothing was sent.
+pub const NO_TOKEN: &str = "No access token is available to ask the core with.";
+
 /// A task is already running in this conversation (the core's 409 `session_busy`).
 pub const SESSION_BUSY: &str = "A task is still running in this conversation.";
 
@@ -367,6 +370,9 @@ impl Endpoint {
     }
 
     fn json(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
+        if self.token.is_empty() {
+            return Err(NO_TOKEN.to_owned());
+        }
         let agent = Self::agent(Some(Duration::from_secs(30)));
         let url = format!("{}{}", self.base, path);
         let auth = format!("Bearer {}", self.token);
@@ -496,6 +502,9 @@ impl Endpoint {
 
     /// A request to one of the core's own routes with the answer left as text and the response headers kept (names lowercased).
     pub fn raw(&self, method: &str, path: &str) -> Result<RawReply, String> {
+        if self.token.is_empty() {
+            return Err(NO_TOKEN.to_owned());
+        }
         let agent = Self::agent(Some(Duration::from_secs(60)));
         let url = format!("{}{}", self.base, path);
         let auth = format!("Bearer {}", self.token);

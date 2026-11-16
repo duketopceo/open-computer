@@ -556,3 +556,240 @@ fn earlier_conversations_the_core_finished_are_marked_so_none_stays_interrupted(
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---------- a locked keyring ----------
+
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+/// A keyring that can be locked, counting how often it is asked, with the words a locked omaseal gives.
+struct Lockable {
+    locked: Arc<AtomicBool>,
+    reads: Arc<AtomicUsize>,
+    why: &'static str,
+}
+impl SecretStore for Lockable {
+    fn set(&self, _: Slot, _: &str) -> Result<(), SecretError> {
+        Ok(())
+    }
+    fn get(&self, slot: Slot) -> Result<Option<String>, SecretError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        if self.locked.load(Ordering::Relaxed) {
+            return Err(SecretError(format!(
+                "Your system keyring refused to read the access token: {}.",
+                self.why
+            )));
+        }
+        Ok(matches!(slot, Slot::CloudAccess).then(|| "keyring-token".to_owned()))
+    }
+    fn delete(&self, _: Slot) -> Result<(), SecretError> {
+        Ok(())
+    }
+}
+
+fn locked_app(
+    why: &'static str,
+    locked: bool,
+    name: &str,
+) -> (App, Arc<AtomicBool>, Arc<AtomicUsize>, std::path::PathBuf) {
+    let (flag, reads) = (
+        Arc::new(AtomicBool::new(locked)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let store = Arc::new(shell_core::secrets::ResilientSecrets::new(Box::new(
+        Lockable {
+            locked: flag.clone(),
+            reads: reads.clone(),
+            why,
+        },
+    )));
+    let dir = temp_dir(name);
+    let mut app = App::with_store(store);
+    app.config_path = dir.join("desktop.json");
+    app.saved_core_path = dir.join("cloud.json");
+    app.onboarding.set_cloud_url("http://127.0.0.1:9");
+    let mut m = Main::new();
+    m.endpoint = Some(shell_core::chat::Endpoint::new("http://127.0.0.1:9", "old"));
+    app.main = Some(m);
+    (app, flag, reads, dir)
+}
+
+fn write_cloud_json(dir: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let p = dir.join("cloud.json");
+    std::fs::write(
+        &p,
+        format!(r#"{{"url":"http://127.0.0.1:9","token":"{TOKEN}"}}"#),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[test]
+fn a_locked_dismissed_or_refused_keyring_gives_one_clear_banner_with_retry_and_never_a_raw_401() {
+    for why in [
+        "SS error: prompt dismissed",
+        "the keyring is locked",
+        "access refused by the user",
+    ] {
+        let (mut app, _flag, _reads, dir) = locked_app(why, true, "lockedbanner");
+        app.refresh_token();
+        let banner = app
+            .keyring_banner()
+            .unwrap_or_else(|| panic!("{why}: a banner"));
+        assert!(
+            banner.starts_with("Your keyring is locked") && banner.contains("click Retry"),
+            "{banner}"
+        );
+        assert!(!banner.contains("401") && !banner.contains("refused the access token"));
+        let rt = runtime(app);
+        assert!(
+            find(&rt, "keyring-banner")
+                && find(&rt, "keyring-retry")
+                && find(&rt, "keyring-diagnostics"),
+            "{why}"
+        );
+        assert!(has(&rt, "Unlock it") && has(&rt, "Retry"));
+        // A refused token is explained by the banner, not shown as a 401.
+        let mut app = locked_app(why, true, "lockedbanner2").0;
+        app.refresh_token();
+        let shown = app.after_core_error(shell_core::chat::REFUSED);
+        assert!(
+            shown.contains("keyring is locked") && !shown.contains("refused the access token"),
+            "{shown}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn retry_reads_the_keyring_again_and_the_banner_goes_when_it_is_unlocked() {
+    let (mut app, flag, reads, dir) = locked_app("SS error: prompt dismissed", true, "retry");
+    app.refresh_token();
+    assert!(app.keyring_banner().is_some());
+    let asked = reads.load(Ordering::Relaxed);
+    // While locked, nothing asks the keyring again (no prompt per request).
+    for _ in 0..10 {
+        app.refresh_token();
+    }
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        asked,
+        "a failed read is not repeated until Retry"
+    );
+    flag.store(false, Ordering::Relaxed);
+    app.retry_keyring();
+    assert_eq!(app.keyring_banner(), None);
+    assert!(!app.file_fallback);
+    assert!(
+        reads.load(Ordering::Relaxed) > asked,
+        "Retry asked the keyring"
+    );
+    assert_eq!(
+        app.core_check,
+        CoreCheck::Checking,
+        "and the core was asked with the token it gave"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_token_is_read_once_per_session_however_many_times_it_is_needed() {
+    let (mut app, _flag, reads, dir) = locked_app("unused", false, "cache");
+    for _ in 0..25 {
+        app.refresh_token();
+        let _ = app.store.get(Slot::CloudAccess);
+    }
+    assert!(
+        reads.load(Ordering::Relaxed) <= 2,
+        "one read per secret, not one per request: {}",
+        reads.load(Ordering::Relaxed)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_refusal_in_the_middle_of_a_session_reads_the_token_again_at_most_once_a_minute() {
+    let (mut app, _flag, _reads, dir) = locked_app("unused", false, "midsession");
+    assert!(app.last_recheck.is_none());
+    let said = app.after_core_error(shell_core::chat::REFUSED);
+    assert!(said.contains("checked again"), "{said}");
+    assert!(app.last_recheck.is_some());
+    assert_eq!(
+        app.core_check,
+        CoreCheck::Checking,
+        "the same check as at start ran"
+    );
+    // A second refusal within the minute does not start another check.
+    app.core_check = CoreCheck::Unknown;
+    app.after_core_error(shell_core::chat::REFUSED);
+    assert_eq!(app.core_check, CoreCheck::Unknown);
+    // A minute later it does.
+    app.last_recheck = Some(std::time::Instant::now() - std::time::Duration::from_secs(61));
+    app.after_core_error(shell_core::chat::REFUSED);
+    assert_eq!(app.core_check, CoreCheck::Checking);
+    // Other errors pass through untouched and trigger nothing.
+    app.core_check = CoreCheck::Unknown;
+    app.last_recheck = None;
+    assert_eq!(
+        app.after_core_error("The core had an error. Try again."),
+        "The core had an error. Try again."
+    );
+    assert_eq!(app.core_check, CoreCheck::Unknown);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn with_the_keyring_locked_a_private_cloud_json_stands_in_and_the_banner_says_so() {
+    let (mut app, _flag, _reads, dir) = locked_app("SS error: prompt dismissed", true, "fallback");
+    write_cloud_json(&dir, 0o600);
+    app.refresh_token();
+    assert!(app.file_fallback);
+    assert!(
+        app.store.is_set(Slot::CloudAccess),
+        "this session has the token from cloud.json"
+    );
+    let banner = app.keyring_banner().unwrap();
+    assert!(
+        banner.contains("saved in cloud.json") && banner.contains("readable only by you"),
+        "{banner}"
+    );
+    // Unlocking and pressing Retry goes back to the keyring.
+    let (mut app2, flag, _r, dir2) = locked_app("SS error: prompt dismissed", true, "fallback2");
+    write_cloud_json(&dir2, 0o600);
+    app2.refresh_token();
+    flag.store(false, Ordering::Relaxed);
+    app2.retry_keyring();
+    assert!(!app2.file_fallback && app2.keyring_banner().is_none());
+    let _ = (std::fs::remove_dir_all(dir), std::fs::remove_dir_all(dir2));
+}
+
+#[test]
+fn a_cloud_json_that_others_can_read_is_never_used_as_a_stand_in() {
+    for mode in [0o644, 0o640, 0o604] {
+        let (mut app, _flag, _reads, dir) =
+            locked_app("SS error: prompt dismissed", true, "worldreadable");
+        write_cloud_json(&dir, mode);
+        assert!(!app.file_fallback_allowed(), "{mode:o}");
+        app.refresh_token();
+        assert!(
+            !app.file_fallback && !app.store.is_set(Slot::CloudAccess),
+            "{mode:o}"
+        );
+        assert!(app.keyring_banner().unwrap().contains("click Retry"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn an_endpoint_without_a_token_sends_nothing_and_says_why() {
+    let ep = shell_core::chat::Endpoint::new("http://127.0.0.1:9", "");
+    assert_eq!(ep.bindings().unwrap_err(), shell_core::chat::NO_TOKEN);
+    assert_eq!(
+        ep.get("/v1/health").unwrap_err(),
+        shell_core::chat::NO_TOKEN
+    );
+    assert_eq!(
+        ep.raw("GET", "/v1/audit/export").unwrap_err(),
+        shell_core::chat::NO_TOKEN
+    );
+}

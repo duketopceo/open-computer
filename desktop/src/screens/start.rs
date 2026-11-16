@@ -301,6 +301,9 @@ pub fn view(s: &App, k: &Kit) -> El {
                 .wrap(),
         );
     }
+    if let Some(banner) = super::keyring_banner(s, k) {
+        two = two.child(banner);
+    }
     if let Some(p) = &s.keyring_problem {
         two = two.child(
             text(p.clone())

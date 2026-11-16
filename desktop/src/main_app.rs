@@ -352,7 +352,11 @@ impl App {
         self.onboarding.set_cloud_url(saved.cloud_url.clone());
         self.cloud_url.replace_text(&saved.cloud_url);
         let mut secrets = self.onboarding.secrets_set();
-        if !saved.local_only && !secrets.cloud_access && saved.file_token_ok {
+        if !saved.local_only
+            && !secrets.cloud_access
+            && (saved.file_token_ok || self.file_fallback_allowed())
+        {
+            self.file_fallback = true;
             // The keyring would not hold the token and the person agreed to use the saved connection file instead.
             if let Some(core) =
                 shell_core::autoconnect::read_saved_core(&self.saved_core_path.clone())
@@ -392,7 +396,14 @@ impl App {
         }
         self.detect_harnesses();
         let url = self.onboarding.cloud_url().to_owned();
-        match self.store.get(Slot::CloudAccess) {
+        let mut got = self.store.get(Slot::CloudAccess);
+        if matches!(&got, Ok(None))
+            && self.store.lock_reason().is_some()
+            && self.use_file_fallback()
+        {
+            got = self.store.get(Slot::CloudAccess);
+        }
+        match got {
             Ok(Some(t)) if !t.is_empty() && !url.is_empty() => {
                 if let Some(m) = self.main.as_mut() {
                     m.endpoint = Some(Endpoint::new(&url, &t));

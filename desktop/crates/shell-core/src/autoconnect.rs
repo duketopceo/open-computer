@@ -143,6 +143,20 @@ pub fn adopt_saved_core(core: SavedCore, store: &dyn SecretStore) -> Result<Stri
     }
 }
 
+/// Whether only the owner can read the file (mode 0600 or tighter). False for a missing file, and everywhere but Unix.
+pub fn file_is_private(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o077 == 0)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 /// A 401 with the token the keyring holds: does the saved connection file name the same core with a different token? Compares
 /// without showing either token. False when the file is missing, unusable, for another core, or holds the same token.
 pub fn saved_token_differs(path: &Path, url: &str, current_token: &str) -> bool {
@@ -157,7 +171,9 @@ pub const REFUSED_SAVED: &str =
 impl SavedCore {
     /// Takes the token for this session only (never the keyring): used when the person agrees to use the saved file instead.
     pub fn use_for_session(self, store: &dyn SecretStore) -> Result<String, String> {
-        store.set(Slot::CloudAccess, &self.token).map_err(|e| e.0)?;
+        store
+            .set_session(Slot::CloudAccess, &self.token)
+            .map_err(|e| e.0)?;
         crate::log_info!(
             "connect",
             "using the saved token for this session for {}",
