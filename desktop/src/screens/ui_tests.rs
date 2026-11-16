@@ -365,28 +365,30 @@ fn frame_view(s: &App, cx: &mut Cx<App>) -> El {
         .child(col().key("content").w_full().h_full().padding(24.0))
 }
 
+/// The wake interval the glows run at (the test steps the clock by this much per wake).
+const WAKE: f64 = 0.25;
+
 fn timed(ambient: bool) -> (Runtime<App>, std::time::Duration) {
     let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
     app.ambient = ambient;
     let mut rt = Runtime::new(app, frame_view, (1440.0, 900.0), Env::new(true, 1.0));
     rt.frame(0.0);
     let start = Instant::now();
-    // A tenth of a second apart: the wake rate while the glows move.
     for i in 1..=100 {
-        rt.frame(f64::from(i) * 0.1);
+        rt.frame(f64::from(i) * WAKE);
     }
     let took = start.elapsed();
     (rt, took)
 }
 
 #[test]
-fn the_background_drifts_by_waking_about_ten_times_a_second_not_every_display_frame_and_holds_still_when_off()
+fn the_background_drifts_by_waking_about_four_times_a_second_not_every_display_frame_and_holds_still_when_off()
  {
     let (moving, _) = timed(true);
     let wake = moving.ambient.expect("the glows ask for wakes");
     assert!(
-        (wake - 0.1).abs() < 0.02,
-        "about ten wakes a second, not one per display frame: {wake}"
+        (wake - 0.25).abs() < 0.03,
+        "about four wakes a second, not one per display frame: {wake}"
     );
     let (still, _) = timed(false);
     assert!(
@@ -430,19 +432,43 @@ fn reduced_motion_holds_one_still_frame_with_no_wakes() {
     assert_eq!(rt.wake_deadline(), None, "no wakes under reduced motion");
 }
 
-/// Idle cost of the background on the CPU side: what the glows add to each wake (view, layout, paint build), at the real wake rate.
-/// GPU time is not measured here (there is no window); the glows are three full-window gradients.
+/// What a wake costs, counted rather than only timed (a count means the same on every machine): a wake re-runs no view or
+/// layout, and paints a handful of shapes.
+#[test]
+fn a_wake_repaints_the_glows_only_with_no_view_or_layout_work() {
+    let (mut moving, _) = timed(true);
+    let (still, _) = timed(false);
+    let commits = moving.stats.commits;
+    for i in 101..=140 {
+        moving.frame(f64::from(i) * WAKE);
+    }
+    assert_eq!(
+        moving.stats.commits, commits,
+        "wakes run no view and no layout: the glows are loops"
+    );
+    assert_eq!(still.stats.commits, 1, "off: the view ran once");
+    let extra = moving.instances.len().abs_diff(still.instances.len());
+    assert!(
+        extra <= 8,
+        "the background paints a few shapes, not a scene: {extra} more than off"
+    );
+}
+
+/// Idle cost of the background on the CPU side: what the glows add to each wake, at the real wake rate. The layer's cost is
+/// mostly fixed per wake (about 1.2 ms in a debug build with one glow, 1.6 ms with three), so the saving is in the wake rate: four
+/// a second, not ten. GPU time is not measured here (there is no window).
 #[test]
 fn the_background_adds_well_under_two_percent_of_one_core_while_idle() {
     let fastest = |on: bool| (0..5).map(|_| timed(on).1).min().unwrap_or_default();
     let (with, without) = (fastest(true), fastest(false));
     let per_wake_extra = with.saturating_sub(without).as_secs_f64() / 100.0;
-    let share = per_wake_extra * 10.0;
+    let share = per_wake_extra / WAKE;
     eprintln!(
-        "ambient: {:.3} ms per wake with, {:.3} ms without; extra {:.3} ms x 10 wakes/s = {:.2} percent of one core (debug build)",
+        "ambient: {:.3} ms per wake with, {:.3} ms without; extra {:.3} ms x {} wakes/s = {:.2} percent of one core (debug build)",
         with.as_secs_f64() * 10.0,
         without.as_secs_f64() * 10.0,
         per_wake_extra * 1000.0,
+        1.0 / WAKE,
         share * 100.0
     );
     assert!(

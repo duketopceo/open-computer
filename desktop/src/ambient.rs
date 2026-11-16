@@ -3,7 +3,7 @@
 //! Three large radial glows sit at different places and each breathes in and out on its own slow clock (23, 31 and 37 seconds, out
 //! of step), so the light seems to wander without anything moving across the screen. Two are ink (white on dark, black on light)
 //! and one carries a faint hint of the accent. The strongest any glow gets is a few percent, so text keeps its contrast; the app
-//! checks that in a test. The glows are Rune cycles: the window wakes about ten times a second for them and sleeps in between,
+//! checks that in a test. The glows are Rune cycles: the window wakes about four times a second for them and sleeps in between,
 //! stops entirely when hidden, and holds one still frame when the system asks for reduced motion.
 
 use rune::{Color, Cycle, El, el};
@@ -15,8 +15,9 @@ pub const INK_ALPHA: f32 = 0.038;
 pub const INK_ALPHA_LIGHT: f32 = 0.018;
 pub const ACCENT_ALPHA: f32 = 0.025;
 
-/// Wakes per second while a glow is moving. Slow drifts do not need more; each wake repaints the window.
-const FPS: f32 = 10.0;
+/// Wakes per second while a glow is moving. The glows change over 23 to 37 seconds, so four a second is smooth; every wake costs
+/// a fixed slice of CPU for the layer (about 1.2 ms in a debug build, whatever the number of glows), so fewer wakes is the saving.
+const FPS: f32 = 4.0;
 
 const STOPS: &[(f32, f32)] = &[(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)];
 
