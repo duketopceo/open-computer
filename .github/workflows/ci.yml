@@ -107,6 +107,8 @@ jobs:
       - name: cloud bundle dry run (never a real deploy)
         working-directory: core
         run: pnpm --filter @open-computer/cloud exec wrangler deploy --dry-run --outdir dist
+      - name: core startup stays inside its budget (a deploy is refused when startup is too slow)
+        run: bash scripts/check-core-startup.sh
       - name: event schema file is up to date
         working-directory: core/packages/agent-core
         run: node scripts/gen-schema.ts --check

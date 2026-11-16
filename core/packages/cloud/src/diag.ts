@@ -64,7 +64,7 @@ async function keyInfo(env: Env, deps: DiagDeps): Promise<Response> {
     throw e;
   }
   const now = deps.now ?? (() => performance.now());
-  const sdk = openRouterSdk(key, deps.fetch);
+  const sdk = (await openRouterSdk(key, deps.fetch));
   const t0 = now();
   try {
     const res = await sdk.apiKeys.getCurrentKeyMetadata();
@@ -103,7 +103,7 @@ async function models(env: Env, deps: DiagDeps): Promise<Response> {
     } catch {
       key = "";
     }
-    const sdk = openRouterSdk(key, deps.fetch);
+    const sdk = (await openRouterSdk(key, deps.fetch));
     const found = new Map<string, { tools: boolean; reasoning: boolean }>();
     for await (const page of await sdk.models.list()) {
       for (const m of page.result.data) {

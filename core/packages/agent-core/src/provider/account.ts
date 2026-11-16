@@ -1,5 +1,4 @@
-import { OpenRouter } from "@openrouter/sdk";
-import { HTTPClient } from "@openrouter/sdk/lib/http.js";
+import type { OpenRouter } from "@openrouter/sdk";
 import { OPENROUTER_BASE_URL } from "./openrouter.ts";
 import type { FetchLike } from "./types.ts";
 import { recentGenerations } from "../audit/generations.ts";
@@ -10,8 +9,13 @@ import type { AuditRecord } from "../audit/log.ts";
  * lookup and the OAuth PKCE code exchange. The chat stream stays on the raw client in `openrouter.ts` on purpose: the
  * SDK re-validates every streamed object against its schema and drops fields it does not know, and reasoning blocks must
  * be replayed to the provider exactly as received.
+ *
+ * The SDK is imported inside this function, not at the top of the file: it builds hundreds of schema objects when it loads,
+ * which was most of the core's startup time, and a deploy is refused when startup takes too long. Only the account routes
+ * need it, and they pay for it on first use.
  */
-export function openRouterSdk(apiKey: string, fetchImpl: FetchLike, serverURL?: string): OpenRouter {
+export async function openRouterSdk(apiKey: string, fetchImpl: FetchLike, serverURL?: string): Promise<OpenRouter> {
+  const [{ OpenRouter }, { HTTPClient }] = await Promise.all([import("@openrouter/sdk/sdk/sdk.js"), import("@openrouter/sdk/lib/http.js")]);
   const httpClient = new HTTPClient({
     // The SDK passes a Request object with no init, so method, headers and body must be carried over explicitly.
     fetcher: async (input, init) => {
@@ -99,7 +103,7 @@ const keyBody = (d: Record<string, unknown>) => ({
 /** `GET /v1/openrouter/key`: usage and limit of the stored key. The key itself is never returned. */
 export async function accountKey(c: AccountContext): Promise<AccountReply> {
   try {
-    const d = (await openRouterSdk(c.apiKey, c.fetch, c.serverURL).apiKeys.getCurrentKeyMetadata()).data;
+    const d = (await (await openRouterSdk(c.apiKey, c.fetch, c.serverURL)).apiKeys.getCurrentKeyMetadata()).data;
     return { status: 200, body: keyBody(d as unknown as Record<string, unknown>) };
   } catch (e) {
     if (!isValidationError(e)) return fail(e);
@@ -117,7 +121,7 @@ export async function accountCredits(c: AccountContext): Promise<AccountReply> {
   // rejected key, so say plainly that credits need a management key and let the key's own usage and limit speak.
   const needsManagement: AccountReply = { status: 200, body: { available: false, reason: "management_key_required" } };
   try {
-    const d = (await openRouterSdk(c.apiKey, c.fetch, c.serverURL).credits.getCredits()).data;
+    const d = (await (await openRouterSdk(c.apiKey, c.fetch, c.serverURL)).credits.getCredits()).data;
     return { status: 200, body: { available: true, total: num(d.totalCredits) ?? 0, used: num(d.totalUsage) ?? 0 } };
   } catch (e) {
     if (sdkStatus(e) === 403) return needsManagement;
@@ -134,7 +138,7 @@ export async function accountCredits(c: AccountContext): Promise<AccountReply> {
 /** `GET /v1/openrouter/models`: every model with its price in dollars per million tokens. */
 export async function accountModels(c: AccountContext): Promise<AccountReply> {
   try {
-    const sdk = openRouterSdk(c.apiKey, c.fetch, c.serverURL);
+    const sdk = (await openRouterSdk(c.apiKey, c.fetch, c.serverURL));
     const models: Array<Record<string, unknown>> = [];
     for await (const page of await sdk.models.list()) {
       for (const m of page.result.data) {
@@ -179,7 +183,7 @@ export async function accountModels(c: AccountContext): Promise<AccountReply> {
 /** `GET /v1/openrouter/generations`: the recent model calls the core made, each looked up for cost, tokens and latency. */
 export async function accountGenerations(c: AccountContext, limit = 5): Promise<AccountReply> {
   const recent = c.audit ? recentGenerations(await c.audit(), 5, limit) : [];
-  const sdk = openRouterSdk(c.apiKey, c.fetch, c.serverURL);
+  const sdk = (await openRouterSdk(c.apiKey, c.fetch, c.serverURL));
   const generations: Array<Record<string, unknown>> = [];
   for (const g of recent) {
     try {
@@ -223,7 +227,7 @@ export async function accountGenerations(c: AccountContext, limit = 5): Promise<
 /** The OAuth PKCE code exchange through the SDK. Returns the new key, or null. */
 export async function exchangeAuthCode(c: Omit<AccountContext, "apiKey">, code: string, verifier: string): Promise<string | null> {
   try {
-    const res = await openRouterSdk("", c.fetch, c.serverURL).oAuth.exchangeAuthCodeForAPIKey({
+    const res = await (await openRouterSdk("", c.fetch, c.serverURL)).oAuth.exchangeAuthCodeForAPIKey({
       requestBody: { code, codeVerifier: verifier, codeChallengeMethod: "S256" },
     });
     return res.key || null;
