@@ -1,0 +1,21 @@
+
+ ⛅️ wrangler 4.162.0 (update available 4.163.0)
+───────────────────────────────────────────────
+
+Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
+
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mThe Docker CLI is needed to build the configured image before deploying (even in dry-run mode) but could not be launched.[0m
+
+  To fix this, try the following:
+    - If Docker is not installed, download it from [4mhttps://docs.docker.com/get-started/get-docker/[0m
+    - If Docker is installed but the daemon is not running,
+      run `sudo systemctl start docker`.
+    - If you use an alternative Docker-compatible CLI (e.g. Podman),
+      set the WRANGLER_DOCKER_BIN environment variable to its path and DOCKER_HOST to its socket.
+  
+  Note: Other container tooling that is compatible with the Docker CLI and engine may work, but is not yet guaranteed to do so.
+  
+  If you cannot run Docker locally, use a prebuilt registry image instead of a Dockerfile path for the affected Durable Object-managed Container images.
+
+
+🪵  Logs were written to "/home/user/.wrangler/logs/wrangler-2026-11-16_15-16-12_490.log"

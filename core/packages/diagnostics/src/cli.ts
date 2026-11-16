@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createControlPlane, readState, wranglerRunner } from "./control.ts";
+import { createControlPlane, readState, withFallback, wranglerRunner } from "./control.ts";
 import { updateCore } from "./update.ts";
 import { ensureAccess, ensureGateway } from "./admin.ts";
 import { NOT_AVAILABLE_BY_OAUTH, parseWhoami, signInArgs } from "./signin.ts";
@@ -101,7 +101,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;
   const state = readState();
-  const control = cmd === "setup" ? createControlPlane({ run: wranglerRunner(cloudDir), cloudDir, ...(process.env.OC_AI_GATEWAY_ID ? { gatewayId: process.env.OC_AI_GATEWAY_ID } : {}), modelKey: () => process.env.OC_OPENROUTER_KEY, extraKeys: extraKeysFromEnv }) : undefined;
+  const control = cmd === "setup" ? createControlPlane({ run: wranglerRunner(cloudDir), deployRun: withFallback(wranglerRunner(cloudDir, ["pnpm", "exec", "wrangler"]), wranglerRunner(cloudDir)), cloudDir, ...(process.env.OC_AI_GATEWAY_ID ? { gatewayId: process.env.OC_AI_GATEWAY_ID } : {}), modelKey: () => process.env.OC_OPENROUTER_KEY, extraKeys: extraKeysFromEnv }) : undefined;
 
   const ctx: Ctx = {
     baseUrl: flag(args, "url") ?? process.env.OC_CLOUD_URL ?? state.url ?? "",
