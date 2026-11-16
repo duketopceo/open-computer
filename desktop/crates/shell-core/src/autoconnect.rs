@@ -145,6 +145,20 @@ impl fmt::Debug for FoundCore {
 }
 
 impl FoundCore {
+    pub fn new(
+        name: impl Into<String>,
+        account: impl Into<String>,
+        url: impl Into<String>,
+        account_id: impl Into<String>,
+    ) -> FoundCore {
+        FoundCore {
+            name: name.into(),
+            account: account.into(),
+            url: url.into(),
+            account_id: account_id.into(),
+        }
+    }
+
     pub fn account_id(&self) -> &str {
         &self.account_id
     }

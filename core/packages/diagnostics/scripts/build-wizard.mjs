@@ -51,6 +51,7 @@ const html = `<!doctype html>
 <label for="token">Access token</label>
 <input id="token" type="password" autocomplete="off" spellcheck="false">
 <div class="actions"><button id="run" type="button">Run tests</button><button id="export" class="secondary" type="button" hidden>Export results JSON</button><span id="status" role="status"></span></div>
+<div class="progress" role="progressbar" aria-label="Test progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="bar"></div></div>
 </section>
 <nav class="tabs" aria-label="Sections"><button id="tab-tests" class="tab on" type="button">Tests</button><button id="tab-chat" class="tab" type="button">Chat</button><button id="tab-settings" class="tab" type="button">Settings</button></nav>
 <div id="view-tests"><ol id="rows" aria-live="polite"></ol>

@@ -1,16 +1,17 @@
-//! Add a model key (an OpenRouter key by default). The screen shows only whether a key is
-//! set; the Test connection step is the test button.
+//! OpenRouter (pays for the AI models). One button connects it: the browser opens OpenRouter, the person clicks Authorize, and
+//! the key goes to the system keyring. A core that already holds a key skips this step. Pasting a key lives under Advanced.
 
-use rune::{El, col, row};
+use rune::{El, col, row, text};
 use rune_kit::{Badge, BadgeVariant, Field, Kit, TextInput};
 
-use super::caption;
+use super::{accent_button, caption};
 use crate::app::App;
 
-pub fn view(s: &App, k: &Kit) -> El {
+/// The pasted-key field and its status, shown only under Advanced.
+pub fn paste(s: &App, k: &Kit) -> El {
     let key_set = s.onboarding.secrets_set().model_key;
     let field = Field::new()
-        .label("Model key")
+        .label("OpenRouter key (if you cannot use the button)")
         .control(
             TextInput::new(&s.model_key)
                 .secure()
@@ -23,25 +24,50 @@ pub fn view(s: &App, k: &Kit) -> El {
                 .build(k),
         )
         .build(k);
+    col().key("paste-key").gap(8.0).w_full().child(field).child(
+        row().child(
+            Badge::new(if key_set { "Key set" } else { "Key not set" })
+                .variant(if key_set {
+                    BadgeVariant::Accent
+                } else {
+                    BadgeVariant::Neutral
+                })
+                .build(k),
+        ),
+    )
+}
 
-    col()
-        .key("model-key")
-        .gap(16.0)
-        .w_full()
-        .child(caption(
+pub fn view(s: &App, k: &Kit) -> El {
+    let key_set = s.onboarding.secrets_set().model_key;
+    let mut page = col().key("model-key").gap(16.0).w_full();
+    if s.core_has_model_key {
+        return page.child(caption(k, "Your core already has an OpenRouter key."));
+    }
+    page = page.child(caption(k, "OpenRouter pays for the AI models. Your browser opens OpenRouter, you click Authorize, and the key is saved in your system keyring. It is never shown."));
+    if key_set {
+        page = page.child(
+            text("OpenRouter is connected.".to_owned())
+                .font(k.ty.ui)
+                .color(k.c.text_base),
+        );
+    } else {
+        page = page.child(accent_button(
             k,
-            "Your key is stored in your system keyring and is never shown again.",
-        ))
-        .child(field)
-        .child(
-            row().child(
-                Badge::new(if key_set { "Key set" } else { "Key not set" })
-                    .variant(if key_set {
-                        BadgeVariant::Accent
-                    } else {
-                        BadgeVariant::Neutral
-                    })
-                    .build(k),
-            ),
-        )
+            "connect-openrouter",
+            if s.or_busy {
+                "Working…"
+            } else {
+                "Connect OpenRouter"
+            },
+            !s.or_busy,
+            |s: &mut App| s.connect_openrouter(),
+        ));
+    }
+    if let Some(l) = &s.or_line {
+        page = page.child(text(l.clone()).font(k.ty.ui).color(k.c.text_base).w_full());
+    }
+    if s.show_advanced {
+        page = page.child(paste(s, k));
+    }
+    page
 }

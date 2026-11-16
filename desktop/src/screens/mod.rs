@@ -5,6 +5,7 @@ pub(crate) mod integrations;
 mod main_view;
 mod memory;
 mod model_key;
+mod start;
 mod test_connection;
 
 use rune::{Cx, El, ScrollSpec, col, row, text};
@@ -29,7 +30,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         );
     }
     let (position, body) = match s.onboarding.step() {
-        Step::Connect => (1, connect::view(s, k)),
+        Step::Connect => (1, start::view(s, k)),
         Step::ModelKey => (2, model_key::view(s, k)),
         Step::Memory => (3, memory::view(s, k)),
         Step::Test | Step::Done => (4, test_connection::view(s, k)),
@@ -37,12 +38,15 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     let step = s.onboarding.step();
 
     // Fixed header, a body that scrolls and fills the window, fixed footer: the window size never cuts content off.
-    let mut head = col().key("head").w_full().gap(8.0).child(
-        text(format!("Step {position} of 4"))
-            .key("position")
-            .font(k.ty.caption())
-            .color(k.c.text_muted),
-    );
+    let mut head = col().key("head").w_full().gap(8.0);
+    if step != Step::Connect {
+        head = head.child(
+            text(format!("Step {position} of 4"))
+                .key("position")
+                .font(k.ty.caption())
+                .color(k.c.text_muted),
+        );
+    }
     head = head.child(
         text(step.title())
             .key("title")
@@ -91,8 +95,39 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     )
 }
 
+/// The accent button: the one thing to do now on a screen. Black text on the gradient, in both appearances.
+pub(crate) fn accent_button(
+    k: &Kit,
+    key: &'static str,
+    label: &str,
+    enabled: bool,
+    on_press: impl Fn(&mut App) + 'static,
+) -> El {
+    let mut b = row()
+        .key(key)
+        .role("button")
+        .label(label.to_owned())
+        .focusable(enabled)
+        .center_y()
+        .padding(10.0)
+        .radius(8.0)
+        .child(
+            text(label.to_owned())
+                .font(k.ty.ui_medium)
+                .color(crate::theme::on_accent()),
+        );
+    b = crate::theme::accent_fill(b);
+    if enabled {
+        b = b.on_press(on_press);
+    }
+    b
+}
+
 fn footer(s: &App, k: &Kit) -> El {
     let step = s.onboarding.step();
+    if step == Step::Connect && !s.show_advanced {
+        return row().key("footer");
+    }
     let mut bar = row().key("footer").gap(8.0).center_y();
     if step != Step::Connect {
         bar = bar.child(
@@ -160,6 +195,9 @@ fn caption(k: &Kit, words: impl Into<String>) -> El {
         .font(k.ty.caption())
         .color(k.c.text_muted)
 }
+
+#[cfg(test)]
+mod start_tests;
 
 #[cfg(test)]
 mod tests {

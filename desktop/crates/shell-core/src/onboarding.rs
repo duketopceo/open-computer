@@ -34,8 +34,8 @@ pub enum Step {
 impl Step {
     pub fn title(self) -> &'static str {
         match self {
-            Step::Connect => "Connect Cloudflare",
-            Step::ModelKey => "Add a model key",
+            Step::Connect => "Get started",
+            Step::ModelKey => "OpenRouter (pays for the AI models)",
             Step::Memory => "Memory",
             Step::Test => "Test connection",
             Step::Done => "All set",

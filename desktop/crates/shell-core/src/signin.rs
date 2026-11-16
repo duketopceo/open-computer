@@ -207,7 +207,7 @@ pub fn locate_wrangler_with(
     }
 }
 
-fn is_executable_file(p: &std::path::Path) -> bool {
+pub fn is_executable_file(p: &std::path::Path) -> bool {
     let Ok(m) = std::fs::metadata(p) else {
         return false;
     };
@@ -872,6 +872,60 @@ mod tests {
                 .starts_with("Downloading Wrangler with npx")
         );
         assert!(env.describe(None).contains("OC_WRANGLER"));
+    }
+
+    #[test]
+    fn a_minimal_menu_path_still_finds_wrangler_and_npx_in_the_mise_shims_and_local_bin() {
+        let on = |files: &'static [&'static str]| {
+            move |p: &std::path::Path| files.contains(&p.to_string_lossy().as_ref())
+        };
+        let home = std::path::PathBuf::from("/home/u");
+        let extras = extra_dirs(Some(&home));
+        assert_eq!(
+            extras,
+            [
+                std::path::PathBuf::from("/home/u/.local/share/mise/shims"),
+                std::path::PathBuf::from("/home/u/.local/bin")
+            ]
+        );
+        let path = std::ffi::OsString::from("/usr/bin:/bin");
+        // Not on the menu's PATH, but in the mise shims.
+        let shim = locate_wrangler_with(
+            None,
+            Some(&path),
+            &extras,
+            &on(&["/home/u/.local/share/mise/shims/wrangler"]),
+        );
+        assert_eq!(shim.cmd, ["/home/u/.local/share/mise/shims/wrangler"]);
+        // Only npx exists (in ~/.local/bin): the download fallback uses its full path.
+        let npx =
+            locate_wrangler_with(None, Some(&path), &extras, &on(&["/home/u/.local/bin/npx"]));
+        assert_eq!(npx.cmd, ["/home/u/.local/bin/npx", "--yes", "wrangler@4"]);
+        // The PATH still wins over the extras, and OC_WRANGLER over both.
+        let both = locate_wrangler_with(
+            None,
+            Some(&path),
+            &extras,
+            &on(&["/usr/bin/wrangler", "/home/u/.local/bin/wrangler"]),
+        );
+        assert_eq!(both.cmd, ["/usr/bin/wrangler"]);
+        assert_eq!(
+            locate_wrangler_with(Some("mise x wrangler"), Some(&path), &extras, &on(&[])).how,
+            Found::Env
+        );
+        assert!(find_program("oc", Some(&path), &extras, &on(&[])).is_none());
+    }
+
+    #[test]
+    fn children_get_a_path_that_includes_the_extra_directories() {
+        let p = child_path();
+        let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&p).collect();
+        if let Some(h) = home_dir() {
+            assert!(
+                dirs.contains(&h.join(".local/bin"))
+                    && dirs.contains(&h.join(".local/share/mise/shims"))
+            );
+        }
     }
 
     #[test]

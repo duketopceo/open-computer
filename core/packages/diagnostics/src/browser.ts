@@ -25,6 +25,14 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 const ICON: Record<string, string> = { pass: "✓", fail: "✕", skip: "–", pending: "·" };
 
 function render(rows: Row[], list: HTMLElement): void {
+  // The progress bar fills as rows settle.
+  const done = rows.filter((r) => r.status === "pass" || r.status === "fail" || r.status === "skip").length;
+  const pct = rows.length ? Math.round((done / rows.length) * 100) : 0;
+  const bar = document.getElementById("bar");
+  if (bar) {
+    bar.style.width = `${pct}%`;
+    bar.parentElement?.setAttribute("aria-valuenow", String(pct));
+  }
   list.textContent = "";
   let group = "";
   for (const r of rows) {
