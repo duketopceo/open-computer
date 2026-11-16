@@ -125,6 +125,15 @@ impl Callback {
                     let _ = s.set_nonblocking(false);
                     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
                     if let Some(code) = read_callback(&mut s) {
+                        // Cancel during the read must not return a code or exchange it.
+                        if self.cancel.load(Ordering::Relaxed) {
+                            reply(
+                                &mut s,
+                                200,
+                                "The sign-in was cancelled. You can close this tab.",
+                            );
+                            return Err(CANCELLED.to_owned());
+                        }
                         reply(
                             &mut s,
                             200,
@@ -746,6 +755,26 @@ mod tests {
         assert_eq!(e, CANCELLED);
         // The listener is dropped when the wait returns, so the port can be bound again.
         assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
+    }
+
+    #[test]
+    fn a_callback_that_arrives_after_cancel_is_not_accepted() {
+        let cb = Callback::bind().unwrap();
+        let port = cb.port;
+        let flag = cb.cancel_flag();
+        flag.store(true, Ordering::Relaxed);
+        let handle = std::thread::spawn(move || cb.wait_for_code(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(50));
+        if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+            let _ = write!(
+                s,
+                "GET /callback?code=should-not-be-used HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            );
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+        }
+        let e = handle.join().expect("wait thread").unwrap_err();
+        assert_eq!(e, CANCELLED);
     }
 
     #[test]
