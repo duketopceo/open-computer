@@ -44,8 +44,12 @@ impl Harness {
             Harness::BuiltIn => {
                 "Open Computer's own loop, with its approvals, sandbox and spend caps. The default."
             }
-            Harness::Hermes => "NousResearch hermes-agent, run on this computer as a subprocess.",
-            Harness::OpenCode => "The OpenCode coding agent, run on this computer as a subprocess.",
+            Harness::Hermes => {
+                "NousResearch hermes-agent in one-shot mode, run on this computer. One-shot mode approves its own tool use automatically."
+            }
+            Harness::OpenCode => {
+                "The OpenCode coding agent, run on this computer. Tool use it would have to ask about is refused, because nothing can answer it here."
+            }
         }
     }
 
@@ -205,6 +209,8 @@ impl Adapter for HermesAdapter {
 #[derive(Default)]
 pub struct OpenCodeAdapter {
     text_open: bool,
+    /// OpenCode reports a failed model call as an `error` event and still exits 0.
+    errored: bool,
 }
 
 impl Adapter for OpenCodeAdapter {
@@ -250,14 +256,74 @@ impl Adapter for OpenCodeAdapter {
                 }
                 out
             }
-            "error" => vec![
-                json!({"type": "error", "message": v.get("error").map(|e| e.to_string()).unwrap_or_else(|| "The agent reported an error.".to_owned())}),
-            ],
+            "error" => {
+                self.errored = true;
+                let e = v.get("error").unwrap_or(&Value::Null);
+                let words = e
+                    .pointer("/data/message")
+                    .or_else(|| e.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("The agent reported an error.");
+                vec![json!({"type": "error", "message": words})]
+            }
             _ => Vec::new(),
         }
     }
     fn finish(&mut self, ok: bool) -> Vec<Value> {
-        finished(ok, self.text_open)
+        finished(ok && !self.errored, self.text_open)
+    }
+}
+
+/// Every process started by `root`, children before parents (from `ps`, so it works on Linux and macOS).
+fn descendants(root: u32) -> Vec<u32> {
+    let Ok(out) = Command::new("ps").args(["-e", "-o", "pid=,ppid="]).output() else {
+        return Vec::new();
+    };
+    let pairs: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        })
+        .collect();
+    let mut found = vec![root];
+    let mut i = 0;
+    while i < found.len() {
+        let parent = found[i];
+        for (pid, ppid) in &pairs {
+            if *ppid == parent && !found.contains(pid) {
+                found.push(*pid);
+            }
+        }
+        i += 1;
+    }
+    found.reverse();
+    found
+}
+
+/// Stops a harness and everything it started. Real agents start helper processes and some move to a process group of
+/// their own, so a group signal alone misses them; this walks the whole tree, asks politely, then forces.
+fn kill_tree(root: u32) {
+    #[cfg(unix)]
+    {
+        let tree = descendants(root);
+        let send = |signal: &str| {
+            for pid in &tree {
+                let _ = Command::new("kill")
+                    .args([signal, &pid.to_string()])
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        };
+        send("-TERM");
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        send("-KILL");
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &root.to_string(), "/T", "/F"])
+            .status();
     }
 }
 
@@ -294,7 +360,7 @@ pub fn run_task(
     let watcher = std::thread::spawn(move || {
         while !watch_done.load(Ordering::Relaxed) {
             if watch_cancel.load(Ordering::Relaxed) {
-                let _ = Command::new("kill").arg(id.to_string()).status();
+                kill_tree(id);
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -443,6 +509,23 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("could not be started"));
+    }
+
+    #[test]
+    fn a_real_opencode_error_event_fails_the_run_with_its_message_even_when_the_exit_is_zero() {
+        let mut a = OpenCodeAdapter::default();
+        let mut chat = Chat::default();
+        chat.push_user("hi");
+        let line = r#"{"type":"error","timestamp":1,"sessionID":"s","error":{"name":"APIError","data":{"message":"Cannot connect to API: ECONNREFUSED","isRetryable":true}}}"#;
+        for e in a.map_line(line).into_iter().chain(a.finish(true)) {
+            chat.apply(&e);
+        }
+        assert_eq!(chat.status, "failed");
+        assert!(
+            chat.items
+                .iter()
+                .any(|i| matches!(i, Item::Note(n) if n == "Cannot connect to API: ECONNREFUSED"))
+        );
     }
 
     struct Sleeper;

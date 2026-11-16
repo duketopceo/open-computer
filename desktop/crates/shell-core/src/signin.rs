@@ -202,7 +202,7 @@ fn run_lines(
     Ok(child.wait().map(|s| s.success()).unwrap_or(false))
 }
 
-fn whoami_with(cmd: &[String]) -> Result<SignIn, String> {
+pub fn whoami_with(cmd: &[String]) -> Result<SignIn, String> {
     let mut text = String::new();
     run_lines(cmd, &["whoami".to_owned()], &mut |l| {
         text.push_str(l);
@@ -299,7 +299,7 @@ pub struct DashboardStep {
 pub const AI_GATEWAY_STEP: DashboardStep = DashboardStep {
     title: "AI Gateway",
     url: "https://dash.cloudflare.com/?to=/:account/ai/ai-gateway",
-    how: "Create gateway, name it open-computer, then set AI_GATEWAY_ACCOUNT and AI_GATEWAY_ID in the deploy config.",
+    how: "Create gateway, name it open-computer, then run `OC_AI_GATEWAY_ID=open-computer oc setup` so the core uses it.",
 };
 
 pub const ACCESS_STEP: DashboardStep = DashboardStep {
