@@ -208,3 +208,5 @@ app, setup wizard served by the cloud core, console) and supersedes the status h
   OpenRouter, connection speed and latency, sandbox, memory, audit and spend). Each row shows a spinner while it runs, then pass or fail
   with its time; a failure gives a plain reason, a fix and Retry. The end card gives Run tests again and Export results JSON. The same
   rows run as `oc doctor`. Source: `core/packages/diagnostics`.
+
+- **Sign in with Cloudflare (2026-11-16):** setup starts with a browser sign-in on Cloudflare's own page (click Allow). Nothing is minted, pasted or shown; an API token is only a hidden Advanced / CI fallback.

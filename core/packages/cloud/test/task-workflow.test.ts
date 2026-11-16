@@ -211,6 +211,7 @@ describe("web search through the model key", () => {
     install([toolTurn([{ id: "c1", name: "web.search", args: '{"query":"latest rust release"}' }]), textTurn("done")]);
     const seen: Array<{ url: string; auth: string | null; body: string }> = [];
     (globalThis as unknown as { __doubles: { fetch: FetchLike } }).__doubles.fetch = async (url, init) => {
+      if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [] }));
       seen.push({ url, auth: new Headers(init.headers).get("authorization"), body: String(init.body) });
       return new Response(JSON.stringify(SONAR));
     };

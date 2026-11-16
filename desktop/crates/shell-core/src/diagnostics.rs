@@ -26,6 +26,8 @@ pub struct Row {
     pub group: &'static str,
     pub title: &'static str,
     pub status: Status,
+    /// A skip by design: the row does not apply to this backend.
+    pub not_applicable: bool,
     pub ms: Option<f64>,
     pub detail: String,
     pub metrics: Vec<(String, String)>,
@@ -61,11 +63,7 @@ impl UreqTransport {
 
 impl Transport for UreqTransport {
     fn call(&self, method: &str, path: &str, timeout: Duration) -> Reply {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(timeout))
-            .http_status_as_error(false)
-            .build()
-            .into();
+        let agent = crate::http::agent(Some(timeout));
         let url = format!("{}{}", self.base, path);
         let auth = format!("Bearer {}", self.token);
         let result = if method == "POST" {
@@ -221,6 +219,7 @@ pub fn initial_rows() -> Vec<Row> {
             group: d.group,
             title: d.title,
             status: Status::Pending,
+            not_applicable: false,
             ms: None,
             detail: String::new(),
             metrics: Vec::new(),
@@ -719,11 +718,21 @@ impl Chain<'_> {
     }
 }
 
+const CLOUD_ROWS: [&str; 5] = [
+    "cf.account",
+    "cf.features",
+    "deploy.provision",
+    "deploy.worker",
+    "keys.model",
+];
+
 /// Runs every row in order, calling `on_update` before and after each so a screen can show the spinner.
+/// `local_only` shows the five Cloudflare rows as not applicable and runs the rest against the local core.
 pub fn run_chain(
     t: &dyn Transport,
     app_version: &str,
     pings: usize,
+    local_only: bool,
     mut on_update: impl FnMut(&[Row]),
 ) -> Vec<Row> {
     let mut rows = initial_rows();
@@ -737,11 +746,18 @@ pub fn run_chain(
         sandbox: None,
     };
     for (i, def) in DEFS.iter().enumerate() {
+        if local_only && CLOUD_ROWS.contains(&def.id) {
+            rows[i].status = Status::Skip;
+            rows[i].not_applicable = true;
+            rows[i].detail = "Not applicable: local-only mode does not use Cloudflare.".to_owned();
+            on_update(&rows);
+            continue;
+        }
         let blocker = def
             .requires
             .iter()
             .filter_map(|id| rows.iter().find(|r| r.id == *id))
-            .find(|r| r.status != Status::Pass)
+            .find(|r| r.status != Status::Pass && !r.not_applicable)
             .map(|r| r.title);
         if let Some(title) = blocker {
             rows[i].status = Status::Skip;
@@ -846,7 +862,7 @@ mod tests {
     fn a_healthy_core_passes_every_row_in_order_and_each_row_runs_before_it_finishes() {
         let fake = healthy();
         let mut running_order: Vec<&'static str> = vec![];
-        let rows = run_chain(&fake, "0.1.0", 3, |r| {
+        let rows = run_chain(&fake, "0.1.0", 3, false, |r| {
             if let Some(x) = r.iter().find(|x| x.status == Status::Running)
                 && running_order.last() != Some(&x.id)
             {
@@ -869,7 +885,7 @@ mod tests {
     #[test]
     fn the_sandbox_is_started_once_for_both_groups() {
         let fake = healthy();
-        run_chain(&fake, "0.1.0", 2, |_| {});
+        run_chain(&fake, "0.1.0", 2, false, |_| {});
         let n = fake
             .seen
             .borrow()
@@ -890,7 +906,7 @@ mod tests {
                 timed_out: false,
             },
         );
-        let rows = run_chain(&fake, "0.1.0", 2, |_| {});
+        let rows = run_chain(&fake, "0.1.0", 2, false, |_| {});
         assert_eq!(rows[0].status, Status::Fail);
         assert!(
             rows[0]
@@ -909,7 +925,7 @@ mod tests {
             "/v1/diag/openrouter/auth".into(),
             ok(json!({"ok": false, "code": "payment_required"})),
         );
-        let rows = run_chain(&fake, "0.1.0", 2, |_| {});
+        let rows = run_chain(&fake, "0.1.0", 2, false, |_| {});
         assert_eq!(row(&rows, "or.auth").status, Status::Fail);
         assert!(
             row(&rows, "or.auth")
@@ -925,7 +941,7 @@ mod tests {
     #[test]
     fn a_version_mismatch_names_both_versions() {
         let fake = healthy();
-        let rows = run_chain(&fake, "0.2.0", 2, |_| {});
+        let rows = run_chain(&fake, "0.2.0", 2, false, |_| {});
         let r = row(&rows, "backend.health");
         assert_eq!(r.status, Status::Fail);
         assert!(r.detail.contains("0.1.4") && r.detail.contains("0.2.0"));
@@ -938,7 +954,7 @@ mod tests {
             "/v1/diag/sandbox".into(),
             ok(json!({"ok": false, "cold_ms": 1.0, "warm_ms": 1.0, "key_visible": true})),
         );
-        let rows = run_chain(&fake, "0.1.0", 2, |_| {});
+        let rows = run_chain(&fake, "0.1.0", 2, false, |_| {});
         assert_eq!(row(&rows, "sandbox.keys").status, Status::Fail);
         assert!(
             row(&rows, "sandbox.keys")
@@ -953,5 +969,31 @@ mod tests {
         let dbg = format!("{:?}", initial_rows());
         assert!(!dbg.contains("tok-secret-123"));
         assert_eq!(t.base, "https://core.example");
+    }
+
+    #[test]
+    fn local_only_marks_the_cloudflare_rows_not_applicable_and_passes_the_rest() {
+        let fake = healthy();
+        let rows = run_chain(&fake, "0.1.0", 2, true, |_| {});
+        let na: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.not_applicable)
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(na, CLOUD_ROWS);
+        assert!(
+            rows.iter()
+                .filter(|r| !r.not_applicable)
+                .all(|r| r.status == Status::Pass),
+            "{rows:#?}"
+        );
+        assert!(
+            !fake
+                .seen
+                .borrow()
+                .iter()
+                .any(|s| s == "GET /v1/diag/bindings"),
+            "no cloud derivation call"
+        );
     }
 }

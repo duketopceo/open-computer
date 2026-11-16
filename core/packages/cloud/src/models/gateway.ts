@@ -52,6 +52,15 @@ export function buildProvider(env: Env, fetchImpl: FetchLike): Provider {
     fetch: fetchImpl,
     baseUrl: target.baseUrl,
     timeouts: modelTimeouts(env),
+    // An AI Gateway with authentication on needs the Cloudflare token on every call. It comes from the secret store, never from a request.
+    headers: async (): Promise<Record<string, string>> => {
+      if (!target.viaGateway || !env.AIG_TOKEN) return {};
+      try {
+        return { "cf-aig-authorization": `Bearer ${await readSecret(env.AIG_TOKEN, "aig_token")}` };
+      } catch {
+        return {};
+      }
+    },
     apiKey: async () => {
       try {
         return await readSecret(env.MODEL_KEY, "model_key");

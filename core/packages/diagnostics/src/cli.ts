@@ -5,6 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createControlPlane, readState, wranglerRunner } from "./control.ts";
 import { updateCore } from "./update.ts";
+import { ensureAccess, ensureGateway } from "./admin.ts";
+import { NOT_AVAILABLE_BY_OAUTH, parseWhoami, signInArgs } from "./signin.ts";
+import { spawnSync } from "node:child_process";
 import { buildReport, runWizard, stepsFor, type Backend, type Ctx, type Row } from "./wizard.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +42,39 @@ export function formatRow(r: Row, frame = 0): string[] {
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...args] = argv;
+  if (cmd === "login") {
+    // Browser sign-in: Cloudflare's own consent page, click Allow. Wrangler keeps the session; nothing is pasted or printed.
+    const wrangler = (process.env.OC_WRANGLER ?? "pnpm exec wrangler").split(" ");
+    const login = spawnSync(wrangler[0] as string, [...wrangler.slice(1), ...signInArgs()], { cwd: cloudDir, stdio: "inherit" });
+    const who = spawnSync(wrangler[0] as string, [...wrangler.slice(1), "whoami"], { cwd: cloudDir, encoding: "utf8" });
+    const st = parseWhoami(`${who.stdout ?? ""}`);
+    if (login.status !== 0 || !st.signedIn) {
+      console.log("Sign-in did not finish. Run `oc login` again and click Allow in the browser.");
+      return 1;
+    }
+    console.log(`Signed in${st.email ? ` as ${st.email}` : ""}${st.accounts.length ? ` (${st.accounts.join(", ")})` : ""}.`);
+    console.log(`Access granted: ${st.scopes.join(", ")}`);
+    console.log(`Not available through this sign-in: ${NOT_AVAILABLE_BY_OAUTH.join("; ")}. Turn those on with one click in the Cloudflare dashboard (see docs/runbooks/cloud-setup.md).`);
+    return 0;
+  }
+  if (cmd === "admin") {
+    // Needs a scoped token: OC_CF_ADMIN_TOKEN="$(omaseal get cloudflare oc-admin)" and OC_CF_ACCOUNT_ID.
+    const token = process.env.OC_CF_ADMIN_TOKEN ?? "";
+    const accountId = process.env.OC_CF_ACCOUNT_ID ?? "";
+    if (!token || !accountId) {
+      console.log("oc admin needs OC_CF_ADMIN_TOKEN (scopes: AI Gateway Edit and Read; Access Apps and Policies Edit) and OC_CF_ACCOUNT_ID in the environment.\nStore the token with: omaseal set cloudflare oc-admin");
+      return 2;
+    }
+    const what = args[0];
+    const out =
+      what === "gateway"
+        ? await ensureGateway((u, i) => fetch(u, i), { token, accountId })
+        : what === "access"
+          ? await ensureAccess((u, i) => fetch(u, i), { token, accountId, hostname: flag(args, "hostname") ?? "", emails: (flag(args, "emails") ?? "").split(",").filter(Boolean) })
+          : { ok: false, message: "usage: oc admin <gateway | access --hostname H --emails a@b.c,d@e.f>" };
+    console.log(out.message);
+    return out.ok ? 0 : 1;
+  }
   if (cmd === "update") {
     const state = readState();
     const url = flag(args, "url") ?? process.env.OC_CLOUD_URL ?? state.url ?? "";
@@ -60,7 +96,7 @@ async function main(argv: string[]): Promise<number> {
     return result.ok ? 0 : 1;
   }
   if (cmd !== "doctor" && cmd !== "setup") {
-    console.log("usage: oc <doctor|setup|update> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
+    console.log("usage: oc <login|doctor|setup|update|admin> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N] [--skip-model]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
     return 2;
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;
@@ -79,7 +115,23 @@ async function main(argv: string[]): Promise<number> {
     cache: {},
   };
 
-  const defs = stepsFor(backend);
+  if (cmd === "setup" && !process.env.CLOUDFLARE_API_TOKEN) {
+    // First step of setup is the sign-in itself: if nobody is signed in, open the browser page (click Allow).
+    const wr = (process.env.OC_WRANGLER ?? "pnpm exec wrangler").split(" ");
+    const who = spawnSync(wr[0] as string, [...wr.slice(1), "whoami"], { cwd: cloudDir, encoding: "utf8" });
+    if (!parseWhoami(`${who.stdout ?? ""}`).signedIn) {
+      console.log("Opening Cloudflare's sign-in page in your browser. Click Allow.");
+      spawnSync(wr[0] as string, [...wr.slice(1), ...signInArgs()], { cwd: cloudDir, stdio: "inherit" });
+    }
+  }
+  let defs = stepsFor(backend);
+  // CI has no model key and no network to a model: --skip-model shows the OpenRouter rows as not applicable.
+  if (args.includes("--skip-model")) {
+    const MODEL_ROW = /^(or\.|net\.model$)/;
+    defs = defs.map((d) =>
+      MODEL_ROW.test(d.id) ? { ...d, requires: [], run: async () => ({ ok: true, notApplicable: true, detail: "Skipped on request (--skip-model): no model key in this environment." }) } : d,
+    );
+  }
   const tty = process.stdout.isTTY;
   let frame = 0;
   let printed = 0;

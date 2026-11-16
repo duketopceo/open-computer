@@ -66,3 +66,30 @@ describe("provider from the secret store", () => {
     expect(err).toMatchObject({ code: "key_missing" });
   });
 });
+
+describe("gateway authorization", () => {
+  const sseDone = () => new Response('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+
+  async function headersSeen(extra: Record<string, unknown>): Promise<Headers> {
+    await seedSecrets();
+    let seen = new Headers();
+    const fetchImpl: FetchLike = async (_url, init) => {
+      seen = new Headers(init.headers);
+      return sseDone();
+    };
+    const provider = buildProvider({ ...env, ...extra } as typeof env, fetchImpl);
+    for await (const _ of provider({ model: "m", messages: [{ role: "user", content: "x" }] })) void _;
+    return seen;
+  }
+
+  it("adds cf-aig-authorization from the secret store when a gateway and its token are configured", async () => {
+    const h = await headersSeen({ AI_GATEWAY_ACCOUNT: "acct", AI_GATEWAY_ID: "gw", AIG_TOKEN: { get: async () => "cf-admin-token-value" } });
+    expect(h.get("cf-aig-authorization")).toBe("Bearer cf-admin-token-value");
+    expect(h.get("authorization")).toBe(`Bearer ${MODEL_KEY}`);
+  });
+
+  it("sends no gateway header on the direct route, or when no token is bound", async () => {
+    expect((await headersSeen({ AIG_TOKEN: { get: async () => "t" } })).get("cf-aig-authorization")).toBeNull();
+    expect((await headersSeen({ AI_GATEWAY_ACCOUNT: "acct", AI_GATEWAY_ID: "gw" })).get("cf-aig-authorization")).toBeNull();
+  });
+});

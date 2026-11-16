@@ -9,7 +9,6 @@ import {
   defaultPolicy,
   evaluateDecision,
   resolveApproval,
-  staticPriceBook,
   step,
   type AgentDeps,
   type AgentEvent,
@@ -25,17 +24,22 @@ import {
   type ToolOutcome,
   webSearchTool,
   type FetchLike,
+  type PriceBook,
+  BASE_SYSTEM_PROMPT,
+  createPolicy,
+  exportOtlp,
+  parseItPolicy,
 } from "@open-computer/agent-core";
 import type { Env } from "./env.ts";
 import { buildProvider, providerTarget } from "./models/gateway.ts";
 import { readSecret } from "./models/secrets.ts";
+import { loadPriceBook } from "./models/prices.ts";
 import { SandboxManager, sandboxTools, type SandboxFactory } from "./sandbox/port.ts";
 import { cloudflareSandbox } from "./sandbox/cloudflare-port.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
 import { ledgerPort, ledgerStub } from "./storage/ledger-client.ts";
 
-const BASE_SYSTEM =
-  "You are Open Computer, an agent that finishes tasks for the user. Use the tools you are given, one step at a time, and say plainly when you are done.";
+const BASE_SYSTEM = BASE_SYSTEM_PROMPT;
 
 export interface StartTaskInput {
   taskId: string;
@@ -121,6 +125,11 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   // ---- hooks ----
+
+  /** The IT policy text this deployment runs under. Tests override it. */
+  protected policyText(): string | undefined {
+    return this.env.POLICY_JSON;
+  }
 
   /** Outbound fetch for tools that call the model provider directly (web search). Tests override it. */
   protected makeFetch(): FetchLike {
@@ -363,9 +372,10 @@ export class SessionDO extends DurableObject<Env> {
     return { taskId: input.taskId };
   }
 
-  private depsFor(taskId: string, stored: StoredTask, stepKey: string): AgentDeps {
+  private depsFor(taskId: string, stored: StoredTask, stepKey: string, prices: PriceBook): AgentDeps {
     const memory = this.memoryFor(stored.meta.memoryEnabled);
     const sandboxes = this.sandboxManager();
+    const itPolicy = parseItPolicy(this.policyText());
     const guard = new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() });
     const search = webSearchTool({
       fetch: this.makeFetch(),
@@ -376,10 +386,10 @@ export class SessionDO extends DurableObject<Env> {
     return {
       provider: this.makeProvider(),
       tools: new ToolRegistry([...memory.tools(), ...sandboxTools(sandboxes, taskId), search]),
-      policy: defaultPolicy,
+      policy: createPolicy(itPolicy.risk, itPolicy.denyTools),
       approvals: this.approvalRequester(stepKey),
       guard,
-      prices: staticPriceBook({}),
+      prices,
       emit: (body) => {
         // Once cancelled, an in-flight step must not add events after the cancel.
         if (!this.cancelled.has(taskId)) this.appendEvent(taskId, body, stepKey);
@@ -418,7 +428,8 @@ export class SessionDO extends DurableObject<Env> {
     );
 
     const stored = this.loadTask(taskId);
-    const outcome = await step(stored.state, this.depsFor(taskId, stored, stepKey));
+    const prices = await loadPriceBook(this.env.DB, this.makeFetch());
+    const outcome = await step(stored.state, this.depsFor(taskId, stored, stepKey, prices));
     await this.beforeAuditFlush(stepKey);
     await this.flushAudit();
     // A cancel can land while the step awaits the model or a tool; the cancel is final, so this outcome is dropped.
@@ -525,9 +536,23 @@ export class SessionDO extends DurableObject<Env> {
       await this.flushAudit();
     }
     await this.sandboxManager().release(taskId);
+    await this.exportTrace(taskId);
     this.kvSet(`finalized:${taskId}`, true);
     this.kvSet("settled", true);
     this.closeSubscribers();
+  }
+
+  /** Sends this task's trace to the OTLP collector when one is configured (policy field or OTLP_ENDPOINT). Never fails the task. */
+  private async exportTrace(taskId: string): Promise<void> {
+    try {
+      const endpoint = parseItPolicy(this.policyText()).otlpEndpoint ?? (this.env.OTLP_ENDPOINT || null);
+      if (!endpoint) return;
+      const rows = this.ctx.storage.sql.exec<{ json: string }>("SELECT json FROM events WHERE discarded = 0 AND control = 0 ORDER BY seq ASC").toArray();
+      const events = rows.map((r) => JSON.parse(r.json) as AgentEvent).filter((e) => e.task_id === taskId);
+      await exportOtlp(this.makeFetch(), endpoint, events, { serviceName: "open-computer-core" });
+    } catch {
+      /* telemetry is best effort */
+    }
   }
 
   taskState(taskId: string): AgentState | undefined {

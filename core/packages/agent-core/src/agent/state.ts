@@ -79,3 +79,7 @@ export function resolveApproval(state: AgentState, outcome: ApprovalOutcome): Ag
   if (!state.pending) return state;
   return { ...state, status: "running", pending: { ...state.pending, outcome } };
 }
+
+/** The base system prompt, shared by every driver (cloud Workflow, self-hosted daemon, local core). */
+export const BASE_SYSTEM_PROMPT =
+  "You are Open Computer, an agent that finishes tasks for the user. Use the tools you are given, one step at a time, and say plainly when you are done.";

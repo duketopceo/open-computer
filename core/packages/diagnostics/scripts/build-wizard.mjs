@@ -51,8 +51,16 @@ const html = `<!doctype html>
 <input id="token" type="password" autocomplete="off" spellcheck="false">
 <div class="actions"><button id="run" type="button">Run tests</button><button id="export" class="secondary" type="button" hidden>Export results JSON</button><span id="status" role="status"></span></div>
 </section>
-<ol id="rows" aria-live="polite"></ol>
-<section id="summary" hidden></section>
+<nav class="tabs" aria-label="Sections"><button id="tab-tests" class="tab on" type="button">Tests</button><button id="tab-chat" class="tab" type="button">Chat</button><button id="tab-settings" class="tab" type="button">Settings</button></nav>
+<div id="view-tests"><ol id="rows" aria-live="polite"></ol>
+<section id="summary" hidden></section></div>
+<div id="view-chat" hidden>
+<ol id="chat-items" aria-live="polite"></ol>
+<p id="chat-working" class="detail" hidden></p>
+<div class="composer"><input id="goal" type="text" placeholder="What should Open Computer do?" autocomplete="off"><button id="send" type="button">Send</button><button id="stop" class="secondary" type="button" hidden>Stop</button></div>
+<p id="chat-footer" class="detail"></p>
+</div>
+<div id="view-settings" hidden><section class="panel" id="settings-body"></section></div>
 </main>
 <script>${js}</script>
 </body>

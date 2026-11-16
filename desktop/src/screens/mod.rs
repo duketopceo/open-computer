@@ -1,6 +1,7 @@
 //! The four onboarding screens and the frame they share.
 
 mod connect;
+mod main_view;
 mod memory;
 mod model_key;
 mod test_connection;
@@ -12,7 +13,20 @@ use shell_core::onboarding::Step;
 use crate::app::App;
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
-    let k = rune_theme_opencode::kit(cx.system_dark());
+    let k = crate::theme::kit(cx.system_dark());
+    if let Some(m) = &s.main {
+        return rune_kit::root(
+            col()
+                .key("frame")
+                .fill(k.c.page)
+                .padding(24.0)
+                .items_start()
+                .w_full()
+                .h_full()
+                .child(main_view::view(s, k, m)),
+            [],
+        );
+    }
     let (position, body) = match s.onboarding.step() {
         Step::Connect => (1, connect::view(s, k)),
         Step::ModelKey => (2, model_key::view(s, k)),
@@ -99,7 +113,14 @@ fn footer(s: &App, k: &Kit) -> El {
                     .build(k),
             );
         }
-        Step::Done => {}
+        Step::Done => {
+            bar = bar.child(
+                Button::new("Open Open Computer")
+                    .variant(ButtonVariant::Submit)
+                    .on_press(|s: &mut App| s.enter_app())
+                    .build(k),
+            );
+        }
         _ => {
             bar = bar.child(
                 Button::new("Continue")

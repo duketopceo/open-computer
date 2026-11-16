@@ -55,6 +55,7 @@ def evidence():
             {"name": "provisioning (hash-verified install)", "conclusion": "success"},
             {"name": "core (typecheck, tests, sidecar build, bundle dry run)", "conclusion": "success"},
             {"name": "desktop (fmt, clippy, tests, sidecar e2e)", "conclusion": "success"},
+            {"name": "self-host (install script on the runner, wizard chain)", "conclusion": "success"},
             {"name": "production approval", "conclusion": "success"},
         ]},
         "environment": {"protection_rules": [{

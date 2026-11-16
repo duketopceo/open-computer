@@ -41,6 +41,9 @@ export class SessionDO extends BaseSessionDO {
       throw new Error("audit ledger unavailable");
     }
   }
+  protected override policyText(): string | undefined {
+    return doubles().policyJson;
+  }
   protected override makeFetch(): FetchLike {
     return (url, init) => doubles().fetch(url, init);
   }

@@ -52,6 +52,8 @@
     "APPROVAL_TIMEOUT": "24 hours",
     // IT policy as JSON text (first field: max_daily_cap_usd). Empty means no policy; a broken policy fails closed.
     "POLICY_JSON": "",
+    // Optional OpenTelemetry traces endpoint (https). Empty means no export; prompts and tool output are never exported.
+    "OTLP_ENDPOINT": "",
     // Optional AI Gateway in front of OpenRouter. Empty means call OpenRouter directly.
     "AI_GATEWAY_ACCOUNT": "",
     "AI_GATEWAY_ID": ""

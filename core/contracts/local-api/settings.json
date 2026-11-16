@@ -1,1 +1,1 @@
-{"cloud_url":"https://core.example.com","model":"example/model","memory_enabled":true,"secrets_set":{"cloud_access":true,"model_key":false}}
+{"cloud_url":"https://core.example.com","model":"example/model","memory_enabled":true,"secrets_set":{"cloud_access":true,"model_key":false,"custom_key":false}}

@@ -24,6 +24,8 @@ describe("the default daily cap", () => {
   it("is five dollars from the shared defaults file, and a user who set nothing gets it", async () => {
     expect(defaults.daily_cap_usd).toBe(5);
     expect(await getSettings()).toEqual({
+      default_model: "z-ai/glm-5.3",
+      worker_model: "z-ai/glm-5.3-flash",
       daily_cap_usd: null,
       default_daily_cap_usd: 5,
       max_daily_cap_usd: 1000,
@@ -139,14 +141,14 @@ describe("an IT policy maximum", () => {
   });
 
   it("treats empty text and an object without a maximum as no policy", async () => {
-    for (const text of ["", "   ", "{}", '{"other_field": 1}']) {
+    for (const text of ["", "   ", "{}"]) {
       fx.setPolicy(text);
       expect(await capOf(), JSON.stringify(text)).toBe(5);
     }
   });
 
   it("fails closed on a policy that cannot be read: nothing runs and settings are not served", async () => {
-    for (const bad of ["{not json", "[]", "42", '{"max_daily_cap_usd": -1}', '{"max_daily_cap_usd": "3"}', '{"max_daily_cap_usd": 0}']) {
+    for (const bad of ["{not json", "[]", "42", '{"other_field": 1}', '{"max_daily_cap_usd": -1}', '{"max_daily_cap_usd": "3"}', '{"max_daily_cap_usd": 0}']) {
       fx.setPolicy(bad);
       const task = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ goal: "g" }) });
       expect(task.status, bad).toBe(500);

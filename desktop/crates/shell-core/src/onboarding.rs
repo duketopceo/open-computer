@@ -121,6 +121,8 @@ impl std::error::Error for StepError {}
 #[derive(Clone, Debug)]
 pub struct Onboarding {
     step: Step,
+    /// Optional backend: run on this computer only, with the local core and no cloud address.
+    local_only: bool,
     cloud_url: String,
     model: String,
     memory_enabled: bool,
@@ -133,6 +135,7 @@ pub struct Onboarding {
 pub struct OnboardingState {
     pub step: Step,
     pub step_title: &'static str,
+    pub local_only: bool,
     pub cloud_url: String,
     pub model: String,
     pub memory_enabled: bool,
@@ -151,6 +154,7 @@ impl Onboarding {
     pub fn new() -> Self {
         Self {
             step: Step::Connect,
+            local_only: false,
             cloud_url: String::new(),
             model: default_model(),
             memory_enabled: true,
@@ -165,6 +169,18 @@ impl Onboarding {
 
     pub fn cloud_url(&self) -> &str {
         &self.cloud_url
+    }
+
+    pub fn local_only(&self) -> bool {
+        self.local_only
+    }
+
+    /// Choose the optional backend: this computer only. Changing the choice invalidates an earlier test.
+    pub fn set_local_only(&mut self, on: bool) {
+        if on != self.local_only {
+            self.local_only = on;
+            self.test = None;
+        }
     }
 
     pub fn memory_enabled(&self) -> bool {
@@ -230,7 +246,12 @@ impl Onboarding {
     /// What the core should be told before a test.
     pub fn settings_update(&self) -> SettingsUpdate {
         SettingsUpdate {
-            cloud_url: self.cloud_url.clone(),
+            // An empty address tells the core it runs local-only and checks itself.
+            cloud_url: if self.local_only {
+                String::new()
+            } else {
+                self.cloud_url.clone()
+            },
             model: self.model.clone(),
             memory_enabled: self.memory_enabled,
         }
@@ -251,7 +272,9 @@ impl Onboarding {
     fn check_advance(&self) -> Result<Step, StepError> {
         match self.step {
             Step::Connect => {
-                if !cloud_url_is_valid(&self.cloud_url) {
+                if self.local_only {
+                    Ok(Step::ModelKey)
+                } else if !cloud_url_is_valid(&self.cloud_url) {
                     Err(StepError::CloudUrlInvalid)
                 } else if !self.secrets_set.cloud_access {
                     Err(StepError::CloudAccessMissing)
@@ -338,6 +361,7 @@ impl Onboarding {
         OnboardingState {
             step: self.step,
             step_title: self.step.title(),
+            local_only: self.local_only,
             cloud_url: self.cloud_url.clone(),
             model: self.model.clone(),
             memory_enabled: self.memory_enabled,
@@ -607,7 +631,8 @@ mod tests {
             o.secrets_set(),
             SecretsSet {
                 cloud_access: true,
-                model_key: true
+                model_key: true,
+                custom_key: false
             }
         );
 
@@ -637,5 +662,24 @@ mod tests {
         assert!(!cloud_url_is_valid("https://bad host"));
         assert!(!cloud_url_is_valid("ftp://x.y"));
         assert!(!cloud_url_is_valid(""));
+    }
+
+    #[test]
+    fn local_only_skips_the_cloud_address_and_secret_and_tests_with_an_empty_address() {
+        let mut o = Onboarding::new();
+        assert!(!o.can_advance(), "cloud mode still needs an address");
+        o.set_local_only(true);
+        assert_eq!(o.advance(), Ok(Step::ModelKey));
+        assert_eq!(o.settings_update().cloud_url, "");
+        assert!(o.state().local_only);
+    }
+
+    #[test]
+    fn switching_the_backend_choice_clears_an_earlier_test() {
+        let mut o = ready_for_test();
+        o.record_test(result(true, true, true)).unwrap();
+        assert!(o.test_passed());
+        o.set_local_only(true);
+        assert!(!o.test_passed());
     }
 }

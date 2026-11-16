@@ -43,6 +43,8 @@ def test_repo_has_no_purple():
         "background: rgb(99, 102, 241)",
         "fill: hsl(270, 60%, 50%)",
         "Color32::from_rgb(139, 92, 246)",
+        "Color::rgb8(139, 92, 246)",
+        "hex(\"#8b5cf6\")",
         "--accent: indigo;",
         "stroke: Violet",
         "color: #818cf8",

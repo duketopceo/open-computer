@@ -3,6 +3,7 @@
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { parseDaemonOptions } from "./daemon.ts";
+import { runtimeFromEnv } from "./runtime/boot.ts";
 import { startLocalServer, VERSION } from "./server.ts";
 
 // Daemon mode (self-hosted server): `oc-core --daemon` reads the token from OC_CORE_TOKEN_FILE and the port from
@@ -14,7 +15,7 @@ if (daemon) {
     process.stderr.write("The token file is empty.\n");
     process.exit(2);
   }
-  const running = await startLocalServer({ token, port: daemon.port });
+  const running = await startLocalServer({ token, port: daemon.port, runtime: runtimeFromEnv(process.env) });
   process.stdout.write(`${JSON.stringify({ event: "ready", port: running.port, version: VERSION })}\n`);
   process.on("SIGTERM", () => void running.close().then(() => process.exit(0)));
   process.on("SIGINT", () => void running.close().then(() => process.exit(0)));
@@ -30,7 +31,7 @@ if (!token) {
   process.stderr.write("A token is required on the first line of stdin.\n");
   process.exit(2);
 }
-const running = await startLocalServer({ token });
+const running = await startLocalServer({ token, ...(process.env.OC_LOCAL_RUNTIME === "0" ? {} : { runtime: runtimeFromEnv(process.env) }) });
 process.stdout.write(`${JSON.stringify({ event: "ready", port: running.port, version: VERSION })}\n`);
 // The shell closing stdin means it is gone; stop with it.
 rl.on("close", () => void running.close().then(() => process.exit(0)));

@@ -169,21 +169,24 @@ describe("control plane rows (CLI)", () => {
 });
 
 describe("self-hosted and local backends", () => {
-  it("run a shorter chain with no Cloudflare rows", () => {
+  it("run the same nine groups, with the Cloudflare rows shown as not applicable", async () => {
     for (const b of ["self-hosted", "local"] as const) {
-      const ids = stepsFor(b).map((d) => d.id);
-      expect(ids).toContain("backend.health");
-      expect(ids.some((i) => i.startsWith("cf.") || i.startsWith("deploy."))).toBe(false);
+      expect(stepsFor(b).map((d) => d.id)).toEqual(stepsFor("cloudflare").map((d) => d.id));
+      const rows = await runWizard(stepsFor(b), ctx(healthy(), { backend: b }), () => {});
+      const na = rows.filter((r) => r.notApplicable).map((r) => r.id);
+      expect(na).toEqual(["cf.account", "cf.features", "deploy.provision", "deploy.worker", "keys.model"]);
+      expect(rows.filter((r) => !r.notApplicable).every((r) => r.status === "pass")).toBe(true);
+      const report = buildReport(rows, { backend: b, appVersion: "0.1.0" });
+      expect(report).toMatchObject({ failed: 0, skipped: 0, not_applicable: 5 });
     }
   });
 
-  it("test the local core's own test-connection route", async () => {
-    const rows = await runWizard(
-      stepsFor("local"),
-      ctx((p) => (p === "/v1/health" ? j({ ok: true, version: "0.1.0" }) : p === "/v1/test-connection" ? j({ model: { ok: true }, memory: { ok: true } }) : j({}, 404)), { backend: "local" }),
-      () => {},
-    );
-    expect(rows.every((r) => r.status === "pass")).toBe(true);
+  it("a not-applicable row never blocks the rows after it, and a real failure still does", async () => {
+    const rows = await runWizard(stepsFor("local"), ctx(healthy({ "/v1/diag/openrouter/auth": () => j({ ok: false, code: "key_missing" }) }), { backend: "local" }), () => {});
+    expect(byId(rows, "backend.health").status).toBe("pass");
+    expect(byId(rows, "or.auth").status).toBe("fail");
+    expect(byId(rows, "or.models").status).toBe("skip");
+    expect(byId(rows, "or.models").notApplicable).toBeUndefined();
   });
 });
 

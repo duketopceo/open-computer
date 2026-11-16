@@ -3,24 +3,29 @@
 # Runs the same TypeScript core binary (`oc-core --daemon`) as a service on loopback, then exposes it through a
 # Cloudflare Tunnel. Put Cloudflare Access in front of the tunnel hostname; the access token stays as a second factor.
 #
-#   sudo ./install.sh --bin ./oc-core [--port 8787] [--hostname core.example.com] [--dry-run]
+#   sudo ./install.sh --bin ./oc-core [--port 8787] [--sandbox bubblewrap|space|cube|none] [--hostname core.example.com] [--dry-run]
 #
+# The daemon is the full agent runtime (loop, approvals, memory, audit, spend). Its sandbox is chosen with --sandbox:
+# bubblewrap (default, needs the bwrap package), space or cube (an E2B-compatible API; put SPACE_API_URL,
+# SPACE_API_KEY and SPACE_TEMPLATE_ID, or the CUBE_ equivalents, in /etc/open-computer/sandbox.env), or none.
 # --dry-run prints every action and writes nothing. Re-running is safe: an existing token is kept.
 set -euo pipefail
 
 BIN=""
 PORT="8787"
 HOSTNAME_ARG=""
+SANDBOX="bubblewrap"
 DRY=0
 PREFIX="${OC_PREFIX:-}"   # test hook: install under a scratch root instead of /
 
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) BIN="${2:-}"; shift 2 ;;
     --port) PORT="${2:-}"; shift 2 ;;
     --hostname) HOSTNAME_ARG="${2:-}"; shift 2 ;;
+    --sandbox) SANDBOX="${2:-}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -29,6 +34,7 @@ done
 
 case "$PORT" in ''|*[!0-9]*) echo "--port must be a number" >&2; exit 2 ;; esac
 [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || { echo "--port must be 1-65535" >&2; exit 2; }
+case "$SANDBOX" in bubblewrap|space|cube|none|stub) ;; *) echo "--sandbox must be bubblewrap, space, cube or none (stub is for CI only)" >&2; exit 2 ;; esac
 [ -n "$BIN" ] || { echo "--bin is required (the compiled oc-core binary; build it with: pnpm --filter @open-computer/local build)" >&2; exit 2; }
 
 run() { if [ "$DRY" = 1 ]; then echo "would run: $*"; else "$@"; fi; }
@@ -78,6 +84,11 @@ User=oc-core
 Group=oc-core
 Environment=OC_CORE_TOKEN_FILE=/etc/open-computer/token
 Environment=OC_CORE_PORT=$PORT
+Environment=OC_CORE_STATE_DIR=/var/lib/open-computer
+Environment=OC_SANDBOX=$SANDBOX
+EnvironmentFile=-/etc/open-computer/sandbox.env
+StateDirectory=open-computer
+StateDirectoryMode=0700
 ExecStart=/usr/local/bin/oc-core --daemon
 Restart=on-failure
 RestartSec=3
@@ -85,9 +96,8 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-PrivateDevices=true
 ProtectKernelTunables=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 MemoryMax=1G
 
 [Install]
@@ -128,5 +138,8 @@ EOF
 say "test it"
 echo "    OC_CLOUD_URL=https://$HOST OC_CLOUD_TOKEN=\$(sudo cat /etc/open-computer/token) node core/packages/diagnostics/src/cli.ts doctor --backend self-hosted"
 echo
-echo "Note: this daemon serves the local core's endpoints (health, settings, secrets, connection test). The agent runtime"
-echo "and a SPACE or Cube sandbox on this server are not part of this release."
+echo "Give the core its model key once it is running (from your keyring, never on a command line):"
+echo "    printf '{\"secrets\":{\"model_key\":\"%s\"}}' \"\$OPENROUTER_API_KEY\" | curl -sS -X POST http://127.0.0.1:$PORT/v1/secrets/load \\"
+echo "      -H \"authorization: Bearer \$(sudo cat /etc/open-computer/token)\" -H 'content-type: application/json' -d @-"
+echo "The key is held in memory only; load it again after a restart (or set OC_CORE_MODEL_KEY_FILE in sandbox.env to a root-only file)."
+if [ "$SANDBOX" = bubblewrap ]; then echo "Sandbox: bubblewrap needs the bwrap package (apt install bubblewrap) and unprivileged user namespaces."; fi

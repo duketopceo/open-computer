@@ -4,7 +4,9 @@
 //! opening a window.
 
 mod app;
+mod main_app;
 mod screens;
+mod theme;
 
 use app::App;
 use rune::AppSpec;

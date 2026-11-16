@@ -9,9 +9,11 @@
     "build": "node scripts/build.mjs"
   },
   "dependencies": {
-    "@open-computer/agent-core": "workspace:*"
+    "@open-computer/agent-core": "workspace:*",
+    "e2b": "^2.64.0"
   },
   "devDependencies": {
+    "@open-computer/diagnostics": "workspace:*",
     "@types/node": "24.19.2",
     "typescript": "5.9.3",
     "vitest": "4.1.12"

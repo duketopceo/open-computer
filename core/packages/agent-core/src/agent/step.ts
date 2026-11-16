@@ -90,7 +90,7 @@ async function runCalls(start: AgentState, deps: AgentDeps, approvedCallId: stri
       state = observe(state, deps, call, "error", `Unknown tool "${call.name}".`, 0);
     } else {
       if (!preApproved) {
-        const raw = deps.policy.decide(tool.spec.risk);
+        const raw = deps.policy.decide(tool.spec.risk, call.name);
         const verdict = tool.spec.trusted && raw === "ask" ? "allow" : raw;
         if (verdict === "deny") {
           state = observe(state, deps, call, "denied", "This action is blocked by policy.", 0);
