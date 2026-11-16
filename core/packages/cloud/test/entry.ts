@@ -41,6 +41,9 @@ export class SessionDO extends BaseSessionDO {
       throw new Error("audit ledger unavailable");
     }
   }
+  protected override makeFetch(): FetchLike {
+    return (url, init) => doubles().fetch(url, init);
+  }
   protected override makeSandboxFactory(): SandboxFactory {
     return (taskId) => doubles().sandbox(taskId);
   }

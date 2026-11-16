@@ -23,9 +23,12 @@ import {
   isTerminal,
   type ApprovalOutcome,
   type ToolOutcome,
+  webSearchTool,
+  type FetchLike,
 } from "@open-computer/agent-core";
 import type { Env } from "./env.ts";
-import { buildProvider } from "./models/gateway.ts";
+import { buildProvider, providerTarget } from "./models/gateway.ts";
+import { readSecret } from "./models/secrets.ts";
 import { SandboxManager, sandboxTools, type SandboxFactory } from "./sandbox/port.ts";
 import { cloudflareSandbox } from "./sandbox/cloudflare-port.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
@@ -118,6 +121,11 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   // ---- hooks ----
+
+  /** Outbound fetch for tools that call the model provider directly (web search). Tests override it. */
+  protected makeFetch(): FetchLike {
+    return (url, init) => fetch(url, init);
+  }
 
   protected makeProvider(): Provider {
     return buildProvider(this.env, (url, init) => fetch(url, init));
@@ -358,12 +366,19 @@ export class SessionDO extends DurableObject<Env> {
   private depsFor(taskId: string, stored: StoredTask, stepKey: string): AgentDeps {
     const memory = this.memoryFor(stored.meta.memoryEnabled);
     const sandboxes = this.sandboxManager();
+    const guard = new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() });
+    const search = webSearchTool({
+      fetch: this.makeFetch(),
+      baseUrl: providerTarget(this.env).baseUrl,
+      apiKey: () => readSecret(this.env.MODEL_KEY, "model_key"),
+      guard,
+    });
     return {
       provider: this.makeProvider(),
-      tools: new ToolRegistry([...memory.tools(), ...sandboxTools(sandboxes, taskId)]),
+      tools: new ToolRegistry([...memory.tools(), ...sandboxTools(sandboxes, taskId), search]),
       policy: defaultPolicy,
       approvals: this.approvalRequester(stepKey),
-      guard: new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() }),
+      guard,
       prices: staticPriceBook({}),
       emit: (body) => {
         // Once cancelled, an in-flight step must not add events after the cancel.

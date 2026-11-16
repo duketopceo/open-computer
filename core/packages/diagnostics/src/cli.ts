@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createControlPlane, readState, wranglerRunner } from "./control.ts";
+import { updateCore } from "./update.ts";
 import { buildReport, runWizard, stepsFor, type Backend, type Ctx, type Row } from "./wizard.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,8 +29,28 @@ export function formatRow(r: Row, frame = 0): string[] {
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...args] = argv;
+  if (cmd === "update") {
+    const state = readState();
+    const url = flag(args, "url") ?? process.env.OC_CLOUD_URL ?? state.url ?? "";
+    const token = process.env.OC_CLOUD_TOKEN ?? state.token ?? "";
+    const result = await updateCore({
+      run: wranglerRunner(cloudDir),
+      config: path.join(cloudDir, "wrangler.deploy.jsonc"),
+      workerName: "open-computer-core",
+      healthy: async () => {
+        try {
+          const res = await fetch(`${url.replace(/\/+$/, "")}/v1/health`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+          return res.status === 200;
+        } catch {
+          return false;
+        }
+      },
+    });
+    console.log(result.message);
+    return result.ok ? 0 : 1;
+  }
   if (cmd !== "doctor" && cmd !== "setup") {
-    console.log("usage: oc <doctor|setup> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
+    console.log("usage: oc <doctor|setup|update> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
     return 2;
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;
