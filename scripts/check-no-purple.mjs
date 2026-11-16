@@ -44,7 +44,7 @@ export function findViolations(text) {
       const v = hueSat(parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16));
       if (isPurple(v)) out.push({ line: i + 1, why: `hex ${m[0]} is purple (hue ${Math.round(v.h)})` });
     }
-    for (const m of line.matchAll(/rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/g)) {
+    for (const m of line.matchAll(/rgba?8?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/g)) {
       const v = hueSat(+m[1], +m[2], +m[3]);
       if (isPurple(v)) out.push({ line: i + 1, why: `${m[0]}) is purple (hue ${Math.round(v.h)})` });
     }

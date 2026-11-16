@@ -5,6 +5,7 @@
 
 mod app;
 mod screens;
+mod theme;
 
 use app::App;
 use rune::AppSpec;

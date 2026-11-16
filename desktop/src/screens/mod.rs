@@ -12,7 +12,7 @@ use shell_core::onboarding::Step;
 use crate::app::App;
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
-    let k = rune_theme_opencode::kit(cx.system_dark());
+    let k = crate::theme::kit(cx.system_dark());
     let (position, body) = match s.onboarding.step() {
         Step::Connect => (1, connect::view(s, k)),
         Step::ModelKey => (2, model_key::view(s, k)),
