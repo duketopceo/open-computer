@@ -60,7 +60,9 @@ export interface AccountReply {
 
 const fail = (e: unknown): AccountReply => {
   const s = sdkStatus(e);
-  if (s === 401 || s === 403) return { status: 401, body: { error: { code: "key_invalid", message: "OpenRouter rejected the key." } } };
+  // Only 401 means the key is bad. A 403 is a permission the key lacks (credits need a management key), not a rejected key.
+  if (s === 401) return { status: 401, body: { error: { code: "key_invalid", message: "OpenRouter rejected the key." } } };
+  if (s === 403) return { status: 403, body: { error: { code: "forbidden", message: "OpenRouter does not allow this key to read that." } } };
   if (s === 402) return { status: 402, body: { error: { code: "payment_required", message: "The key has no credit or limit left." } } };
   if (s === 429) return { status: 429, body: { error: { code: "rate_limited", message: "OpenRouter is rate limiting this key." } } };
   return { status: 502, body: { error: { code: s === null ? "unreachable" : "openrouter_error", message: "OpenRouter could not answer." } } };
@@ -87,6 +89,11 @@ const keyBody = (d: Record<string, unknown>) => ({
   limit: num(d.limit),
   limit_remaining: num(d.limit_remaining ?? d.limitRemaining),
   is_free_tier: (d.is_free_tier ?? d.isFreeTier) === true,
+  /** How often the limit resets: `daily`, `weekly`, `monthly`, or null when it never does. */
+  limit_reset: typeof (d.limit_reset ?? d.limitReset) === "string" ? String(d.limit_reset ?? d.limitReset) : null,
+  usage_daily: num(d.usage_daily ?? d.usageDaily),
+  usage_weekly: num(d.usage_weekly ?? d.usageWeekly),
+  usage_monthly: num(d.usage_monthly ?? d.usageMonthly),
 });
 
 /** `GET /v1/openrouter/key`: usage and limit of the stored key. The key itself is never returned. */
@@ -106,16 +113,20 @@ export async function accountKey(c: AccountContext): Promise<AccountReply> {
 
 /** `GET /v1/openrouter/credits`. */
 export async function accountCredits(c: AccountContext): Promise<AccountReply> {
+  // An ordinary key (what the OAuth sign-in makes) cannot read account credits: OpenRouter answers 403. That is not a
+  // rejected key, so say plainly that credits need a management key and let the key's own usage and limit speak.
+  const needsManagement: AccountReply = { status: 200, body: { available: false, reason: "management_key_required" } };
   try {
     const d = (await openRouterSdk(c.apiKey, c.fetch, c.serverURL).credits.getCredits()).data;
-    return { status: 200, body: { total: num(d.totalCredits) ?? 0, used: num(d.totalUsage) ?? 0 } };
+    return { status: 200, body: { available: true, total: num(d.totalCredits) ?? 0, used: num(d.totalUsage) ?? 0 } };
   } catch (e) {
+    if (sdkStatus(e) === 403) return needsManagement;
     if (!isValidationError(e)) return fail(e);
     try {
       const d = rec((await raw(c, "/credits")).data);
-      return { status: 200, body: { total: num(d.total_credits) ?? 0, used: num(d.total_usage) ?? 0 } };
+      return { status: 200, body: { available: true, total: num(d.total_credits) ?? 0, used: num(d.total_usage) ?? 0 } };
     } catch (e2) {
-      return fail(e2);
+      return sdkStatus(e2) === 403 ? needsManagement : fail(e2);
     }
   }
 }

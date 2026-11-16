@@ -17,6 +17,9 @@ use sha2::{Digest, Sha256};
 
 pub const BASE: &str = "https://openrouter.ai";
 
+/// The error text for HTTP 403: the key is fine but is not allowed to read this (account credits need a management key).
+pub const FORBIDDEN: &str = "OpenRouter does not allow this key to read that.";
+
 // ---------- PKCE ----------
 
 pub struct Pkce {
@@ -201,6 +204,56 @@ pub struct KeyInfo {
     pub limit: Option<f64>,
     pub limit_remaining: Option<f64>,
     pub is_free_tier: bool,
+    /// How often the limit resets: `daily`, `weekly`, `monthly`, or none when it never does.
+    pub limit_reset: Option<String>,
+    pub usage_daily: Option<f64>,
+    pub usage_weekly: Option<f64>,
+    pub usage_monthly: Option<f64>,
+}
+
+impl KeyInfo {
+    /// One plain line about the key. `usage` is lifetime spend, so against a limit that resets it is not shown; the
+    /// spend for the current period is, with what is left and when the limit resets.
+    pub fn line(&self) -> String {
+        let tier = if self.is_free_tier {
+            " (free tier)"
+        } else {
+            ""
+        };
+        let name = &self.label;
+        let Some(limit) = self.limit else {
+            return format!("Key {name}: used {}, no limit{tier}", dollars(self.usage));
+        };
+        let left = self
+            .limit_remaining
+            .map_or(String::new(), |r| format!(", {} left", dollars(r)));
+        let period = match self.limit_reset.as_deref() {
+            Some("daily") => Some(("today", "daily", self.usage_daily)),
+            Some("weekly") => Some(("this week", "weekly", self.usage_weekly)),
+            Some("monthly") => Some(("this month", "monthly", self.usage_monthly)),
+            _ => None,
+        };
+        match period {
+            Some((when, resets, spent)) => {
+                // Without the period's own figure, what is left says what was spent this period.
+                let spent = spent.or_else(|| self.limit_remaining.map(|r| (limit - r).max(0.0)));
+                let used = spent.map_or(String::new(), |s| {
+                    format!("used {} of {} {when}", dollars(s), dollars(limit))
+                });
+                let used = if used.is_empty() {
+                    format!("limit {}", dollars(limit))
+                } else {
+                    used
+                };
+                format!("Key {name}: {used}{left}, resets {resets}{tier}")
+            }
+            None => format!(
+                "Key {name}: used {} of {}{left}{tier}",
+                dollars(self.usage),
+                dollars(limit)
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -271,7 +324,8 @@ impl Client {
             .map_err(|_| "OpenRouter could not be reached.".to_owned())?;
         match read_body(r) {
             (200, v) => Ok(v),
-            (401 | 403, _) => Err("OpenRouter rejected the key.".to_owned()),
+            (401, _) => Err("OpenRouter rejected the key.".to_owned()),
+            (403, _) => Err(FORBIDDEN.to_owned()),
             (c, _) => Err(format!("OpenRouter answered with an error ({c}).")),
         }
     }
@@ -292,6 +346,13 @@ impl Client {
                 .get("is_free_tier")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            limit_reset: d
+                .get("limit_reset")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            usage_daily: opt(d, "usage_daily"),
+            usage_weekly: opt(d, "usage_weekly"),
+            usage_monthly: opt(d, "usage_monthly"),
         })
     }
 
@@ -372,6 +433,8 @@ pub struct Account {
     pub source: Source,
     pub key: Option<KeyInfo>,
     pub credits: Option<Credits>,
+    /// Credits were asked for and OpenRouter only shows them to management keys (an ordinary key gets a 403).
+    pub credits_need_management_key: bool,
     pub models: Vec<ModelPrice>,
     pub generations: Vec<Generation>,
     pub problems: Vec<String>,
@@ -388,7 +451,8 @@ pub fn load_account(c: &Client, recent_generation_ids: &[String]) -> Account {
     }
     match c.credits() {
         Ok(k) => a.credits = Some(k),
-        // Credits are not available to every key; that is not an error worth alarming over.
+        // An ordinary key (what Connect OpenRouter makes) cannot read account credits. That is not a problem with the key.
+        Err(e) if e == FORBIDDEN => a.credits_need_management_key = true,
         Err(e) => a.problems.push(format!("Credits: {e}")),
     }
     match c.models() {
@@ -427,6 +491,10 @@ pub fn load_account_via_core(ep: &crate::chat::Endpoint) -> Option<Account> {
                 limit: opt(&v, "limit"),
                 limit_remaining: opt(&v, "limit_remaining"),
                 is_free_tier: v["is_free_tier"].as_bool().unwrap_or(false),
+                limit_reset: v["limit_reset"].as_str().map(str::to_owned),
+                usage_daily: opt(&v, "usage_daily"),
+                usage_weekly: opt(&v, "usage_weekly"),
+                usage_monthly: opt(&v, "usage_monthly"),
             });
         }
         Ok((401, _)) => a
@@ -439,10 +507,14 @@ pub fn load_account_via_core(ep: &crate::chat::Endpoint) -> Option<Account> {
             .push(format!("OpenRouter answered with an error ({c}).")),
     }
     if let Ok((200, v)) = get("credits") {
-        a.credits = Some(Credits {
-            total: num(&v, "total"),
-            used: num(&v, "used"),
-        });
+        if v["available"].as_bool() == Some(false) {
+            a.credits_need_management_key = true;
+        } else {
+            a.credits = Some(Credits {
+                total: num(&v, "total"),
+                used: num(&v, "used"),
+            });
+        }
     }
     if let Ok((200, v)) = get("models") {
         let mut m: Vec<ModelPrice> = v["models"]
@@ -535,7 +607,12 @@ mod tests {
                     .iter()
                     .find(|(p, _)| first.contains(p))
                     .map(|(_, b)| b.clone());
-                let (code, body) = body.map_or((404, "{}".to_owned()), |b| (200, b));
+                // A route body starting with "403:" answers with that status.
+                let (code, body) =
+                    body.map_or((404, "{}".to_owned()), |b| match b.strip_prefix("403:") {
+                        Some(rest) => (403, rest.to_owned()),
+                        None => (200, b),
+                    });
                 let _ = write!(
                     s,
                     "HTTP/1.1 {code} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -627,6 +704,89 @@ mod tests {
         assert!(!format!("{c:?}").contains("sk-or-secret"));
         assert_eq!(dollars(0.0021), "$0.0021");
         assert_eq!(dollars(16.5), "$16.50");
+    }
+
+    #[test]
+    fn a_403_on_credits_means_a_management_key_is_needed_not_a_rejected_key() {
+        let (base, _) = fake_server(vec![
+            ("/api/v1/key", r#"{"data":{"label":"k","usage":82.29,"limit":50,"limit_remaining":12.5,"limit_reset":"monthly","usage_monthly":37.5,"is_free_tier":false}}"#.to_owned()),
+            ("/api/v1/credits", r#"403:{"error":{"code":403,"message":"Only management keys can fetch credits for an account"}}"#.to_owned()),
+            ("/api/v1/models", r#"{"data":[]}"#.to_owned()),
+        ]);
+        let a = load_account(&Client::new(&base, "k"), &[]);
+        assert!(a.credits.is_none() && a.credits_need_management_key);
+        assert!(a.problems.is_empty(), "{:?}", a.problems);
+        assert_eq!(
+            a.key.as_ref().unwrap().limit_reset.as_deref(),
+            Some("monthly")
+        );
+        // A 403 is never reported as a rejected key; only a 401 is.
+        let (b401, _) = fake_server(vec![]);
+        assert!(Client::new(&b401, "k").key_info().is_err());
+    }
+
+    #[test]
+    fn a_core_that_says_credits_are_unavailable_sets_the_same_flag() {
+        let (base, _) = fake_server(vec![
+            ("/v1/openrouter/key", r#"{"label":"k","usage":82.29,"limit":50,"limit_remaining":12.5,"limit_reset":"monthly","usage_monthly":37.5,"is_free_tier":false}"#.to_owned()),
+            ("/v1/openrouter/credits", r#"{"available":false,"reason":"management_key_required"}"#.to_owned()),
+        ]);
+        let a = load_account_via_core(&crate::chat::Endpoint::new(&base, "t")).unwrap();
+        assert!(a.credits.is_none() && a.credits_need_management_key);
+        assert_eq!(a.key.unwrap().usage_monthly, Some(37.5));
+    }
+
+    #[test]
+    fn the_key_line_shows_this_periods_spend_and_when_it_resets_not_lifetime_usage() {
+        let base = KeyInfo {
+            label: "k".into(),
+            usage: 82.29,
+            limit: Some(50.0),
+            limit_remaining: Some(12.5),
+            limit_reset: Some("monthly".into()),
+            usage_monthly: Some(37.5),
+            ..KeyInfo::default()
+        };
+        assert_eq!(
+            base.line(),
+            "Key k: used $37.50 of $50.00 this month, $12.50 left, resets monthly"
+        );
+        assert!(!base.line().contains("82.29"));
+        // Without the period's own figure, the limit minus what is left says what was spent this period.
+        let derived = KeyInfo {
+            usage_monthly: None,
+            ..base.clone()
+        };
+        assert_eq!(
+            derived.line(),
+            "Key k: used $37.50 of $50.00 this month, $12.50 left, resets monthly"
+        );
+        let weekly = KeyInfo {
+            limit_reset: Some("weekly".into()),
+            usage_weekly: Some(4.0),
+            ..base.clone()
+        };
+        assert!(
+            weekly.line().contains("used $4.00 of $50.00 this week")
+                && weekly.line().ends_with("resets weekly")
+        );
+        // A limit that never resets is a lifetime figure, so lifetime usage is the right thing to show.
+        let lifetime = KeyInfo {
+            limit_reset: None,
+            usage: 1.25,
+            limit: Some(10.0),
+            limit_remaining: Some(8.75),
+            ..KeyInfo::default()
+        };
+        assert_eq!(lifetime.line(), "Key : used $1.25 of $10.00, $8.75 left");
+        assert_eq!(
+            KeyInfo {
+                usage: 2.0,
+                ..KeyInfo::default()
+            }
+            .line(),
+            "Key : used $2.00, no limit"
+        );
     }
 
     #[test]

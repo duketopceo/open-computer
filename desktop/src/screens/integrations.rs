@@ -126,19 +126,7 @@ pub fn openrouter(s: &App, k: &Kit) -> El {
     let Some(a) = &s.or_account else { return sec };
     sec = sec.child(note(k, a.source.words()));
     if let Some(key) = &a.key {
-        let limit = key.limit.map_or_else(|| "no limit".to_owned(), dollars);
-        let left = key
-            .limit_remaining
-            .map_or(String::new(), |r| format!(", {} left", dollars(r)));
-        sec = sec.child(line(
-            k,
-            format!(
-                "Key {}: used {} of {limit}{left}{}",
-                key.label,
-                dollars(key.usage),
-                if key.is_free_tier { " (free tier)" } else { "" }
-            ),
-        ));
+        sec = sec.child(line(k, key.line()));
     }
     if let Some(c) = &a.credits {
         sec = sec.child(line(
@@ -149,6 +137,12 @@ pub fn openrouter(s: &App, k: &Kit) -> El {
                 dollars(c.used),
                 dollars(c.remaining())
             ),
+        ));
+    }
+    if a.credits_need_management_key {
+        sec = sec.child(note(
+            k,
+            "Credits: OpenRouter only shows account credits to management keys. This key's own usage and limit are above.",
         ));
     }
     for p in &a.problems {

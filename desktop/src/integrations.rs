@@ -281,7 +281,7 @@ impl App {
 
     /// Fake state for headless screenshots only (`OC_SCREEN_FIXTURE=1`); never touches the network or any account.
     pub fn apply_screen_fixture(&mut self) {
-        use shell_core::openrouter::{Account, Credits, Generation, KeyInfo, ModelPrice};
+        use shell_core::openrouter::{Account, Generation, KeyInfo, ModelPrice};
         self.harness = Harness::Hermes;
         self.harness_info = vec![
             harness::Detected {
@@ -304,15 +304,17 @@ impl App {
             source: shell_core::openrouter::Source::Core,
             key: Some(KeyInfo {
                 label: "sk-or-v1-abc...xyz".into(),
-                usage: 1.25,
-                limit: Some(10.0),
-                limit_remaining: Some(8.75),
+                usage: 82.29,
+                limit: Some(50.0),
+                limit_remaining: Some(12.5),
                 is_free_tier: false,
+                limit_reset: Some("monthly".into()),
+                usage_daily: Some(1.1),
+                usage_weekly: Some(7.7),
+                usage_monthly: Some(37.5),
             }),
-            credits: Some(Credits {
-                total: 20.0,
-                used: 3.5,
-            }),
+            credits: None,
+            credits_need_management_key: true,
             models: vec![
                 ModelPrice {
                     id: "vendor/small".into(),

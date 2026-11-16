@@ -28,7 +28,7 @@ describe("OpenRouter account routes (official SDK behind the core's own auth)", 
     });
     const key = await (await api("/v1/openrouter/key")).text();
     expect(JSON.parse(key)).toMatchObject({ limit: 10, usage: 1.5, limit_remaining: 8.5, is_free_tier: false });
-    expect(JSON.parse(await (await api("/v1/openrouter/credits")).text())).toEqual({ total: 20, used: 3.5 });
+    expect(JSON.parse(await (await api("/v1/openrouter/credits")).text())).toEqual({ available: true, total: 20, used: 3.5 });
     const models = JSON.parse(await (await api("/v1/openrouter/models")).text()) as { models: Array<{ id: string; prompt_per_m: number }> };
     expect(models.models[0]).toMatchObject({ id: "a/cheap" });
     expect(models.models[0]?.prompt_per_m).toBeCloseTo(0.1, 6);
@@ -42,6 +42,20 @@ describe("OpenRouter account routes (official SDK behind the core's own auth)", 
     const res = await api("/v1/openrouter/key");
     expect(res.status).toBe(401);
     expect(await res.json()).toMatchObject({ error: { code: "key_invalid" } });
+  });
+
+  it("says credits need a management key on a 403, instead of calling a working key rejected", async () => {
+    install([]);
+    setFetch(async () => new Response(JSON.stringify({ error: { code: 403, message: "Only management keys can fetch credits for an account" } }), { status: 403, headers: { "content-type": "application/json" } }));
+    const res = await api("/v1/openrouter/credits");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ available: false, reason: "management_key_required" });
+  });
+
+  it("returns the limit reset and period usage with the key, as the real API sends them", async () => {
+    install([]);
+    setFetch(async () => ok({ data: { label: "k", limit: 50, usage: 82.29, limit_remaining: 12.5, limit_reset: "monthly", usage_daily: 1.1, usage_weekly: 7.7, usage_monthly: 37.5, is_free_tier: false } }));
+    expect(await (await api("/v1/openrouter/key")).json()).toMatchObject({ limit: 50, usage: 82.29, limit_remaining: 12.5, limit_reset: "monthly", usage_monthly: 37.5 });
   });
 });
 
