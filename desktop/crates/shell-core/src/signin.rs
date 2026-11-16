@@ -319,6 +319,15 @@ pub fn gateway_configured(bindings: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
+/// Why a configured gateway is not carrying requests (for example "AI Gateway refused the request (needs authentication)"),
+/// when the core reports one. The core retries such requests directly, so the app still works.
+pub fn gateway_reason(bindings: &serde_json::Value) -> Option<String> {
+    bindings
+        .get("gateway_reason")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
 /// What a request with no credentials to the core's address shows about Access.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessState {
@@ -539,6 +548,11 @@ mod tests {
         );
         assert!(gateway_configured(&serde_json::json!({"gateway": true})));
         assert!(!gateway_configured(&serde_json::json!({"ok": true})));
+        assert_eq!(
+            gateway_reason(&serde_json::json!({"gateway": false, "gateway_reason": "AI Gateway refused the request (needs authentication)."})).as_deref(),
+            Some("AI Gateway refused the request (needs authentication).")
+        );
+        assert_eq!(gateway_reason(&serde_json::json!({"gateway": true})), None);
         assert_eq!(
             classify_access(
                 302,

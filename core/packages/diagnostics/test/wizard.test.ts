@@ -127,6 +127,15 @@ describe("failures are plain and skip what depends on them", () => {
     expect(byId(rows, "net.rtt").status).toBe("pass");
   });
 
+  it("a refused gateway is reported as the gateway refusing, never as OpenRouter rejecting the key", async () => {
+    const rows = await runWizard(stepsFor("cloudflare"), ctx(healthy({ "/v1/diag/openrouter/auth": () => j({ ok: false, code: "gateway_refused" }) })), () => {});
+    const r = byId(rows, "or.auth");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toBe("AI Gateway refused the request (needs authentication).");
+    expect(r.detail).not.toMatch(/rejected the key/);
+    expect(r.fix?.text).not.toMatch(/Create a new key/);
+  });
+
   it("a version mismatch fails the health row and names both versions", async () => {
     const rows = await runWizard(stepsFor("cloudflare"), ctx(healthy({ "/v1/health": () => j({ ok: true, version: "0.2.0" }) })), () => {});
     expect(byId(rows, "backend.health").status).toBe("fail");

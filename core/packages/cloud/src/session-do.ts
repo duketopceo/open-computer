@@ -31,7 +31,7 @@ import {
   parseItPolicy,
 } from "@open-computer/agent-core";
 import type { Env } from "./env.ts";
-import { buildProvider, resolveTarget } from "./models/gateway.ts";
+import { buildProvider, gatewayFetch, resolveTarget } from "./models/gateway.ts";
 import { readSecret } from "./models/secrets.ts";
 import { loadPriceBook } from "./models/prices.ts";
 import { SandboxManager, sandboxTools, type SandboxFactory } from "./sandbox/port.ts";
@@ -378,7 +378,7 @@ export class SessionDO extends DurableObject<Env> {
     const itPolicy = parseItPolicy(this.policyText());
     const guard = new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() });
     const search = webSearchTool({
-      fetch: this.makeFetch(),
+      fetch: gatewayFetch(this.env, this.makeFetch()),
       baseUrl: async () => (await resolveTarget(this.env)).baseUrl,
       apiKey: () => readSecret(this.env.MODEL_KEY, "model_key"),
       guard,
