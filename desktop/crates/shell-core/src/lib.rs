@@ -10,6 +10,7 @@
 
 pub mod applog;
 pub mod autoconnect;
+pub mod browser;
 pub mod chat;
 pub mod checks;
 pub mod config;

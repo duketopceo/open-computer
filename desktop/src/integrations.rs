@@ -18,6 +18,9 @@ pub fn open_url(url: &str) -> bool {
     if !url.starts_with("https://") {
         return false;
     }
+    if let Some(browser) = shell_core::browser::get() {
+        return shell_core::browser::open_with(&browser, url).is_ok();
+    }
     let (program, lead): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
     } else if cfg!(target_os = "windows") {
@@ -50,6 +53,45 @@ impl App {
                 Msg::HarnessDetected(harness::detect_all(&harness::SystemProbe)),
             )
         });
+    }
+
+    /// Saves the command sign-in pages open with (empty: the system browser) and uses it from now on.
+    pub fn save_signin_browser(&mut self) {
+        let text = self.signin_browser.text.trim().to_owned();
+        shell_core::browser::set(&text);
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.signin_browser = text.clone();
+        let _ = config::save(&path, &saved);
+        shell_core::log_info!(
+            "browser",
+            "sign-in pages open with: {}",
+            if text.is_empty() {
+                "the system browser"
+            } else {
+                "a chosen command"
+            }
+        );
+        self.notice = Some(if text.is_empty() {
+            "Sign-in pages open in your system browser.".to_owned()
+        } else {
+            "Sign-in pages open with that command from now on.".to_owned()
+        });
+    }
+
+    /// Picks a detected browser (or profile) as the command.
+    pub fn pick_signin_browser(&mut self, command: &str) {
+        self.signin_browser.replace_text(command);
+        self.save_signin_browser();
+    }
+
+    /// Turns the moving background on or off and remembers the choice.
+    pub fn set_ambient(&mut self, on: bool) {
+        self.ambient = on;
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.ambient_off = !on;
+        let _ = config::save(&path, &saved);
     }
 
     /// The model Open Computer asks a harness to use: its own default model, mapped to the harness's naming by the adapter, or

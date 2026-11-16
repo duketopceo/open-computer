@@ -175,8 +175,40 @@ pub fn view(s: &App, k: &Kit) -> El {
             "Your browser opens Cloudflare's own page and you click Allow. Nothing is typed or pasted.",
         ));
     }
-    if let Some(w) = who {
+    let account_line = s
+        .cf_state
+        .as_ref()
+        .filter(|c| c.signed_in)
+        .map(|c| c.account_line());
+    if let Some(line) = account_line {
+        one = one.child(
+            col()
+                .key("signed-in-as")
+                .w_full()
+                .gap(4.0)
+                .child(
+                    text(line)
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_strong)
+                        .w_full()
+                        .wrap(),
+                )
+                .child(
+                    row().child(
+                        Button::new("Not you? Switch account")
+                            .variant(ButtonVariant::Neutral)
+                            .disabled(s.signing_in)
+                            .on_press(|s: &mut App| s.switch_cloudflare())
+                            .build(k)
+                            .key("not-you"),
+                    ),
+                ),
+        );
+    } else if let Some(w) = who {
         one = one.child(caption(k, format!("Signed in as {w}.")));
+    }
+    if !(signed || connected) {
+        one = one.child(caption(k, shell_core::signin::CONSENT_TIP));
     }
     if !local_only && !(signed || connected) {
         one = one.child(action(

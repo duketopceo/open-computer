@@ -41,15 +41,7 @@ fn badge(k: &Kit, label: &str, on: bool) -> El {
 }
 
 fn opt(k: &Kit, key: String, label: &str, on: bool, press: impl Fn(&mut App) + 'static) -> El {
-    Button::new(label.to_owned())
-        .variant(if on {
-            ButtonVariant::Submit
-        } else {
-            ButtonVariant::Neutral
-        })
-        .on_press(press)
-        .build(k)
-        .key(key)
+    crate::controls::choice(k, key, label, on, true, press)
 }
 
 /// Which model a harness runs: Open Computer's own, translated to the harness's naming, or the harness's default.
@@ -118,16 +110,14 @@ pub fn harness(s: &App, k: &Kit) -> El {
                     row()
                         .gap(8.0)
                         .center_y()
-                        .child(
-                            Button::new(h.label())
-                                .variant(if chosen {
-                                    ButtonVariant::Submit
-                                } else {
-                                    ButtonVariant::Neutral
-                                })
-                                .on_press(move |s: &mut App| s.set_harness(h))
-                                .build(k),
-                        )
+                        .child(crate::controls::choice(
+                            k,
+                            format!("harness-pick-{}", h.id()),
+                            h.label(),
+                            chosen,
+                            true,
+                            move |s: &mut App| s.set_harness(h),
+                        ))
                         .child(badge(
                             k,
                             if chosen { "In use" } else { "Not in use" },

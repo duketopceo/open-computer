@@ -18,6 +18,12 @@ pub struct Saved {
     /// `builtin`, `hermes` or `opencode`.
     #[serde(default)]
     pub harness: String,
+    /// The command sign-in pages open with (empty: the system browser), for example `chromium --profile-directory="Profile 2"`.
+    #[serde(default)]
+    pub signin_browser: String,
+    /// The person turned the moving background off (it is on unless this is set).
+    #[serde(default)]
+    pub ambient_off: bool,
     /// The person agreed to use the token in `cloud.json` for this session when the keyring refuses to hold it.
     #[serde(default)]
     pub file_token_ok: bool,
@@ -73,6 +79,8 @@ mod tests {
             local_only: false,
             setup_done: true,
             harness: "hermes".into(),
+            ambient_off: true,
+            signin_browser: "firefox -P work".into(),
             file_token_ok: true,
             harness_key: true,
             harness_native_model: vec!["opencode".into()],

@@ -18,6 +18,9 @@ pub const REQUIRED_SCOPES: [&str; 10] = [
     "cloudchamber:write",
 ];
 
+/// Shown where Cloudflare's consent page is about to open.
+pub const CONSENT_TIP: &str = "Cloudflare will use the account your browser is signed in to.";
+
 pub fn sign_in_args() -> Vec<String> {
     let mut v = vec!["login".to_owned(), "--scopes".to_owned()];
     v.extend(REQUIRED_SCOPES.iter().map(|s| (*s).to_owned()));
@@ -34,6 +37,19 @@ pub struct SignIn {
 }
 
 impl SignIn {
+    /// "Signed in as me@example.com · My Account." The line shown right after any sign-in, so a wrong account is seen at once.
+    pub fn account_line(&self) -> String {
+        let who = self
+            .email
+            .clone()
+            .unwrap_or_else(|| "your Cloudflare account".to_owned());
+        if self.accounts.is_empty() {
+            format!("Signed in as {who}.")
+        } else {
+            format!("Signed in as {who} \u{b7} {}.", self.accounts.join(", "))
+        }
+    }
+
     /// One plain line for the Connect screen.
     pub fn summary(&self) -> String {
         if !self.signed_in {
@@ -507,14 +523,31 @@ pub fn sign_in_with_timing(
     silence: std::time::Duration,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<SignIn, String> {
+    sign_in_with_browser(cmd, silence, None, on_progress)
+}
+
+/// [`sign_in_with_timing`] with an explicit browser command (none: Wrangler opens the system browser itself).
+pub fn sign_in_with_browser(
+    cmd: &[String],
+    silence: std::time::Duration,
+    chosen: Option<String>,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<SignIn, String> {
     on_progress(Progress::say("Starting Wrangler…"));
     let mut last = String::new();
     let mut link: Option<String> = None;
+    // A chosen browser: Wrangler is told not to open one (`--browser=false`; its opener ignores BROWSER), and the address it prints
+    // is opened with the chosen command, once.
+    let mut args = sign_in_args();
+    if chosen.is_some() {
+        args.push("--browser=false".to_owned());
+    }
+    let mut opened = false;
     let ok = {
         let on_progress = std::cell::RefCell::new(&mut *on_progress);
         run_lines_ex(
             cmd,
-            &sign_in_args(),
+            &args,
             silence,
             &mut |l| {
                 let clean = strip_ansi(l);
@@ -523,7 +556,19 @@ pub fn sign_in_with_timing(
                 if let Some(u) = extract_url(&clean)
                     && is_cloudflare_url(&u)
                 {
-                    link = Some(u);
+                    link = Some(u.clone());
+                    if let (Some(browser), false) = (&chosen, opened) {
+                        opened = true;
+                        match crate::browser::open_with(browser, &u) {
+                            Ok(()) => (on_progress.borrow_mut())(Progress::say(
+                                "Opened the sign-in page in the browser you chose. Click Allow there.",
+                            )),
+                            Err(e) => (on_progress.borrow_mut())(Progress {
+                                text: format!("{e} Use the button to open the sign-in page."),
+                                open_url: Some(u),
+                            }),
+                        }
+                    }
                 }
                 let p = if browser_did_not_open(&lower) {
                     link.clone().map(|u| Progress {
@@ -556,7 +601,7 @@ pub fn sign_in_with(
     cmd: &[String],
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<SignIn, String> {
-    sign_in_with_timing(cmd, SILENCE, on_progress)
+    sign_in_with_browser(cmd, SILENCE, crate::browser::get(), on_progress)
 }
 
 /// Finds Wrangler, says which one it is, then signs in.
@@ -1132,5 +1177,86 @@ mod tests {
             Some("Cloudflare accepted the sign-in.")
         );
         assert_eq!(progress_line("random chatter"), None);
+    }
+
+    #[test]
+    fn the_account_line_names_the_email_and_the_account() {
+        let st = SignIn {
+            signed_in: true,
+            email: Some("me@example.com".into()),
+            accounts: vec!["My Account".into()],
+            ..SignIn::default()
+        };
+        assert_eq!(
+            st.account_line(),
+            "Signed in as me@example.com \u{b7} My Account."
+        );
+        let bare = SignIn {
+            signed_in: true,
+            ..SignIn::default()
+        };
+        assert_eq!(bare.account_line(), "Signed in as your Cloudflare account.");
+    }
+
+    #[test]
+    fn with_a_chosen_browser_wrangler_is_told_not_to_open_one_and_the_printed_address_opens_in_the_chosen_one()
+     {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("oc-signin-browser-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (args_seen, url_seen) = (dir.join("args.txt"), dir.join("url.txt"));
+        let wrangler = dir.join("wrangler.sh");
+        std::fs::write(
+            &wrangler,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> '{}'\nif [ \"$1\" = login ]; then echo 'Visit this link to authenticate: https://dash.cloudflare.com/oauth2/auth?client_id=x'; exit 0; fi\nif [ \"$1\" = whoami ]; then echo 'You are logged in with an OAuth Token, associated with the email me@example.com.'; fi\n",
+                args_seen.display()
+            ),
+        )
+        .unwrap();
+        let browser = dir.join("browser.sh");
+        std::fs::write(
+            &browser,
+            format!("#!/bin/sh\necho \"$@\" > '{}'\n", url_seen.display()),
+        )
+        .unwrap();
+        for f in [&wrangler, &browser] {
+            std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // The browser is passed in, not set for the process: other tests sign in at the same time.
+        let chosen = format!("{} --profile-directory=\"Profile 2\"", browser.display());
+        let mut said = Vec::new();
+        let r = sign_in_with_browser(
+            &[wrangler.display().to_string()],
+            std::time::Duration::from_secs(5),
+            Some(chosen),
+            &mut |p| said.push(p.text),
+        );
+        assert!(r.is_ok(), "{r:?}");
+        let args = std::fs::read_to_string(&args_seen).unwrap();
+        assert!(
+            args.lines().next().unwrap().contains("--browser=false"),
+            "{args}"
+        );
+        for _ in 0..100 {
+            if url_seen.exists()
+                && std::fs::metadata(&url_seen)
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        assert_eq!(
+            std::fs::read_to_string(&url_seen).unwrap().trim(),
+            "--profile-directory=Profile 2 https://dash.cloudflare.com/oauth2/auth?client_id=x"
+        );
+        assert!(
+            said.iter().any(|t| t.contains("browser you chose")),
+            "{said:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -342,6 +342,10 @@ impl App {
             return;
         }
         self.harness = shell_core::harness::Harness::from_id(&saved.harness);
+        self.ambient = !saved.ambient_off;
+        shell_core::browser::set(&saved.signin_browser);
+        self.signin_browser.replace_text(&saved.signin_browser);
+        self.browsers = shell_core::browser::detect();
         self.harness_key = saved.harness_key;
         self.harness_native = saved.harness_native_model.clone();
         self.onboarding.set_local_only(saved.local_only);

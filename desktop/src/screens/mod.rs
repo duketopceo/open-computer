@@ -25,6 +25,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
                 .fill(k.c.page)
                 .w_full()
                 .h_full()
+                .child(crate::ambient::layer(k, s.ambient))
                 .child(main_view::view(s, k, m)),
             [],
         );
@@ -88,6 +89,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
             .w_full()
             .h_full()
             .items_center()
+            .child(crate::ambient::layer(k, s.ambient))
             .child(page),
         [],
     )
@@ -216,6 +218,8 @@ mod settings_tests;
 
 #[cfg(test)]
 mod start_tests;
+#[cfg(test)]
+mod ui_tests;
 
 #[cfg(test)]
 mod workspace_tests;

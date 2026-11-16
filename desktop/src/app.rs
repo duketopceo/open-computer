@@ -99,6 +99,12 @@ pub struct App {
     pub model_key: TextEdit,
     /// A plain-words message for the person, or none.
     pub notice: Option<String>,
+    /// The slow moving background (Settings > About > Appearance). On unless the person turned it off.
+    pub ambient: bool,
+    /// The command sign-in pages open with, being edited (saved with the Save button).
+    pub signin_browser: TextEdit,
+    /// Browsers found on this computer, for the picker.
+    pub browsers: Vec<shell_core::browser::Detected>,
     pub testing: bool,
     /// The full test chain's rows, shown with a spinner on the running one.
     pub diag_rows: Vec<Row>,
@@ -228,6 +234,9 @@ impl App {
             cloud_secret: TextEdit::new("").secure(),
             model_key: TextEdit::new("").secure(),
             notice: None,
+            ambient: true,
+            signin_browser: TextEdit::new(""),
+            browsers: Vec::new(),
             testing: false,
             diag_rows: initial_rows(),
             diag_running: false,

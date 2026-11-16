@@ -177,15 +177,12 @@ pub fn page(s: &App, k: &Kit, m: &Main) -> El {
                 .focusable(true)
                 .w_full()
                 .padding(8.0)
-                .radius(8.0)
-                .child(text(sec.label()).font(k.ty.ui).color(if on {
-                    k.c.text_strong
-                } else {
-                    k.c.text_base
-                }));
-            if on {
-                r = r.fill(k.c.layer_02);
-            }
+                .child(
+                    text(sec.label())
+                        .font(k.ty.ui)
+                        .color(crate::controls::ink(k, on)),
+                );
+            r = crate::controls::style(k, r, on, true, false);
             n = n.child(r.on_press(move |s: &mut App| s.open_section(sec)));
         }
         n
@@ -456,12 +453,15 @@ fn models_table(s: &App, k: &Kit) -> El {
         } else {
             ""
         };
-        Button::new(format!("{label}{arrow}"))
-            .variant(ButtonVariant::Ghost)
-            .on_press(move |s: &mut App| s.sort_models(col_sort))
-            .build(k)
-            .key(key.to_owned())
-            .w(w)
+        crate::controls::choice(
+            k,
+            key,
+            &format!("{label}{arrow}"),
+            sort == col_sort,
+            true,
+            move |s: &mut App| s.sort_models(col_sort),
+        )
+        .w(w)
     };
     c = c.child(
         row()
@@ -616,6 +616,61 @@ fn generation_row(k: &Kit, i: usize, g: &Generation) -> El {
 
 // ---------- 2. Cloudflare ----------
 
+/// Which browser sign-in pages open in: the page uses whatever account that browser is signed in to.
+fn browser_card(s: &App, k: &Kit) -> El {
+    let current = s.signin_browser.text.trim().to_owned();
+    let mut c = card(k, "cf-browser", "Open sign-in pages with")
+        .child(note(
+            k,
+            "Cloudflare and OpenRouter show their consent page in a browser, and it uses the account that browser is signed in to. Choose the browser or profile that holds the right one. Empty uses your system browser.",
+        ))
+        .child(
+            TextInput::new(&s.signin_browser)
+                .placeholder("system browser, or a command such as chromium --profile-directory=\"Profile 2\"")
+                .on_edit(|s: &mut App| &mut s.signin_browser)
+                .width(None)
+                .build(k),
+        );
+    let mut picks = row().key("browser-picks").w_full().gap(8.0);
+    picks = picks.child(crate::controls::choice(
+        k,
+        "browser-system",
+        "System browser",
+        current.is_empty(),
+        true,
+        |s: &mut App| s.pick_signin_browser(""),
+    ));
+    for (i, d) in s.browsers.iter().take(8).enumerate() {
+        let command = d.command.clone();
+        picks = picks.child(crate::controls::choice(
+            k,
+            format!("browser-{i}"),
+            &d.label,
+            current == d.command,
+            true,
+            move |s: &mut App| s.pick_signin_browser(&command),
+        ));
+    }
+    c = c.child(picks);
+    c.child(
+        row().child(
+            Button::new("Save")
+                .variant(ButtonVariant::Neutral)
+                .on_press(|s: &mut App| s.save_signin_browser())
+                .build(k)
+                .key("browser-save"),
+        ),
+    )
+    .child(note(
+        k,
+        if s.browsers.is_empty() {
+            "No other browser was found on this computer. Type the command if you use one."
+        } else {
+            "Found on this computer. Profiles are listed by folder name."
+        },
+    ))
+}
+
 fn cloudflare(s: &App, k: &Kit, m: &Main) -> El {
     let mut sec = col().w_full().gap(16.0);
 
@@ -728,7 +783,35 @@ fn cloudflare(s: &App, k: &Kit, m: &Main) -> El {
         }
         _ => {}
     }
+    // Right after any sign-in the account is stated plainly, with the way out if it is the wrong one.
+    if let Some(c) = s.cf_state.as_ref().filter(|c| c.signed_in) {
+        account = account.child(
+            col()
+                .key("cf-who")
+                .w_full()
+                .gap(4.0)
+                .child(
+                    text(c.account_line())
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_strong)
+                        .w_full()
+                        .wrap(),
+                )
+                .child(
+                    row().child(
+                        Button::new("Not you? Switch account")
+                            .variant(ButtonVariant::Neutral)
+                            .disabled(s.signing_in)
+                            .on_press(|s: &mut App| s.switch_cloudflare())
+                            .build(k)
+                            .key("cf-not-you"),
+                    ),
+                ),
+        );
+    }
+    account = account.child(note(k, shell_core::signin::CONSENT_TIP));
     sec = sec.child(account);
+    sec = sec.child(browser_card(s, k));
 
     // Core
     let mut core = card(k, "cf-core", "Core");
@@ -980,18 +1063,17 @@ fn harness_key_card(s: &App, k: &Kit) -> El {
     if s.has_shareable_key() {
         c = c
             .child(note(k, "Both agents read the OPENROUTER_API_KEY environment variable. When this is on, Open Computer sets it for their process only. It is not written to any file or log."))
-            .child(
-                row().child(
-                    Button::new(if s.harness_key { "Handing the key over: on" } else { "Hand my OpenRouter key to them" })
-                        .variant(if s.harness_key { ButtonVariant::Submit } else { ButtonVariant::Neutral })
-                        .on_press(|s: &mut App| {
-                            let on = !s.harness_key;
-                            s.set_harness_key(on)
-                        })
-                        .build(k)
-                        .key("harness-key-toggle"),
-                ),
-            );
+            .child(crate::controls::switch(
+                k,
+                "harness-key-toggle",
+                "Hand my OpenRouter key to them",
+                s.harness_key,
+                true,
+                |s: &mut App| {
+                    let on = !s.harness_key;
+                    s.set_harness_key(on)
+                },
+            ));
     } else {
         c = c.child(note(k, "Your OpenRouter key is held by your core, so it cannot be handed to a local agent. Give the agent its own model instead: run `hermes setup` or `opencode auth login` in a terminal. If a task fails for that reason, the failure message says so."));
     }
@@ -1091,11 +1173,27 @@ fn models_and_spend(s: &App, k: &Kit, m: &Main) -> El {
     let effective = num("effective_daily_cap_usd");
     let policy_max = num("policy_max_daily_cap_usd");
     let cap_button = |label: &str, usd: Option<f64>, allowed: bool| {
-        Button::new(label.to_owned())
-            .variant(ButtonVariant::Ghost)
-            .disabled(!allowed)
-            .on_press(move |s: &mut App| s.set_daily_cap(usd))
-            .build(k)
+        // The one in effect is filled; the others are outlined; one the policy forbids is dimmed.
+        let on = match (usd, effective) {
+            (Some(v), Some(e)) => (v - e).abs() < 0.005,
+            (None, Some(e)) => (e - 5.0).abs() < 0.005,
+            _ => false,
+        };
+        crate::controls::choice(
+            k,
+            format!(
+                "cap-{}",
+                label
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("x")
+                    .trim_start_matches('$')
+            ),
+            label,
+            on,
+            allowed,
+            move |s: &mut App| s.set_daily_cap(usd),
+        )
     };
     let within = |v: f64| policy_max.is_none_or(|p| v <= p);
     let mut cap = card(k, "ms-cap", "Daily spend cap").child(pair(
@@ -1342,6 +1440,24 @@ fn about(s: &App, k: &Kit) -> El {
                     } else {
                         s.onboarding.cloud_url().to_owned()
                     },
+                )),
+        )
+        .child(
+            card(k, "about-appearance", "Appearance")
+                .child(crate::controls::switch(
+                    k,
+                    "bg-motion",
+                    "Background motion",
+                    s.ambient,
+                    true,
+                    |s: &mut App| {
+                        let on = !s.ambient;
+                        s.set_ambient(on)
+                    },
+                ))
+                .child(note(
+                    k,
+                    "A slow, faint glow drifts behind the window. Off holds it still. It also stays still when your system asks for reduced motion.",
                 )),
         )
         .child(
