@@ -28,7 +28,7 @@ pub fn view(s: &App, k: &Kit) -> El {
 }
 
 /// The full chain: one row per check with its state and time, a failure's reason and fix underneath.
-fn full_tests(s: &App, k: &Kit) -> El {
+pub(super) fn full_tests(s: &App, k: &Kit) -> El {
     let mut group = "";
     let mut list = col().key("full-tests").gap(6.0).w_full();
     for r in &s.diag_rows {

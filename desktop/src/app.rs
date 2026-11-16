@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use crate::main_app::Main;
 use rune::TextEdit;
 use rune::{Tx, Waker};
 use shell_core::checks::run_test_connection;
@@ -18,10 +19,15 @@ use shell_core::secrets::{KeyringSecrets, SecretStore, Slot};
 /// Names the local core binary, or `node <script>`. Packaging (a later unit) bundles it.
 const CORE_BIN_ENV: &str = "OC_CORE_BIN";
 
-enum Msg {
+pub(crate) enum Msg {
     TestDone(Result<TestConnection, String>),
     DiagRows(Vec<Row>),
     DiagDone,
+    ChatEvent(serde_json::Value),
+    ChatEnd,
+    ChatError(String),
+    Settings(Result<serde_json::Value, String>),
+    LocalReady(Result<(CoreProcess, shell_core::chat::Endpoint), String>),
 }
 
 pub struct App {
@@ -36,6 +42,10 @@ pub struct App {
     /// The full test chain's rows, shown with a spinner on the running one.
     pub diag_rows: Vec<Row>,
     pub diag_running: bool,
+    /// Set once setup is finished: the chat, settings and diagnostics screens.
+    pub main: Option<Main>,
+    pub composer: TextEdit,
+    last_tick: u64,
     waker: Option<Waker>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -43,7 +53,9 @@ pub struct App {
 
 impl App {
     pub fn new() -> App {
-        let store: Arc<dyn SecretStore> = Arc::new(KeyringSecrets::new());
+        let store: Arc<dyn SecretStore> = Arc::new(shell_core::secrets::ResilientSecrets::new(
+            Box::new(KeyringSecrets::new()),
+        ));
         let mut onboarding = Onboarding::new();
         onboarding.sync_secrets(&*store);
         let (tx, rx) = channel();
@@ -57,24 +69,76 @@ impl App {
             testing: false,
             diag_rows: initial_rows(),
             diag_running: false,
+            main: None,
+            composer: TextEdit::new(""),
+            last_tick: 0,
             waker: None,
             tx,
             rx,
         }
     }
 
+    pub(crate) fn tx(&self) -> Sender<Msg> {
+        self.tx.clone()
+    }
+
+    pub(crate) fn waker(&self) -> Option<Waker> {
+        self.waker.clone()
+    }
+
     pub fn setup(&mut self, waker: Waker) {
         self.waker = Some(waker);
+        self.resume_from_config();
     }
 
     /// Drain results from the test thread. True when state changed.
-    pub fn poll(&mut self, _seconds: f64, _tx: &mut Tx) -> bool {
-        let mut changed = false;
+    pub fn poll(&mut self, seconds: f64, _tx: &mut Tx) -> bool {
+        // The "Working" timer ticks once a second while a task runs.
+        let tick = seconds.floor() as u64;
+        let mut changed =
+            self.main.as_ref().is_some_and(|m| m.chat.is_busy()) && tick != self.last_tick;
+        self.last_tick = tick;
         while let Ok(msg) = self.rx.try_recv() {
             changed = true;
             match msg {
                 Msg::DiagRows(rows) => self.diag_rows = rows,
                 Msg::DiagDone => self.diag_running = false,
+                Msg::ChatEvent(e) => {
+                    if let Some(m) = self.main.as_mut() {
+                        m.chat.apply(&e);
+                    }
+                }
+                Msg::ChatEnd => {}
+                Msg::ChatError(words) => {
+                    self.notice = Some(words);
+                    if let Some(m) = self.main.as_mut() {
+                        m.chat.status = "failed".to_owned();
+                    }
+                }
+                Msg::Settings(r) => match r {
+                    Ok(v) => {
+                        if let Some(m) = self.main.as_mut() {
+                            m.settings = Some(v);
+                        }
+                    }
+                    Err(words) => self.notice = Some(words),
+                },
+                Msg::LocalReady(r) => match r {
+                    Ok((process, endpoint)) => {
+                        if let Some(m) = self.main.as_mut() {
+                            m.local = Some(process);
+                            m.endpoint = Some(endpoint);
+                            m.starting_local = false;
+                        }
+                        self.load_settings();
+                    }
+                    Err(words) => {
+                        self.notice = Some(format!("The local core could not start: {words}"));
+                        if let Some(m) = self.main.as_mut() {
+                            m.starting_local = false;
+                        }
+                    }
+                },
                 Msg::TestDone(result) => {
                     self.testing = false;
                     match result {

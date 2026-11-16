@@ -56,6 +56,57 @@ pub trait SecretStore: Send + Sync {
     }
 }
 
+/// The keyring first; when it cannot be used (locked, no service) secrets are kept in memory for this session only, so the
+/// app still works and says so, instead of blocking. Nothing is ever written to a file.
+pub struct ResilientSecrets {
+    primary: Box<dyn SecretStore>,
+    session: InMemorySecrets,
+    volatile: std::sync::atomic::AtomicBool,
+}
+
+impl ResilientSecrets {
+    pub fn new(primary: Box<dyn SecretStore>) -> Self {
+        Self {
+            primary,
+            session: InMemorySecrets::new(),
+            volatile: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// True once a secret had to be kept in memory because the keyring refused it.
+    pub fn is_volatile(&self) -> bool {
+        self.volatile.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl SecretStore for ResilientSecrets {
+    fn set(&self, slot: Slot, value: &str) -> Result<(), SecretError> {
+        match self.primary.set(slot, value) {
+            Ok(()) => {
+                let _ = self.session.delete(slot);
+                Ok(())
+            }
+            Err(_) => {
+                self.volatile
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                self.session.set(slot, value)
+            }
+        }
+    }
+
+    fn get(&self, slot: Slot) -> Result<Option<String>, SecretError> {
+        if let Ok(Some(v)) = self.session.get(slot) {
+            return Ok(Some(v));
+        }
+        self.primary.get(slot).or(Ok(None))
+    }
+
+    fn delete(&self, slot: Slot) -> Result<(), SecretError> {
+        let _ = self.session.delete(slot);
+        self.primary.delete(slot)
+    }
+}
+
 /// In-memory store for tests and headless runs. Its `Debug` output shows only flags.
 #[derive(Default)]
 pub struct InMemorySecrets {
@@ -202,5 +253,43 @@ mod tests {
     fn keyring_store_debug_has_no_values() {
         let k = KeyringSecrets::with_service("open-computer-test");
         assert!(!format!("{k:?}").contains(SENTINEL));
+    }
+
+    struct Refusing;
+    impl SecretStore for Refusing {
+        fn set(&self, _: Slot, _: &str) -> Result<(), SecretError> {
+            Err(SecretError(
+                "The system keyring is not available. Unlock it or start your keyring service."
+                    .into(),
+            ))
+        }
+        fn get(&self, _: Slot) -> Result<Option<String>, SecretError> {
+            Err(SecretError("locked".into()))
+        }
+        fn delete(&self, _: Slot) -> Result<(), SecretError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_locked_keyring_falls_back_to_this_session_only_and_says_so() {
+        let s = ResilientSecrets::new(Box::new(Refusing));
+        assert!(!s.is_volatile());
+        s.set(Slot::CloudAccess, "value-123").unwrap();
+        assert!(s.is_volatile());
+        assert!(s.is_set(Slot::CloudAccess));
+        assert_eq!(
+            s.get(Slot::CloudAccess).unwrap().as_deref(),
+            Some("value-123")
+        );
+        assert!(!s.is_set(Slot::ModelKey));
+    }
+
+    #[test]
+    fn a_working_keyring_is_used_and_nothing_stays_in_memory() {
+        let s = ResilientSecrets::new(Box::new(InMemorySecrets::new()));
+        s.set(Slot::ModelKey, "abc").unwrap();
+        assert!(!s.is_volatile());
+        assert!(s.is_set(Slot::ModelKey));
     }
 }
