@@ -1,0 +1,5 @@
+# Encoded lesson guards (docs/runbooks/encoded-lessons.md). An agent that can edit a check can delete the lesson,
+# so weakening or removing one needs the owner's review. The glob covers the orchestrator, check-no-purple.mjs
+# and every check-*.sh.
+/scripts/check-* @duketopceo
+/tests/unit/test_obs_open_source_hygiene.py @duketopceo

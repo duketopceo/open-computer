@@ -1,0 +1,30 @@
+#!/bin/sh
+# Starts the Open Computer desktop app from a menu or launcher.
+# A menu launch has a minimal PATH (no ~/.local/bin, no mise shims), so the app could not find wrangler, node,
+# opencode or hermes. This script fixes the PATH and keeps the app's output in a log you can read afterwards.
+set -u
+
+export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/open-computer"
+log="$state/desktop.log"
+mkdir -p "$state"
+
+# Keep one previous log, so a crash on start is not overwritten by the next attempt.
+if [ -f "$log" ] && [ "$(wc -c <"$log")" -gt 5242880 ]; then
+  mv -f "$log" "$log.1"
+fi
+
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+if [ -x "$here/open-computer" ]; then
+  bin="$here/open-computer"
+else
+  bin=open-computer
+fi
+
+{
+  printf '%s start %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$bin"
+  printf 'PATH=%s\n' "$PATH"
+} >>"$log"
+
+exec "$bin" "$@" >>"$log" 2>&1
