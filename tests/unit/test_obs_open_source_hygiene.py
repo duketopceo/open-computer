@@ -82,7 +82,10 @@ def test_no_cloudflare_account_or_resource_ids_in_core_or_desktop_files():
         rel = p.relative_to(ROOT).as_posix()
         if rel.startswith(("core/", "desktop/")) and ACCOUNT_ID_RE.search(p.read_text(errors="ignore")):
             hits.append(rel)
-    assert hits == [], hits
+    assert hits == [], (
+        f"32-hex strings look like Cloudflare account ids: {hits}. A test fixture must not be a 32-hex literal: "
+        "build it at run time (for example 'a'.repeat(31) + 'b') or use a UUID-shaped value."
+    )
 
 
 def test_passkey_parent_domain_comes_from_env_not_code(monkeypatch):

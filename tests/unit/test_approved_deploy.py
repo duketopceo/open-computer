@@ -28,7 +28,27 @@ def test_required_job_names_match_ci_workflow():
     gates = names - post_gate
     assert approved_deploy.REQUIRED_JOBS == gates
     assert "deploy (production)" in post_gate
+    # The Cloudflare core deploy runs after approval too, so it is never a gate either.
+    assert "deploy core (cloudflare)" in post_gate
     assert approved_deploy.REQUIRED_JOBS.isdisjoint(post_gate)
+
+
+def test_post_gate_deploys_wait_for_production_approval_and_core_deploy_is_guarded():
+    """Both deploy jobs need `production approval`, and the core deploy is skipped (not failed) without its secrets."""
+    text = (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text()
+
+    def block(job: str) -> str:
+        found = re.search(rf"^  {job}:\n(.*?)(?=^  \S|\Z)", text, re.MULTILINE | re.DOTALL)
+        assert found, job
+        return found.group(1)
+
+    for job in ("deploy", "deploy-core"):
+        assert "needs: [production-approval]" in block(job), job
+    core = block("deploy-core")
+    for name in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "OC_AI_GATEWAY_ID"):
+        assert name in core
+    assert "steps.guard.outputs.ready == 'true'" in core
+    assert "src/cli.ts setup" in core and "src/cli.ts doctor" in core
 
 
 def mock_unit_pids(monkeypatch, *generations):
