@@ -187,7 +187,7 @@ Cloudflare account. The sections above describe the earlier stack and stay as hi
 | OC-106 | Clear on/off control states and a subtle ambient background with a reduced-motion setting | Pixel tests per control type; idle CPU under 2% |
 | OC-107 | Workspace gaps: Attach, inline model picker, live terminal streaming in the Computer panel, sign-in browser/profile chooser | Each one works against the live core |
 | OC-108 | Cloudflare Access with service tokens for the desktop, `oc` and the wizard | Access on, with no lockout |
-| OC-109 | "Your own server" onboarding: self-host the core on a tailnet host (for example cluster4) over SSH | Setup and the full suite pass against a self-hosted core |
+| OC-109 | "Your own server" onboarding: self-host the core on one of your own servers over SSH and a private network | Setup and the full suite pass against a self-hosted core |
 | OC-110 | CI core deploy secret `CLOUDFLARE_API_TOKEN`, scoped | The deploy-core job runs green on main |
 
 Board: Tallyline project "Open Computer" (TLY-576 to TLY-581, plus a ticket for OC-101/OC-102).
