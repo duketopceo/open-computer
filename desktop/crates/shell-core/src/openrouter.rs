@@ -7,6 +7,8 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -16,6 +18,13 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub const BASE: &str = "https://openrouter.ai";
+
+/// How long "Connect OpenRouter" waits for the browser callback before it resets.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The wait ended because the person cancelled, or because the time ran out.
+pub const CANCELLED: &str = "The sign-in was cancelled. Try again.";
+pub const TIMED_OUT: &str = "The sign-in was not finished in time. Try again.";
 
 /// The error text for HTTP 403: the key is fine but is not allowed to read this (account credits need a management key).
 pub const FORBIDDEN: &str = "OpenRouter does not allow this key to read that.";
@@ -67,6 +76,7 @@ fn percent(s: &str) -> String {
 pub struct Callback {
     listener: TcpListener,
     pub port: u16,
+    cancel: Arc<AtomicBool>,
 }
 
 impl Callback {
@@ -74,11 +84,27 @@ impl Callback {
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|_| "Could not open a local port for the sign-in.".to_owned())?;
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-        Ok(Callback { listener, port })
+        Ok(Callback {
+            listener,
+            port,
+            cancel: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     pub fn url(&self) -> String {
         format!("http://localhost:{}/callback", self.port)
+    }
+
+    /// The flag the UI sets to abandon a wait. Dropping this `Callback` (when the wait returns) closes the port.
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+
+    /// Stops a wait on `port` and lets `accept` return so the listener can be dropped.
+    pub fn request_cancel(flag: &AtomicBool, port: u16) {
+        flag.store(true, Ordering::Relaxed);
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let _ = TcpStream::connect_timeout(&addr, Duration::from_millis(100));
     }
 
     /// Waits for the browser to arrive at `/callback?code=...` and returns the code. Other requests get a 404 and are ignored.
@@ -88,8 +114,14 @@ impl Callback {
             .map_err(|e| e.to_string())?;
         let end = Instant::now() + timeout;
         while Instant::now() < end {
+            if self.cancel.load(Ordering::Relaxed) {
+                return Err(CANCELLED.to_owned());
+            }
             match self.listener.accept() {
                 Ok((mut s, _)) => {
+                    if self.cancel.load(Ordering::Relaxed) {
+                        return Err(CANCELLED.to_owned());
+                    }
                     let _ = s.set_nonblocking(false);
                     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
                     if let Some(code) = read_callback(&mut s) {
@@ -108,7 +140,7 @@ impl Callback {
                 Err(e) => return Err(e.to_string()),
             }
         }
-        Err("The sign-in was not finished in time. Try again.".to_owned())
+        Err(TIMED_OUT.to_owned())
     }
 }
 
@@ -699,7 +731,21 @@ mod tests {
     fn a_callback_that_never_comes_times_out_in_plain_words() {
         let cb = Callback::bind().unwrap();
         let e = cb.wait_for_code(Duration::from_millis(200)).unwrap_err();
-        assert!(e.contains("not finished in time"));
+        assert_eq!(e, TIMED_OUT);
+    }
+
+    #[test]
+    fn cancelling_the_callback_stops_the_wait_and_releases_the_port() {
+        let cb = Callback::bind().unwrap();
+        let port = cb.port;
+        let flag = cb.cancel_flag();
+        let handle = std::thread::spawn(move || cb.wait_for_code(Duration::from_secs(30)));
+        std::thread::sleep(Duration::from_millis(80));
+        Callback::request_cancel(&flag, port);
+        let e = handle.join().expect("wait thread").unwrap_err();
+        assert_eq!(e, CANCELLED);
+        // The listener is dropped when the wait returns, so the port can be bound again.
+        assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
     }
 
     #[test]

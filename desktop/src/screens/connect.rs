@@ -14,6 +14,7 @@ pub fn view(s: &App, k: &Kit) -> El {
             TextInput::new(&s.cloud_url)
                 .placeholder("https://your-core.example.com")
                 .on_edit(|s: &mut App| &mut s.cloud_url)
+                .width(None)
                 .build(k),
         )
         .build(k);
@@ -30,29 +31,38 @@ pub fn view(s: &App, k: &Kit) -> El {
                     "Paste the access secret"
                 })
                 .on_edit(|s: &mut App| &mut s.cloud_secret)
+                .width(None)
                 .build(k),
         )
         .build(k);
 
     let local = s.onboarding.local_only();
-    let toggle = Button::new(if local {
-        "Local only: on (press to use a cloud core)"
-    } else {
-        "Use this computer only (no cloud)"
-    })
-    .variant(if local {
-        ButtonVariant::Submit
-    } else {
-        ButtonVariant::Ghost
-    })
-    .on_press(|s: &mut App| s.toggle_local_only())
-    .build(k);
+    let toggle = row()
+        .key("local-only")
+        .gap(8.0)
+        .center_y()
+        .w_full()
+        .child(
+            Button::new("Use this computer only (no cloud)")
+                .variant(ButtonVariant::Ghost)
+                .on_press(|s: &mut App| s.toggle_local_only())
+                .build(k),
+        )
+        .child(
+            Badge::new(if local { "On" } else { "Off" })
+                .variant(if local {
+                    BadgeVariant::Accent
+                } else {
+                    BadgeVariant::Neutral
+                })
+                .build(k),
+        );
 
     let mut page = col().key("connect").gap(16.0).w_full();
     if local {
         page = page.child(caption(
             k,
-            "Local only: the agent runs on this computer with a local sandbox. No Cloudflare account is needed, and nothing keeps running when the app is closed.",
+            "Local only: the agent runs on this computer with a local sandbox. No Cloudflare account is needed, and nothing keeps running when the app is closed. You still need an OpenRouter key, because models are reached through OpenRouter.",
         ));
     } else {
         page = page
@@ -64,14 +74,7 @@ pub fn view(s: &App, k: &Kit) -> El {
             .child(secret)
             .child(row().child(status_badge(k, access_set)));
     }
-    page.child(super::model_key::paste(s, k))
-        .child(toggle)
-        .child(
-            Button::new("Continue with these")
-                .variant(ButtonVariant::Neutral)
-                .on_press(|s: &mut App| s.next())
-                .build(k),
-        )
+    page.child(super::model_key::paste(s, k)).child(toggle)
 }
 
 fn status_badge(k: &Kit, set: bool) -> El {

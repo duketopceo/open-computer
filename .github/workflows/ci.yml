@@ -186,6 +186,9 @@ jobs:
       - name: shell-core tests (no display, no GPU)
         working-directory: desktop
         run: cargo test -p shell-core
+      - name: desktop tests (headless rune, no display)
+        working-directory: desktop
+        run: cargo test -p open-computer-desktop
       - name: build check
         working-directory: desktop
         run: cargo check --workspace
