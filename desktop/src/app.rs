@@ -116,6 +116,7 @@ impl App {
     pub fn next(&mut self) {
         self.notice = None;
         let saved = match self.onboarding.step() {
+            Step::Connect if self.onboarding.local_only() => true,
             Step::Connect => {
                 self.onboarding.set_cloud_url(self.cloud_url.text.clone());
                 self.save_secret(Slot::CloudAccess)
@@ -139,6 +140,11 @@ impl App {
     pub fn fix(&mut self, piece: Piece) {
         self.notice = None;
         self.onboarding.fix(piece);
+    }
+
+    pub fn toggle_local_only(&mut self) {
+        let on = self.onboarding.local_only();
+        self.onboarding.set_local_only(!on);
     }
 
     pub fn toggle_memory(&mut self) {
@@ -194,6 +200,10 @@ impl App {
             return;
         }
         self.notice = None;
+        if self.onboarding.local_only() {
+            self.run_local_full_tests();
+            return;
+        }
         let url = self.onboarding.cloud_url().to_owned();
         let token = match self.store.get(Slot::CloudAccess) {
             Ok(Some(t)) if !t.is_empty() => t,
@@ -211,7 +221,7 @@ impl App {
         let waker = self.waker.clone();
         std::thread::spawn(move || {
             let transport = UreqTransport::new(&url, &token);
-            run_chain(&transport, env!("CARGO_PKG_VERSION"), 20, |rows| {
+            run_chain(&transport, env!("CARGO_PKG_VERSION"), 20, false, |rows| {
                 let _ = tx.send(Msg::DiagRows(rows.to_vec()));
                 if let Some(wake) = &waker {
                     wake();
@@ -223,4 +233,65 @@ impl App {
             }
         });
     }
+}
+
+impl App {
+    /// Local-only mode: start the local core, give it the stored model key, and run the same chain against it.
+    fn run_local_full_tests(&mut self) {
+        let Some(command) = std::env::var(CORE_BIN_ENV)
+            .ok()
+            .filter(|c| !c.trim().is_empty())
+        else {
+            self.notice =
+                Some("The local core was not found. This build does not bundle it yet.".to_owned());
+            return;
+        };
+        let Ok(token) = generate_token() else {
+            self.notice = Some("Could not create a start-up token for the local core.".to_owned());
+            return;
+        };
+        let Some(spec) = LaunchSpec::from_command_text(&command, token.clone()) else {
+            self.notice = Some("The local core was not found.".to_owned());
+            return;
+        };
+        self.diag_running = true;
+        let store = self.store.clone();
+        let tx = self.tx.clone();
+        let waker = self.waker.clone();
+        std::thread::spawn(move || {
+            let notify = |msg: Msg| {
+                let _ = tx.send(msg);
+                if let Some(wake) = &waker {
+                    wake();
+                }
+            };
+            match CoreProcess::launch(&spec) {
+                Ok(process) => {
+                    let mut secrets = std::collections::BTreeMap::new();
+                    if let Ok(Some(key)) = store.get(Slot::ModelKey) {
+                        secrets.insert(Slot::ModelKey.api_name().to_owned(), key);
+                    }
+                    let _ = process
+                        .client()
+                        .load_secrets(&shell_core::core_client::SecretsLoadRequest { secrets });
+                    let transport = UreqTransport::new(&process.base_url(), &token);
+                    run_chain(&transport, env!("CARGO_PKG_VERSION"), 20, true, |rows| {
+                        notify(Msg::DiagRows(rows.to_vec()))
+                    });
+                }
+                Err(e) => notify(Msg::DiagRows(vec![failed_launch_row(&e.to_string())])),
+            }
+            notify(Msg::DiagDone);
+        });
+    }
+}
+
+fn failed_launch_row(why: &str) -> Row {
+    let mut rows = initial_rows();
+    let mut row = rows.remove(5);
+    row.status = shell_core::diagnostics::Status::Fail;
+    row.detail = format!("The local core could not start: {why}");
+    row.fix =
+        Some("Check that the core binary named by OC_CORE_BIN exists and can run.".to_owned());
+    row
 }

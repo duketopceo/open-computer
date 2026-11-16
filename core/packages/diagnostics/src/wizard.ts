@@ -19,6 +19,8 @@ export interface Fix {
 
 export interface Outcome {
   ok: boolean;
+  /** The row does not apply to this backend: shown as skipped by design, never a failure. */
+  notApplicable?: boolean;
   detail: string;
   metrics?: Metric[];
   fix?: Fix;
@@ -29,6 +31,8 @@ export interface Row {
   group: string;
   title: string;
   status: Status;
+  /** True for a skip that is by design (the row does not apply to this backend). */
+  notApplicable?: boolean;
   ms?: number;
   detail?: string;
   metrics?: Metric[];
@@ -453,65 +457,21 @@ function sandboxFailure(b: Record<string, any>): Outcome {
   return { ok: false, detail: String(b.message ?? "The sandbox check failed."), fix: { text: "Retry.", action: "retry" } };
 }
 
-/** Rows for a backend choice. Self-hosted and local-only run the local core, which has no Cloudflare resources to test. */
+const CLOUD_ROW = /^(cf\.|deploy\.|keys\.)/;
+
+/**
+ * Rows for a backend choice. Self-hosted and local-only cores run the full agent runtime and answer the same test
+ * routes, so they get the same chain; the Cloudflare account, deploy and key rows are shown as not applicable.
+ */
 export function stepsFor(backend: Backend): Def[] {
-  if (backend === "cloudflare") return cloudflareDefs();
-  const where = backend === "self-hosted" ? "Your server" : "This computer";
-  return [
-    {
-      id: "backend.health",
-      group: "1. Backend",
-      title: `${where}: core answers /health and matches this app's version`,
-      async run(ctx) {
-        const r = await call(ctx, "GET", "/v1/health", 20_000);
-        const bad = transport(r);
-        if (bad) return bad;
-        return { ok: true, detail: `Version ${String(r.body?.version ?? "unknown")}.`, metrics: [{ label: "round trip", value: ms1(r.ms) }] };
-      },
-    },
-    {
-      id: "net.rtt",
-      group: "2. Connection speed and latency",
-      title: "App to core round trip",
-      requires: ["backend.health"],
-      async run(ctx) {
-        const samples: number[] = [];
-        for (let i = 0; i < ctx.pings; i++) {
-          const r = await call(ctx, "GET", "/v1/health", 15_000);
-          if (r.status === 200) samples.push(r.ms);
-        }
-        if (samples.length === 0) return { ok: false, detail: "No ping got an answer.", fix: { text: "Check that the core is running and retry.", action: "retry" } };
-        const sorted = [...samples].sort((a, b) => a - b);
-        return { ok: true, detail: "Reachable.", metrics: [{ label: "p50", value: ms1(percentile(sorted, 50)) }, { label: "p95", value: ms1(percentile(sorted, 95)) }] };
-      },
-    },
-    {
-      id: "model.connection",
-      group: "3. OpenRouter",
-      title: "Key stored and accepted",
-      requires: ["backend.health"],
-      async run(ctx) {
-        const r = await call(ctx, "POST", "/v1/test-connection", 30_000);
-        const bad = transport(r);
-        if (bad) return bad;
-        const m = (r.body?.model ?? {}) as { ok?: boolean; message?: string };
-        return m.ok ? { ok: true, detail: "OpenRouter accepted the key." } : { ok: false, detail: String(m.message ?? "OpenRouter did not accept the key."), fix: { text: "Store a valid OpenRouter key and retry.", action: "store-key" } };
-      },
-    },
-    {
-      id: "memory.cycle",
-      group: "4. Memory",
-      title: "Memory store answers",
-      requires: ["backend.health"],
-      async run(ctx) {
-        const r = await call(ctx, "POST", "/v1/test-connection", 30_000);
-        const bad = transport(r);
-        if (bad) return bad;
-        const m = (r.body?.memory ?? {}) as { ok?: boolean; message?: string };
-        return m.ok ? { ok: true, detail: "Memory is working." } : { ok: false, detail: String(m.message ?? "Memory did not answer."), fix: { text: "Retry.", action: "retry" } };
-      },
-    },
-  ];
+  const all = cloudflareDefs();
+  if (backend === "cloudflare") return all;
+  const why = backend === "self-hosted" ? "Not applicable: a self-hosted core does not use a Cloudflare Worker." : "Not applicable: local-only mode does not use Cloudflare.";
+  return all.map((d) =>
+    CLOUD_ROW.test(d.id)
+      ? { ...d, requires: [], run: async () => ({ ok: true, notApplicable: true, detail: why }) }
+      : { ...d, requires: (d.requires ?? []).filter((r) => !CLOUD_ROW.test(r)) },
+  );
 }
 
 export function initialRows(defs: Def[]): Row[] {
@@ -525,7 +485,7 @@ export async function runWizard(defs: Def[], ctx: Ctx, onUpdate: (rows: Row[]) =
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i] as Def;
     const row = rows[i] as Row;
-    const blocker = (def.requires ?? []).map((id) => rows.find((r) => r.id === id)).find((r) => r && r.status !== "pass");
+    const blocker = (def.requires ?? []).map((id) => rows.find((r) => r.id === id)).find((r) => r && r.status !== "pass" && !r.notApplicable);
     if (blocker) {
       row.status = "skip";
       row.detail = `Skipped: "${blocker.title}" did not pass.`;
@@ -542,7 +502,8 @@ export async function runWizard(defs: Def[], ctx: Ctx, onUpdate: (rows: Row[]) =
       out = { ok: false, detail: "This check failed in an unexpected way.", fix: { text: "Retry.", action: "retry" } };
     }
     row.ms = ctx.now() - t0;
-    row.status = out.ok ? "pass" : "fail";
+    row.status = out.notApplicable ? "skip" : out.ok ? "pass" : "fail";
+    if (out.notApplicable) row.notApplicable = true;
     row.detail = out.detail;
     row.metrics = out.metrics;
     row.fix = out.fix;
@@ -558,6 +519,7 @@ export interface Report {
   passed: number;
   failed: number;
   skipped: number;
+  not_applicable: number;
   total_ms: number;
   test_cost_usd: number;
   rows: Row[];
@@ -571,7 +533,8 @@ export function buildReport(rows: Row[], meta: { backend: Backend; appVersion: s
     app_version: meta.appVersion,
     passed: rows.filter((r) => r.status === "pass").length,
     failed: rows.filter((r) => r.status === "fail").length,
-    skipped: rows.filter((r) => r.status === "skip").length,
+    skipped: rows.filter((r) => r.status === "skip" && !r.notApplicable).length,
+    not_applicable: rows.filter((r) => r.notApplicable).length,
     total_ms: Math.round(rows.reduce((t, r) => t + (r.ms ?? 0), 0)),
     test_cost_usd: cost,
     rows,

@@ -3,7 +3,7 @@
 //! button here.
 
 use rune::{El, col, row};
-use rune_kit::{Badge, BadgeVariant, Field, Kit, TextInput};
+use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, Field, Kit, TextInput};
 
 use super::caption;
 use crate::app::App;
@@ -35,17 +35,37 @@ pub fn view(s: &App, k: &Kit) -> El {
         )
         .build(k);
 
-    col()
-        .key("connect")
-        .gap(16.0)
-        .w_full()
-        .child(caption(
+    let local = s.onboarding.local_only();
+    let toggle = Button::new(if local {
+        "Local only: on (press to use a cloud core)"
+    } else {
+        "Use this computer only (no cloud)"
+    })
+    .variant(if local {
+        ButtonVariant::Submit
+    } else {
+        ButtonVariant::Ghost
+    })
+    .on_press(|s: &mut App| s.toggle_local_only())
+    .build(k);
+
+    let mut page = col().key("connect").gap(16.0).w_full();
+    if local {
+        page = page.child(caption(
             k,
-            "Point the app at your deployed cloud core. The secret is kept in your system keyring.",
-        ))
-        .child(url)
-        .child(secret)
-        .child(row().child(status_badge(k, access_set)))
+            "Local only: the agent runs on this computer with a local sandbox. No Cloudflare account is needed, and nothing keeps running when the app is closed.",
+        ));
+    } else {
+        page = page
+            .child(caption(
+                k,
+                "Point the app at your deployed cloud core. The secret is kept in your system keyring.",
+            ))
+            .child(url)
+            .child(secret)
+            .child(row().child(status_badge(k, access_set)));
+    }
+    page.child(toggle)
 }
 
 fn status_badge(k: &Kit, set: bool) -> El {

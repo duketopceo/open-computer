@@ -25,6 +25,7 @@ import {
   webSearchTool,
   type FetchLike,
   type PriceBook,
+  BASE_SYSTEM_PROMPT,
 } from "@open-computer/agent-core";
 import type { Env } from "./env.ts";
 import { buildProvider, providerTarget } from "./models/gateway.ts";
@@ -35,8 +36,7 @@ import { cloudflareSandbox } from "./sandbox/cloudflare-port.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
 import { ledgerPort, ledgerStub } from "./storage/ledger-client.ts";
 
-const BASE_SYSTEM =
-  "You are Open Computer, an agent that finishes tasks for the user. Use the tools you are given, one step at a time, and say plainly when you are done.";
+const BASE_SYSTEM = BASE_SYSTEM_PROMPT;
 
 export interface StartTaskInput {
   taskId: string;

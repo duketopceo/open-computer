@@ -1,9 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { FetchLike } from "@open-computer/agent-core";
+import { ProviderError, type FetchLike } from "@open-computer/agent-core";
 import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import { testConnection } from "./test-connection.ts";
+import { readFileSync } from "node:fs";
+import { resolveDailyCaps, validateUserDailyCap, parseItPolicy, type SandboxFactory } from "@open-computer/agent-core";
+import { Runtime } from "./runtime/runtime.ts";
+import { handleRuntimeRoutes } from "./runtime/routes.ts";
+import type { LocalStore } from "./runtime/store.ts";
 
 export const VERSION = "0.1.0";
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -24,6 +29,17 @@ export interface LocalServerOptions {
   port?: number;
   checkTimeoutMs?: number;
   settings?: Partial<Settings>;
+  /** Turns the server into the full agent runtime (self-hosted daemon or local-only mode). */
+  runtime?: {
+    store: LocalStore;
+    sandbox: SandboxFactory;
+    /** Which sandbox backend was chosen: bubblewrap, space, cube or none. */
+    sandboxKind: string;
+    baseUrl?: string;
+    policyJson?: string;
+    /** File holding the model key (daemon mode); read at start. */
+    modelKeyFile?: string;
+  };
 }
 
 export interface RunningServer {
@@ -74,6 +90,30 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
   if (!LOOPBACK.has(host)) throw new Error("The local core only binds to a loopback address.");
   const fetchImpl: FetchLike = options.fetch ?? ((url, init) => fetch(url, init));
   const secrets = new Map<SecretSlot, string>();
+  if (options.runtime?.modelKeyFile) {
+    try {
+      const k = readFileSync(options.runtime.modelKeyFile, "utf8").trim();
+      if (k) secrets.set("model_key", k);
+    } catch {
+      /* no key yet: the wizard reports it */
+    }
+  }
+  const modelKey = (): string | null => secrets.get("model_key") ?? null;
+  const runtime = options.runtime
+    ? new Runtime({
+        store: options.runtime.store,
+        fetch: fetchImpl,
+        apiKey: () => {
+          const k = modelKey();
+          if (!k) throw new ProviderError("key_missing", "No model key is stored on this core yet.");
+          return k;
+        },
+        ...(options.runtime.baseUrl ? { baseUrl: options.runtime.baseUrl } : {}),
+        sandbox: options.runtime.sandbox,
+        ...(options.runtime.policyJson ? { policyJson: options.runtime.policyJson } : {}),
+      })
+    : null;
+  let selfBase = "";
   let settings: Settings = { cloud_url: null, model: defaults.default_model, memory_enabled: true, ...options.settings };
 
   const settingsBody = () => ({
@@ -81,6 +121,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
     model: settings.model,
     memory_enabled: settings.memory_enabled,
     secrets_set: Object.fromEntries(SECRET_SLOTS.map((slot) => [slot, secrets.has(slot)])),
+    ...(runtime ? { daily_cap_usd: runtime.caps().user, effective_daily_cap_usd: runtime.caps().effective } : {}),
   });
 
   const server = createServer(async (req, res) => {
@@ -95,7 +136,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
       if (method === "GET" && path === "/v1/settings") return send(res, 200, settingsBody());
       if (method === "PUT" && path === "/v1/settings") {
         const body = (await readJson(req)) as Record<string, unknown>;
-        const allowed = new Set(["cloud_url", "model", "memory_enabled"]);
+        const allowed = new Set(["cloud_url", "model", "memory_enabled", ...(runtime ? ["daily_cap_usd"] : [])]);
         for (const k of Object.keys(body)) if (!allowed.has(k)) return err(res, 400, "bad_request", `Unknown setting "${k}".`);
         if ("memory_enabled" in body && typeof body.memory_enabled !== "boolean") {
           return err(res, 400, "bad_request", "memory_enabled must be true or false.");
@@ -103,8 +144,18 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
         if ("model" in body && (typeof body.model !== "string" || body.model === "")) {
           return err(res, 400, "bad_request", "model must be a non-empty string.");
         }
+        if ("cloud_url" in body && body.cloud_url === "") body.cloud_url = null;
         if ("cloud_url" in body && body.cloud_url !== null && !isAllowedCloudUrl(body.cloud_url)) {
           return err(res, 400, "bad_request", "cloud_url must be an https address, or http on this computer.");
+        }
+        if (runtime && "daily_cap_usd" in body) {
+          if (body.daily_cap_usd === null) runtime.store.setSetting("daily_cap_usd", null);
+          else {
+            const checked = validateUserDailyCap(body.daily_cap_usd);
+            if (typeof checked === "string") return err(res, 400, "bad_request", checked);
+            runtime.store.setSetting("daily_cap_usd", String(checked));
+          }
+          delete body.daily_cap_usd;
         }
         settings = { ...settings, ...(body as Partial<Settings>) };
         return send(res, 200, settingsBody());
@@ -122,14 +173,27 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
         return send(res, 200, { loaded });
       }
       if (method === "POST" && path === "/v1/test-connection") {
+        // Local-only mode (a runtime and no cloud address): the core checks itself with the same routes.
+        const selfCheck = runtime !== null && !settings.cloud_url;
         const result = await testConnection({
           fetch: fetchImpl,
-          cloudUrl: settings.cloud_url,
-          cloudSecret: secrets.get("cloud_access") ?? null,
+          cloudUrl: selfCheck ? selfBase : settings.cloud_url,
+          cloudSecret: selfCheck ? options.token : (secrets.get("cloud_access") ?? null),
           memoryEnabled: settings.memory_enabled,
           timeoutMs: options.checkTimeoutMs ?? 5000,
         });
         return send(res, 200, result);
+      }
+      if (runtime && options.runtime) {
+        const handled = await handleRuntimeRoutes(
+          { runtime, version: VERSION, sandboxKind: options.runtime.sandboxKind, modelKey, helpers: { send, err, readJson } },
+          req,
+          res,
+          path ?? "",
+          method,
+          new URL(req.url ?? "/", "http://local"),
+        );
+        if (handled) return;
       }
       return err(res, 404, "not_found", "No such endpoint.");
     } catch {
@@ -142,11 +206,13 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Run
     server.listen(options.port ?? 0, host, () => resolve());
   });
   const port = (server.address() as AddressInfo).port;
+  selfBase = `http://127.0.0.1:${port}`;
   return {
     port,
     server,
     close: () =>
       new Promise<void>((resolve) => {
+        runtime?.dispose();
         server.close(() => resolve());
         server.closeAllConnections();
       }),
