@@ -60,3 +60,25 @@ def test_purple_is_caught(snippet: str):
 )
 def test_black_white_and_grey_pass(snippet: str):
     assert _violations(snippet) == []
+
+
+def _strict(text: str) -> list[dict]:
+    code = (
+        "import('./scripts/check-no-purple.mjs').then(m => "
+        "console.log(JSON.stringify(m.findStrictViolations(process.argv[1]))))"
+    )
+    out = subprocess.run(["node", "--input-type=module", "-e", code, "--", text], cwd=ROOT, capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+@pytest.mark.parametrize("snippet", ['pub const ACCENT_FROM: &str = "#FFB020";', "--accent-to: #ff4d2e;", "color: #000;", "color: #fff", "background: #3a3a3a", "fill: rgb(10, 10, 10)"])
+def test_strict_rule_allows_black_white_grey_and_exactly_the_two_accent_values(snippet: str):
+    assert _strict(snippet) == [], snippet
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    ["color: #ff0000;", "color: #00aa55", "background: #FFB021", "background: rgb(255, 80, 40)", "fill: hsl(30, 90%, 50%)", "color: #6d28d9", "color: #3b82f6"],
+)
+def test_strict_rule_fails_on_any_other_colour(snippet: str):
+    assert _strict(snippet), snippet

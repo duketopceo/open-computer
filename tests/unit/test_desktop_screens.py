@@ -1,7 +1,8 @@
-"""Every desktop screen renders (headless) and uses only black, white and grey: no hue, no purple."""
+"""Every desktop screen renders (headless) and uses only black, white and grey, plus the one orange-to-red accent: no other hue, no purple."""
 
 from __future__ import annotations
 
+import colorsys
 import os
 import shutil
 import subprocess
@@ -17,6 +18,12 @@ PIL = pytest.importorskip("PIL.Image", reason="pillow is not installed")
 pytestmark = pytest.mark.skipif(not BIN.exists() or shutil.which("bash") is None, reason="the desktop binary is not built")
 
 SCREENS = ["onboarding-connect", "chat", "settings", "diagnostics"]
+
+
+def _is_accent(rgb: tuple[int, int, int]) -> bool:
+    """True for a pixel on the amber-to-red accent: hue between 5 and 45 degrees (blends with black or white keep it)."""
+    h, _s, _v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb))
+    return 5 <= h * 360 <= 45
 
 
 @pytest.fixture(scope="module")
@@ -35,8 +42,9 @@ def test_screen_renders_and_has_no_colour(shots: Path, screen: str, theme: str):
     img = PIL.open(path).convert("RGB")
     assert img.width >= 400 and img.height >= 400
     colours = img.getcolors(maxcolors=1 << 20) or []
-    # Anti-aliased text only ever produces greys; a coloured pixel would mean a hue crept in.
-    worst = max((max(rgb) - min(rgb) for _, rgb in colours), default=0)
-    assert worst <= 6, f"{screen} {theme}: a pixel has colour (spread {worst})"
+    # Anti-aliased text only ever produces greys. The one accent (an orange-to-red gradient, hue 5 to 45 degrees, also
+    # when blended with black or white) is allowed; any other coloured pixel means a hue crept in.
+    stray = [rgb for _, rgb in colours if max(rgb) - min(rgb) > 6 and not _is_accent(rgb)]
+    assert not stray, f"{screen} {theme}: a pixel has a colour that is not the accent, for example {stray[0]}"
     background = img.getpixel((2, 2))
     assert (sum(background) / 3 < 20) == (theme == "dark"), f"{screen}: wrong background for {theme}"

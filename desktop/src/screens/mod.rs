@@ -7,7 +7,7 @@ mod memory;
 mod model_key;
 mod test_connection;
 
-use rune::{Cx, El, col, row, text};
+use rune::{Cx, El, ScrollSpec, col, row, text};
 use rune_kit::{Button, ButtonVariant, Kit};
 use shell_core::onboarding::Step;
 
@@ -36,20 +36,38 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     };
     let step = s.onboarding.step();
 
-    let mut page = col().w_full().max_w(520.0).gap(16.0).child(
+    // Fixed header, a body that scrolls and fills the window, fixed footer: the window size never cuts content off.
+    let mut head = col().key("head").w_full().gap(8.0).child(
         text(format!("Step {position} of 4"))
             .key("position")
             .font(k.ty.caption())
             .color(k.c.text_muted),
     );
-    page = page
-        .child(
-            text(step.title())
-                .key("title")
-                .font(k.ty.body_medium)
-                .color(k.c.text_strong),
-        )
-        .child(body);
+    head = head.child(
+        text(step.title())
+            .key("title")
+            .font(k.ty.body_medium)
+            .color(k.c.text_strong),
+    );
+    if matches!(step, Step::Test | Step::Done) {
+        head = head.child(test_connection::header(s, k));
+    }
+    let scroll = col()
+        .key("onboarding-scroll")
+        .w_full()
+        .grow(1.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(col().key("onboarding-body").w_full().gap(16.0).child(body));
+    let mut page = col()
+        .key("page")
+        .w_full()
+        .max_w(760.0)
+        .h_full()
+        .gap(16.0)
+        .child(head)
+        .child(scroll);
     if let Some(notice) = &s.notice {
         page = page.child(
             text(notice.clone())
@@ -65,7 +83,9 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
             .key("frame")
             .fill(k.c.page)
             .padding(32.0)
-            .items_start()
+            .w_full()
+            .h_full()
+            .items_center()
             .child(page),
         [],
     )
@@ -139,4 +159,125 @@ fn caption(k: &Kit, words: impl Into<String>) -> El {
     text(words.into())
         .font(k.ty.caption())
         .color(k.c.text_muted)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use rune::runtime::ElementInfo;
+    use rune::{Env, Runtime};
+    use shell_core::diagnostics::{Row, Status, initial_rows};
+    use shell_core::secrets::{InMemorySecrets, Slot};
+
+    use super::view;
+    use crate::app::App;
+
+    fn find(rt: &Runtime<App>, key: &str) -> ElementInfo {
+        rt.elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("missing element {key:?}"))
+    }
+
+    /// An app on the Test connection step with every row of the chain filled in: most passed, one failed with its fix.
+    fn test_step_app() -> App {
+        let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+        app.onboarding.set_local_only(true);
+        app.onboarding.advance().unwrap();
+        app.onboarding.set_secret_flag(Slot::ModelKey, true);
+        app.onboarding.advance().unwrap();
+        app.onboarding.advance().unwrap();
+        let mut rows: Vec<Row> = initial_rows();
+        let n = rows.len();
+        for (i, r) in rows.iter_mut().enumerate() {
+            r.status = if i + 1 == n {
+                Status::Pending
+            } else {
+                Status::Pass
+            };
+            r.ms = (i + 1 < n).then_some(120.0 + 40.0 * i as f64);
+            r.detail = "It answered in time.".to_owned();
+            r.metrics = vec![
+                ("p50".to_owned(), "12 ms".to_owned()),
+                ("p95".to_owned(), "30 ms".to_owned()),
+            ];
+        }
+        let fail = rows.len() / 2;
+        rows[fail].status = Status::Fail;
+        rows[fail].detail =
+            "The model did not call the tool, so the chain stopped early. ".repeat(3);
+        rows[fail].fix =
+            Some("Pick another model in Settings, then run the tests again. ".repeat(2));
+        app.diag_rows = rows;
+        app
+    }
+
+    #[test]
+    fn the_test_connection_page_scrolls_in_a_small_window_and_its_last_row_is_reachable() {
+        let app = test_step_app();
+        let last = format!("row-{}", app.diag_rows.last().unwrap().id);
+        let mut rt = Runtime::new(app, view, (900.0, 600.0), Env::new(true, 1.0));
+        rt.frame(0.0);
+
+        // The rows overflow the window: the last one starts below the bottom edge.
+        let before = find(&rt, &last);
+        assert!(
+            before.rect[1] + before.rect[3] > 600.0,
+            "the last row is below the window before scrolling: {:?}",
+            before.rect
+        );
+        // The header and footer are fixed and inside the window, and the body is a scroll container.
+        let header = find(&rt, "chain-header");
+        assert!(header.rect[1] >= 0.0 && header.rect[1] + header.rect[3] <= 600.0);
+        let footer = find(&rt, "footer");
+        assert!(
+            footer.rect[1] + footer.rect[3] <= 600.5,
+            "the footer stays in the window: {:?}",
+            footer.rect
+        );
+        let scroll = find(&rt, "onboarding-scroll");
+        assert!(
+            scroll.rect[1] + scroll.rect[3] <= footer.rect[1] + 0.5,
+            "the scroll area ends where the footer begins"
+        );
+
+        // Wheel to the end: the last row comes fully into view, above the footer, and the header did not move.
+        rt.wheel(450.0, 300.0, -20000.0);
+        for _ in 0..90 {
+            rt.frame(1.0 / 60.0);
+        }
+        let after = find(&rt, &last);
+        assert!(
+            after.rect[1] >= 0.0 && after.rect[1] + after.rect[3] <= footer.rect[1] + 0.5,
+            "the last row is reachable after scrolling: {:?} (footer top {})",
+            after.rect,
+            footer.rect[1]
+        );
+        assert_eq!(
+            find(&rt, "chain-header").rect,
+            header.rect,
+            "the header stays put"
+        );
+    }
+
+    #[test]
+    fn opening_a_row_toggles_it_and_stops_following_the_running_row() {
+        let mut app = test_step_app();
+        let pass_id = app
+            .diag_rows
+            .iter()
+            .find(|r| r.status == Status::Pass)
+            .unwrap()
+            .id;
+        assert!(app.follow_running);
+        app.toggle_row(pass_id);
+        assert!(app.expanded_rows.contains(pass_id));
+        app.toggle_row(pass_id);
+        assert!(!app.expanded_rows.contains(pass_id));
+        assert!(
+            !app.follow_running,
+            "opening a row stops following the running row"
+        );
+    }
 }

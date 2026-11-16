@@ -585,17 +585,7 @@ fn diagnostics(s: &App, k: &Kit) -> El {
             k,
             "The same chain as the web wizard and `oc doctor`: backend, OpenRouter, speed, sandbox, memory, audit and spend.",
         ))
-        .child(
-            Button::new("Run tests")
-                .variant(if s.diag_running {
-                    ButtonVariant::Loading
-                } else {
-                    ButtonVariant::Submit
-                })
-                .disabled(s.diag_running)
-                .on_press(|s: &mut App| s.run_full_tests())
-                .build(k),
-        )
+        .child(test_connection::header(s, k))
         .child(
             col()
                 .key("diag-scroll")
