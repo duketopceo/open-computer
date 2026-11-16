@@ -96,12 +96,12 @@ async function main(argv: string[]): Promise<number> {
     return result.ok ? 0 : 1;
   }
   if (cmd !== "doctor" && cmd !== "setup") {
-    console.log("usage: oc <login|doctor|setup|update|admin> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N] [--skip-model]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
+    console.log("usage: oc <login|doctor|setup|update|admin> [--backend cloudflare|self-hosted|local] [--url URL] [--json FILE] [--pings N] [--skip-model] [--rotate-token (setup: issue a new access token; the old one stops working)]\n  token: OC_CLOUD_TOKEN, or the saved state; the OpenRouter key for setup: OC_OPENROUTER_KEY (environment only)");
     return 2;
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;
   const state = readState();
-  const control = cmd === "setup" ? createControlPlane({ run: wranglerRunner(cloudDir), deployRun: withFallback(wranglerRunner(cloudDir, ["pnpm", "exec", "wrangler"]), wranglerRunner(cloudDir)), cloudDir, ...(process.env.OC_AI_GATEWAY_ID ? { gatewayId: process.env.OC_AI_GATEWAY_ID } : {}), modelKey: () => process.env.OC_OPENROUTER_KEY, extraKeys: extraKeysFromEnv }) : undefined;
+  const control = cmd === "setup" ? createControlPlane({ rotateToken: args.includes("--rotate-token"), probe: async (url, token) => (await fetch(`${url.replace(/\/+$/, "")}/v1/health`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) }).catch(() => null))?.status ?? 0, run: wranglerRunner(cloudDir), deployRun: withFallback(wranglerRunner(cloudDir, ["pnpm", "exec", "wrangler"]), wranglerRunner(cloudDir)), cloudDir, ...(process.env.OC_AI_GATEWAY_ID ? { gatewayId: process.env.OC_AI_GATEWAY_ID } : {}), modelKey: () => process.env.OC_OPENROUTER_KEY, extraKeys: extraKeysFromEnv }) : undefined;
 
   const ctx: Ctx = {
     baseUrl: flag(args, "url") ?? process.env.OC_CLOUD_URL ?? state.url ?? "",
