@@ -9,7 +9,6 @@ import {
   defaultPolicy,
   evaluateDecision,
   resolveApproval,
-  staticPriceBook,
   step,
   type AgentDeps,
   type AgentEvent,
@@ -25,10 +24,12 @@ import {
   type ToolOutcome,
   webSearchTool,
   type FetchLike,
+  type PriceBook,
 } from "@open-computer/agent-core";
 import type { Env } from "./env.ts";
 import { buildProvider, providerTarget } from "./models/gateway.ts";
 import { readSecret } from "./models/secrets.ts";
+import { loadPriceBook } from "./models/prices.ts";
 import { SandboxManager, sandboxTools, type SandboxFactory } from "./sandbox/port.ts";
 import { cloudflareSandbox } from "./sandbox/cloudflare-port.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
@@ -363,7 +364,7 @@ export class SessionDO extends DurableObject<Env> {
     return { taskId: input.taskId };
   }
 
-  private depsFor(taskId: string, stored: StoredTask, stepKey: string): AgentDeps {
+  private depsFor(taskId: string, stored: StoredTask, stepKey: string, prices: PriceBook): AgentDeps {
     const memory = this.memoryFor(stored.meta.memoryEnabled);
     const sandboxes = this.sandboxManager();
     const guard = new CostGuard(ledgerPort(this.env), { taskCap: stored.meta.taskCap, dayCap: stored.meta.dayCap, now: () => this.clock() });
@@ -379,7 +380,7 @@ export class SessionDO extends DurableObject<Env> {
       policy: defaultPolicy,
       approvals: this.approvalRequester(stepKey),
       guard,
-      prices: staticPriceBook({}),
+      prices,
       emit: (body) => {
         // Once cancelled, an in-flight step must not add events after the cancel.
         if (!this.cancelled.has(taskId)) this.appendEvent(taskId, body, stepKey);
@@ -418,7 +419,8 @@ export class SessionDO extends DurableObject<Env> {
     );
 
     const stored = this.loadTask(taskId);
-    const outcome = await step(stored.state, this.depsFor(taskId, stored, stepKey));
+    const prices = await loadPriceBook(this.env.DB, this.makeFetch());
+    const outcome = await step(stored.state, this.depsFor(taskId, stored, stepKey, prices));
     await this.beforeAuditFlush(stepKey);
     await this.flushAudit();
     // A cancel can land while the step awaits the model or a tool; the cancel is final, so this outcome is dropped.
