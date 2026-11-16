@@ -15,6 +15,9 @@ pub struct Saved {
     /// Set when the first test passed, so the next launch opens the app instead of setup.
     #[serde(default)]
     pub setup_done: bool,
+    /// `builtin`, `hermes` or `opencode`.
+    #[serde(default)]
+    pub harness: String,
 }
 
 pub fn default_path() -> PathBuf {
@@ -60,6 +63,7 @@ mod tests {
             cloud_url: "https://core.example".into(),
             local_only: false,
             setup_done: true,
+            harness: "hermes".into(),
         };
         save(&p, &s).unwrap();
         assert_eq!(load(&p), s);

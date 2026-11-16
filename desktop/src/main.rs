@@ -4,6 +4,7 @@
 //! opening a window.
 
 mod app;
+mod integrations;
 mod main_app;
 mod screens;
 mod theme;

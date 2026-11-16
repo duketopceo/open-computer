@@ -457,6 +457,16 @@ impl Endpoint {
         }
     }
 
+    /// What the core reports about its own bindings (including whether it routes through an AI Gateway).
+    pub fn bindings(&self) -> Result<Value, String> {
+        let (status, body) = self.json("GET", "/v1/diag/bindings", None)?;
+        if status == 200 {
+            Ok(body)
+        } else {
+            Err(plain(status))
+        }
+    }
+
     pub fn settings(&self) -> Result<Value, String> {
         let (status, body) = self.json("GET", "/v1/settings", None)?;
         if status == 200 {

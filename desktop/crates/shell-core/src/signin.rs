@@ -2,6 +2,7 @@
 //! OAuth login with the scopes setup needs; Wrangler keeps and refreshes the session, and this code never reads it.
 //! No token is minted, pasted or shown. Mirrors `core/packages/diagnostics/src/signin.ts`.
 
+use std::io::BufRead;
 use std::process::{Command, Stdio};
 
 pub const REQUIRED_SCOPES: [&str; 10] = [
@@ -105,7 +106,7 @@ pub fn parse_whoami(text: &str) -> SignIn {
 }
 
 /// The command that runs Wrangler: `OC_WRANGLER` (for example `pnpm exec wrangler`), else `npx --yes wrangler@4`.
-fn wrangler_command() -> Vec<String> {
+pub fn wrangler_command() -> Vec<String> {
     std::env::var("OC_WRANGLER")
         .ok()
         .filter(|c| !c.trim().is_empty())
@@ -121,36 +122,244 @@ fn wrangler_command() -> Vec<String> {
         )
 }
 
-/// Opens the browser sign-in and waits for the person to finish, then reads who is signed in. Blocking: run on a thread.
-pub fn sign_in() -> Result<SignIn, String> {
-    let cmd = wrangler_command();
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // Skip `ESC [ ... letter`.
+            if chars.peek() == Some(&'[') {
+                for n in chars.by_ref() {
+                    if n.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Turns one line of Wrangler's login output into a short progress message, or none for noise.
+pub fn progress_line(raw: &str) -> Option<String> {
+    let line = strip_ansi(raw).trim().to_owned();
+    let lower = line.to_lowercase();
+    if lower.contains("opening a link") || lower.contains("attempting to login") {
+        Some("Opening Cloudflare's sign-in page in your browser. Click Allow there.".to_owned())
+    } else if lower.contains("waiting for") {
+        Some("Waiting for you to click Allow in the browser.".to_owned())
+    } else if lower.contains("successfully logged in") {
+        Some("Cloudflare accepted the sign-in.".to_owned())
+    } else if lower.contains("error") || lower.contains("denied") || lower.contains("timed out") {
+        Some("Cloudflare reported a problem with the sign-in.".to_owned())
+    } else {
+        None
+    }
+}
+
+/// Runs a command, handing each output line (stdout and stderr) to `on_line`. Returns whether it exited successfully.
+fn run_lines(
+    cmd: &[String],
+    extra: &[String],
+    on_line: &mut dyn FnMut(&str),
+) -> Result<bool, String> {
     let (program, rest) = cmd.split_first().ok_or("Wrangler was not found.")?;
-    let status = Command::new(program)
+    let mut child = Command::new(program)
         .args(rest)
-        .args(sign_in_args())
+        .args(extra)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|_| "Wrangler was not found. Install Node.js, then try again.".to_owned())?;
-    if !status.success() {
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let mut readers = Vec::new();
+    if let Some(o) = child.stdout.take() {
+        let tx = tx.clone();
+        readers.push(std::thread::spawn(move || {
+            for l in std::io::BufReader::new(o).lines().map_while(Result::ok) {
+                let _ = tx.send(l);
+            }
+        }));
+    }
+    if let Some(e) = child.stderr.take() {
+        let tx = tx.clone();
+        readers.push(std::thread::spawn(move || {
+            for l in std::io::BufReader::new(e).lines().map_while(Result::ok) {
+                let _ = tx.send(l);
+            }
+        }));
+    }
+    drop(tx);
+    for l in rx {
+        on_line(&l);
+    }
+    for r in readers {
+        let _ = r.join();
+    }
+    Ok(child.wait().map(|s| s.success()).unwrap_or(false))
+}
+
+fn whoami_with(cmd: &[String]) -> Result<SignIn, String> {
+    let mut text = String::new();
+    run_lines(cmd, &["whoami".to_owned()], &mut |l| {
+        text.push_str(l);
+        text.push('\n');
+    })?;
+    Ok(parse_whoami(&text))
+}
+
+/// Opens the browser sign-in, reports progress in plain words, and reads who is signed in afterwards. Blocking: run on a thread.
+pub fn sign_in_with(cmd: &[String], on_progress: &mut dyn FnMut(String)) -> Result<SignIn, String> {
+    let mut last = String::new();
+    let ok = run_lines(cmd, &sign_in_args(), &mut |l| {
+        if let Some(p) = progress_line(l)
+            && p != last
+        {
+            on_progress(p.clone());
+            last = p;
+        }
+    })?;
+    if !ok {
         return Err(
             "The sign-in did not finish. Try again and click Allow in the browser.".to_owned(),
         );
     }
-    who_am_i()
+    whoami_with(cmd)
+}
+
+pub fn sign_in(on_progress: &mut dyn FnMut(String)) -> Result<SignIn, String> {
+    sign_in_with(&wrangler_command(), on_progress)
 }
 
 pub fn who_am_i() -> Result<SignIn, String> {
-    let cmd = wrangler_command();
-    let (program, rest) = cmd.split_first().ok_or("Wrangler was not found.")?;
-    let out = Command::new(program)
-        .args(rest)
-        .arg("whoami")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|_| "Wrangler was not found.".to_owned())?;
-    Ok(parse_whoami(&String::from_utf8_lossy(&out.stdout)))
+    whoami_with(&wrangler_command())
+}
+
+/// Signs out: Wrangler revokes and forgets the session. Returns the state afterwards (not signed in).
+pub fn sign_out_with(cmd: &[String]) -> Result<SignIn, String> {
+    let ok = run_lines(cmd, &["logout".to_owned()], &mut |_| {})?;
+    if !ok {
+        return Err("Signing out did not finish. Try again.".to_owned());
+    }
+    whoami_with(cmd)
+}
+
+pub fn sign_out() -> Result<SignIn, String> {
+    sign_out_with(&wrangler_command())
+}
+
+/// Switch account: sign out, then sign in again so Cloudflare asks which account to approve.
+pub fn switch_account_with(
+    cmd: &[String],
+    on_progress: &mut dyn FnMut(String),
+) -> Result<SignIn, String> {
+    sign_out_with(cmd)?;
+    sign_in_with(cmd, on_progress)
+}
+
+pub fn switch_account(on_progress: &mut dyn FnMut(String)) -> Result<SignIn, String> {
+    switch_account_with(&wrangler_command(), on_progress)
+}
+
+/// Step 1 of the setup chain, from the sign-in state: pass or fail, the words, and the fix when it fails.
+pub fn step1(s: &SignIn) -> (bool, String, Option<String>) {
+    if !s.signed_in {
+        return (
+            false,
+            "You are not signed in to Cloudflare.".to_owned(),
+            Some("Click Sign in with Cloudflare, then Allow in the browser.".to_owned()),
+        );
+    }
+    if !s.missing.is_empty() {
+        return (
+            false,
+            format!(
+                "The sign-in is missing access for: {}.",
+                s.missing.join(", ")
+            ),
+            Some("Sign in again and click Allow on every item.".to_owned()),
+        );
+    }
+    (true, "Signed in with Cloudflare.".to_owned(), None)
+}
+
+// ---------- the two dashboard steps OAuth cannot do ----------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DashboardStep {
+    pub title: &'static str,
+    pub url: &'static str,
+    pub how: &'static str,
+}
+
+/// Deep links use Cloudflare's `?to=/:account/...` redirect, which picks the signed-in account.
+pub const AI_GATEWAY_STEP: DashboardStep = DashboardStep {
+    title: "AI Gateway",
+    url: "https://dash.cloudflare.com/?to=/:account/ai/ai-gateway",
+    how: "Create gateway, name it open-computer, then set AI_GATEWAY_ACCOUNT and AI_GATEWAY_ID in the deploy config.",
+};
+
+pub const ACCESS_STEP: DashboardStep = DashboardStep {
+    title: "Cloudflare Access",
+    url: "https://one.dash.cloudflare.com/?to=/:account/access/apps",
+    how: "Add a self-hosted application for your core's address and allow only your email.",
+};
+
+/// The core reports whether it routes through a gateway in `/v1/diag/bindings` (`gateway: true`).
+pub fn gateway_configured(bindings: &serde_json::Value) -> bool {
+    bindings
+        .get("gateway")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// What a request with no credentials to the core's address shows about Access.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccessState {
+    Protected,
+    NotProtected,
+    Unknown,
+}
+
+pub fn classify_access(status: u16, location: Option<&str>, body: &str) -> AccessState {
+    let at_access = location.is_some_and(|l| l.contains("cloudflareaccess.com"))
+        || body.contains("cloudflareaccess.com");
+    match status {
+        301 | 302 | 303 | 307 | 308 if at_access => AccessState::Protected,
+        401 | 403 if at_access => AccessState::Protected,
+        0 => AccessState::Unknown,
+        _ => AccessState::NotProtected,
+    }
+}
+
+/// Probes `url` once with no credentials and no redirect following.
+pub fn detect_access(url: &str) -> AccessState {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::NativeTls)
+                .build(),
+        )
+        .build()
+        .into();
+    match agent.get(url).call() {
+        Ok(mut r) => {
+            let loc = r
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            let body = r.body_mut().read_to_string().unwrap_or_default();
+            classify_access(r.status().as_u16(), loc.as_deref(), &body)
+        }
+        Err(_) => AccessState::Unknown,
+    }
 }
 
 #[cfg(test)]
@@ -220,5 +429,110 @@ mod tests {
             parse_whoami("You are not authenticated.").summary(),
             "Not signed in to Cloudflare."
         );
+    }
+
+    /// Writes a tiny fake `wrangler` shell script: prints canned login output, whoami text, or succeeds on logout.
+    fn fake_wrangler(dir: &std::path::Path, whoami: &str, login_ok: bool) -> Vec<String> {
+        let path = dir.join("wrangler");
+        let script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n login) echo 'Attempting to login via OAuth...'; echo 'Opening a link in your default browser: https://dash.cloudflare.com/oauth2/auth?x=1'; echo 'Waiting for authorization...'; exit {};;\n logout) exit 0;;\n whoami) cat <<'EOF'\n{}\nEOF\n;;\nesac\n",
+            if login_ok { 0 } else { 1 },
+            whoami
+        );
+        std::fs::write(&path, script).unwrap();
+        // Run through `sh` so a freshly written file is never exec'd directly (avoids "text file busy" under parallel tests).
+        vec!["sh".to_owned(), path.to_string_lossy().into_owned()]
+    }
+
+    fn temp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("oc-signin-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn login_progress_is_plain_words_and_never_the_raw_link() {
+        let dir = temp("progress");
+        let cmd = fake_wrangler(&dir, &signed_in(&[]), true);
+        let mut seen = Vec::new();
+        let s = sign_in_with(&cmd, &mut |p| seen.push(p)).unwrap();
+        assert!(s.signed_in && s.missing.is_empty());
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(seen[0].contains("Click Allow") && seen[1].contains("Waiting"));
+        assert!(seen.iter().all(|p| !p.contains("https://")));
+    }
+
+    #[test]
+    fn a_login_that_fails_says_so_and_a_missing_wrangler_says_so() {
+        let dir = temp("fail");
+        let cmd = fake_wrangler(&dir, "", false);
+        assert!(
+            sign_in_with(&cmd, &mut |_| {})
+                .unwrap_err()
+                .contains("did not finish")
+        );
+        let none = vec!["definitely-not-wrangler-xyz".to_owned()];
+        assert!(
+            sign_in_with(&none, &mut |_| {})
+                .unwrap_err()
+                .contains("not found")
+        );
+    }
+
+    #[test]
+    fn sign_out_and_switch_account_run_logout_then_login() {
+        let dir = temp("switch");
+        let cmd = fake_wrangler(&dir, "You are not authenticated.", true);
+        assert!(!sign_out_with(&cmd).unwrap().signed_in);
+        let cmd = fake_wrangler(&dir, &signed_in(&[]), true);
+        let mut seen = Vec::new();
+        assert!(
+            switch_account_with(&cmd, &mut |p| seen.push(p))
+                .unwrap()
+                .signed_in
+        );
+        assert!(!seen.is_empty());
+    }
+
+    #[test]
+    fn step_one_is_rerun_from_the_state_and_names_what_to_do() {
+        assert!(step1(&parse_whoami(&signed_in(&[]))).0);
+        let (ok, words, fix) = step1(&parse_whoami(&signed_in(&["d1"])));
+        assert!(!ok && words.contains("d1:write") && fix.unwrap().contains("Allow"));
+        let (ok, _, fix) = step1(&parse_whoami("You are not authenticated."));
+        assert!(!ok && fix.unwrap().contains("Sign in with Cloudflare"));
+    }
+
+    #[test]
+    fn dashboard_links_and_detection() {
+        assert!(
+            AI_GATEWAY_STEP.url.contains("/:account/ai/ai-gateway")
+                && ACCESS_STEP.url.contains("/:account/access/apps")
+        );
+        assert!(gateway_configured(&serde_json::json!({"gateway": true})));
+        assert!(!gateway_configured(&serde_json::json!({"ok": true})));
+        assert_eq!(
+            classify_access(
+                302,
+                Some("https://team.cloudflareaccess.com/cdn-cgi/access/login/x"),
+                ""
+            ),
+            AccessState::Protected
+        );
+        assert_eq!(
+            classify_access(200, None, "hello"),
+            AccessState::NotProtected
+        );
+        assert_eq!(classify_access(401, None, "{}"), AccessState::NotProtected);
+        assert_eq!(classify_access(0, None, ""), AccessState::Unknown);
+    }
+
+    #[test]
+    fn ansi_noise_is_stripped_from_progress() {
+        assert_eq!(
+            progress_line("\u{1b}[32mSuccessfully logged in.\u{1b}[0m").as_deref(),
+            Some("Cloudflare accepted the sign-in.")
+        );
+        assert_eq!(progress_line("random chatter"), None);
     }
 }

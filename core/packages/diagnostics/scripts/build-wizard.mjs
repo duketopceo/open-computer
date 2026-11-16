@@ -39,6 +39,7 @@ const html = `<!doctype html>
 <main>
 <h1>Open Computer: setup and tests</h1>
 <p class="lede">Checks your backend step by step, with timing. Nothing is sent anywhere except to your own core.</p>
+<p class="lede" id="cf-handoff">Signing in to Cloudflare happens on your computer, not on this page: open the Open Computer desktop app and click Sign in with Cloudflare, or run <code>oc login</code> in a terminal. Your browser opens Cloudflare's own page; click Allow. Then run the tests again here.</p>
 <section class="panel" aria-label="Connection">
 <label for="backend">Backend</label>
 <select id="backend">

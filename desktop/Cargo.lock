@@ -3263,10 +3263,12 @@ dependencies = [
 name = "shell-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "getrandom 0.4.3",
  "keyring",
  "serde",
  "serde_json",
+ "sha2",
  "ureq",
 ]
 

@@ -29,6 +29,15 @@ pub(crate) enum Msg {
     Settings(Result<serde_json::Value, String>),
     LocalReady(Result<(CoreProcess, shell_core::chat::Endpoint), String>),
     SignedIn(Result<shell_core::signin::SignIn, String>),
+    CfProgress(String),
+    CfDashboard {
+        gateway: Option<bool>,
+        access: shell_core::signin::AccessState,
+    },
+    HarnessDetected(Vec<shell_core::harness::Detected>),
+    /// The key from "Connect OpenRouter", or why it did not finish.
+    OrKey(Result<String, String>),
+    OrAccount(shell_core::openrouter::Account),
 }
 
 pub struct App {
@@ -49,6 +58,17 @@ pub struct App {
     /// Who is signed in to Cloudflare, in one plain line, or the reason the sign-in did not finish.
     pub cloudflare_line: Option<String>,
     pub signing_in: bool,
+    pub cf_state: Option<shell_core::signin::SignIn>,
+    pub cf_gateway: Option<bool>,
+    pub cf_access: Option<shell_core::signin::AccessState>,
+    pub harness: shell_core::harness::Harness,
+    pub harness_info: Vec<shell_core::harness::Detected>,
+    /// Set by Stop to end a running harness subprocess.
+    pub harness_cancel: Arc<std::sync::atomic::AtomicBool>,
+    pub harness_running: bool,
+    pub or_busy: bool,
+    pub or_line: Option<String>,
+    pub or_account: Option<shell_core::openrouter::Account>,
     /// The note typed on an approval card, sent with the decision.
     pub approval_note: TextEdit,
     /// Settings > Models and keys fields. Key fields are secure and are cleared once sent.
@@ -86,6 +106,16 @@ impl App {
             composer: TextEdit::new(""),
             cloudflare_line: None,
             signing_in: false,
+            cf_state: None,
+            cf_gateway: None,
+            cf_access: None,
+            harness: shell_core::harness::Harness::BuiltIn,
+            harness_info: Vec::new(),
+            harness_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            harness_running: false,
+            or_busy: false,
+            or_line: None,
+            or_account: None,
             approval_note: TextEdit::new(""),
             set_default_model: TextEdit::new(""),
             set_worker_model: TextEdit::new(""),
@@ -132,12 +162,26 @@ impl App {
                 }
                 Msg::SignedIn(r) => {
                     self.signing_in = false;
-                    self.cloudflare_line = Some(match r {
-                        Ok(s) => s.summary(),
-                        Err(words) => words,
-                    });
+                    match r {
+                        Ok(st) => {
+                            self.cloudflare_line = Some(st.summary());
+                            self.cf_state = Some(st);
+                        }
+                        Err(words) => self.cloudflare_line = Some(words),
+                    }
                 }
-                Msg::ChatEnd => {}
+                Msg::CfProgress(line) => self.cloudflare_line = Some(line),
+                Msg::CfDashboard { gateway, access } => {
+                    self.cf_gateway = gateway;
+                    self.cf_access = Some(access);
+                }
+                Msg::HarnessDetected(list) => self.harness_info = list,
+                Msg::OrKey(r) => self.on_openrouter_key(r),
+                Msg::OrAccount(a) => {
+                    self.or_busy = false;
+                    self.or_account = Some(a);
+                }
+                Msg::ChatEnd => self.harness_running = false,
                 Msg::ChatError(words) => {
                     self.notice = Some(words);
                     if let Some(m) = self.main.as_mut() {
