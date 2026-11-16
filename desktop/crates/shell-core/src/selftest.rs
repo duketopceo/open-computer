@@ -48,7 +48,7 @@ pub struct Targets {
     /// The command that runs Wrangler.
     pub wrangler: Vec<String>,
     /// Programs checked with `--version`, as (label, program).
-    pub harnesses: Vec<(&'static str, &'static str)>,
+    pub harnesses: Vec<(&'static str, String)>,
     /// How long a program may take before it counts as hung.
     pub program_timeout: Duration,
     /// The log file whose writability is checked.
@@ -62,7 +62,10 @@ impl Targets {
             probe_store: Box::new(KeyringSecrets::with_service("open-computer-selftest")),
             real_store: Box::new(KeyringSecrets::new()),
             wrangler: signin::wrangler_command(),
-            harnesses: vec![("hermes", "hermes"), ("opencode", "opencode")],
+            harnesses: vec![
+                ("hermes", "hermes".to_owned()),
+                ("opencode", "opencode".to_owned()),
+            ],
             program_timeout: Duration::from_secs(20),
             log: crate::applog::log_path(),
         }
@@ -284,7 +287,7 @@ pub fn run(t: &Targets) -> Vec<Line> {
             "opencode --version"
         };
         out.push(
-            match run_bounded(program, &["--version"], t.program_timeout) {
+            match run_bounded(program.as_str(), &["--version"], t.program_timeout) {
                 Ok((true, text)) => Line::new(
                     name,
                     Verdict::Pass,
@@ -393,10 +396,24 @@ mod tests {
             probe_store: probe,
             real_store: Box::new(InMemorySecrets::new()),
             wrangler: vec!["sh".into(), "-c".into(), "echo 'You are logged in with an OAuth Token, associated with the email you@example.com.'; echo 'Account Name  Account ID'; exit 0".into()],
-            harnesses: vec![("hermes", "sh")],
+            harnesses: vec![("hermes", fake_agent())],
             program_timeout: Duration::from_secs(5),
             log: std::env::temp_dir().join(format!("oc-selftest-{}.log", std::process::id())),
         }
+    }
+
+    /// A stand-in agent program that answers `--version` the way the real ones do.
+    fn fake_agent() -> String {
+        let dir = std::env::temp_dir().join(format!("oc-selftest-agent-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("fake-agent.sh");
+        std::fs::write(&p, "#!/bin/sh\necho 'Fake Agent v1.2.3'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p.to_string_lossy().into_owned()
     }
 
     fn temp_file(name: &str, text: &str) -> PathBuf {
