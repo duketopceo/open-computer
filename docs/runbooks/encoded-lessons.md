@@ -15,6 +15,7 @@ before the tests. `scripts/check-*` is in `.github/CODEOWNERS`, so weakening a c
 | `check-403-not-key-invalid.sh` | HTTP 403 is "forbidden", not "key invalid" (ratchet: existing sites are listed in the script, new ones fail) |
 | `check-desktop-packaging.sh` | The menu entry runs the launcher, which sets the PATH (`~/.local/bin`, mise shims) and logs to `~/.local/state/open-computer/desktop.log` |
 | `check-desktop-logging.sh` | The app starts its own file log (`applog::init()`), redacts it, starts children with the extended PATH, and keeps the transport error reason |
+| `check-core-startup.sh` | The cloud core's startup CPU stays under budget (Cloudflare refuses a deploy that exceeds its startup limit). Runs in the `core` job, because it needs the core's dependencies and Docker, so it is not part of `make lint-lessons` |
 | `check-workflow-hardening.sh` | No `pull_request_target`; every action pinned to a commit SHA |
 
 To add one: write `scripts/check-<topic>.sh` that prints `check-<topic>: ok` or the offending lines plus a "Fix:" paragraph,
