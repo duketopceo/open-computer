@@ -158,6 +158,40 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-099 | P2 | Provisioning integrity: the image installs only hash-verified packages | shipped: a generated `requirements.txt` (654 `--hash=sha256:` lines over the runtime extras) installed under `--require-hashes`, plus a separate `deploy/server-001/requirements-vcs.txt` for `jev-compact`, whose integrity guarantee is its full commit pin because pip cannot hash a git source. `temporalio` is a `durable` extra, so the optional-import contract in `services/opsview/goalruns.py` survives. Freshness, pin and a real round-trip install are tested; CI has a `provisioning` job registered in `deploy/approved_deploy.py` `REQUIRED_JOBS` |
 | OC-100 | P2 | Workspace archive listing bounds | shipped: input size, entry count and accumulated listing are capped in `services/workspace/caps.py`, and a declared entry count is read from the end-of-central-directory record before `zipfile` opens the archive, because `ZipFile.__init__` materializes the whole directory on open. An over-bound archive is a 422 rather than an unbounded read. The declared count is attacker-controlled (measured: patching it to 1 in a 110,000-entry archive still costs ~60 MB inside `ZipFile()`), so the per-entry walk is the bound that holds and the header read is only an early exit. Deliberately not a decompression guard: nothing in this tree extracts an entry |
 
+## v1: desktop app + Cloudflare core (2026-11-16)
+
+v1 replaces the Python console with a Rust desktop app and a TypeScript core deployed to the user's own
+Cloudflare account. The sections above describe the earlier stack and stay as history.
+
+### Landed
+
+| Area | What | PRs |
+|---|---|---|
+| Plan and core | v1 plan; TypeScript agent core; Cloudflare deploy-as-code; live setup wizard and `oc doctor` | #165, #167, #169 |
+| Runtime | Self-hosted daemon, local-only mode, real model prices, IT policy file, OpenTelemetry | #170 |
+| Integrations | Harness choice (Built-in / Hermes / OpenCode), the official OpenRouter SDK with account data, Sign in with Cloudflare | #171 |
+| AI Gateway | Model calls through the `open-computer` gateway via the Workers AI binding, with a direct fallback | #172 |
+| Desktop UX | Sign-in feedback (#173); scroll and layout (#174); zero-typing onboarding (#175); chat-first workspace with a live Computer panel (#176); full Settings page (#177) | #173–#177 |
+| CI/CD | Release builds (x86_64 and aarch64) with an installer; gated core deploy; `make lint-lessons` with 9 encoded checks | #178 |
+| In review | Live fixes: logging, keyring and auto-connect, task history, `--self-test`, harness model ids, stale-token re-adopt, 409 handling | #179 |
+
+### Next
+
+| Unit | What | Done when |
+|---|---|---|
+| OC-101 | **Diagnostics: full test suite.** The Diagnostics page runs every check the app knows, grouped by area, with the same live rows, timers and fix text as today's 18-row chain: core chain, harness, OpenRouter, MCP, plugins, APIs and memory. Each run is kept so you can compare it with the last one, and "Copy diagnostics" covers the whole suite. | Every group has at least one live check and one failure-path check proven on a fake; `--self-test` runs the same suite headless |
+| OC-102 | **Per-tab tests in Settings.** Each Settings tab gets a "Test this" button that runs only its group, inline:<br>• **Agent harness:** installed, version, model id understood (`openrouter/` mapping), provider configured, a dry run where the harness has one<br>• **OpenRouter:** key valid, limit and usage, model list, generation lookup, OAuth callback reachable<br>• **MCP:** each configured server reachable, tools listed, call timeouts<br>• **Plugins:** manifest valid, permissions granted, load and unload<br>• **APIs:** custom OpenAI-compatible endpoint, Cloudflare API scopes, AI Gateway route<br>• **Memory:** write, recall with a citation, delete, audit chain verifies | Each tab's button shows PASS/FAIL rows with a reason and a fix; results feed OC-101 |
+| OC-103 | **MCP tab** in Settings: add, edit and remove MCP servers; per-server tool list; enable per task | Servers configured in the app are usable by the Built-in harness |
+| OC-104 | **Plugins tab** in Settings (former U21): install, enable, permissions | One first-party plugin installs and runs |
+| OC-105 | **APIs tab** in Settings: custom endpoints, Cloudflare API and AI Gateway status in one place | Replaces the scattered endpoint fields |
+| OC-106 | Clear on/off control states and a subtle ambient background with a reduced-motion setting | Pixel tests per control type; idle CPU under 2% |
+| OC-107 | Workspace gaps: Attach, inline model picker, live terminal streaming in the Computer panel, sign-in browser/profile chooser | Each one works against the live core |
+| OC-108 | Cloudflare Access with service tokens for the desktop, `oc` and the wizard | Access on, with no lockout |
+| OC-109 | "Your own server" onboarding: self-host the core on a tailnet host (for example cluster4) over SSH | Setup and the full suite pass against a self-hosted core |
+| OC-110 | CI core deploy secret `CLOUDFLARE_API_TOKEN`, scoped | The deploy-core job runs green on main |
+
+Board: Tallyline project "Open Computer" (TLY-576 to TLY-581, plus a ticket for OC-101/OC-102).
+
 ## Landed since 2026-10-14
 
 These merged to `main` after the unit table above was last reconciled. They are not all tracked as OC units;
