@@ -50,13 +50,26 @@ pub fn parse_level(spec: &str) -> Level {
 
 /// Where the log goes: `OC_LOG_FILE`, else `$XDG_STATE_HOME/open-computer/desktop.log`, else `~/.local/state/...`.
 pub fn log_path() -> PathBuf {
-    if let Some(p) = std::env::var_os("OC_LOG_FILE").filter(|p| !p.is_empty()) {
+    log_path_from(
+        std::env::var_os("OC_LOG_FILE"),
+        std::env::var_os("XDG_STATE_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The path from the three environment values, so tests can check it without touching the real environment.
+pub fn log_path_from(
+    oc_log_file: Option<std::ffi::OsString>,
+    xdg_state_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> PathBuf {
+    if let Some(p) = oc_log_file.filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
     }
-    let base = std::env::var_os("XDG_STATE_HOME")
+    let base = xdg_state_home
         .filter(|p| !p.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))
+        .or_else(|| home.map(|h| PathBuf::from(h).join(".local").join("state")))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("open-computer").join("desktop.log")
 }
@@ -250,6 +263,28 @@ pub fn tail(n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_log_path_honours_the_override_then_xdg_state_home_then_home() {
+        use std::ffi::OsString;
+        let s = |v: &str| Some(OsString::from(v));
+        assert_eq!(
+            log_path_from(s("/tmp/x.log"), s("/s"), s("/h")),
+            PathBuf::from("/tmp/x.log")
+        );
+        assert_eq!(
+            log_path_from(None, s("/tmp/state"), s("/home/me")),
+            PathBuf::from("/tmp/state/open-computer/desktop.log")
+        );
+        assert_eq!(
+            log_path_from(None, s(""), s("/home/me")),
+            PathBuf::from("/home/me/.local/state/open-computer/desktop.log")
+        );
+        assert_eq!(
+            log_path_from(None, None, None),
+            PathBuf::from("./open-computer/desktop.log")
+        );
+    }
 
     #[test]
     fn rust_log_picks_the_highest_named_level_and_defaults_to_info() {

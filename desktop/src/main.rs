@@ -16,7 +16,10 @@ use rune::AppSpec;
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-    shell_core::applog::init();
+    // Headless screenshot runs (`--snap`) are not real runs: they must never add lines to the person's log.
+    if !std::env::args().skip(1).any(|a| a == "--snap") {
+        shell_core::applog::init();
+    }
 
     if std::env::args().skip(1).any(|a| a == "--print-state") {
         println!("{}", shell_core::onboarding::initial_state_json());

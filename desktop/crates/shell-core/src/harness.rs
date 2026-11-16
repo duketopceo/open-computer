@@ -334,6 +334,21 @@ fn kill_tree(root: u32) {
     }
 }
 
+/// Starts a command, trying again for a moment when Linux says the file is busy (a script written a moment ago can still be open for
+/// writing in another thread of this process: ETXTBSY).
+pub fn spawn_with_retry(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    let mut tries = 0;
+    loop {
+        match cmd.spawn() {
+            Err(e) if e.raw_os_error() == Some(26) && tries < 8 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// A program name to start: a bare name is looked up on the PATH and then in the extra directories (`~/.local/bin`, the mise
 /// shims), because an app opened from a desktop menu has a minimal PATH. Anything with a slash is used as given.
 pub fn resolve_program(program: &str) -> String {
@@ -454,7 +469,7 @@ pub fn run_task_with(
             .collect::<Vec<_>>()
             .join(",")
     );
-    let mut child = cmd.spawn().map_err(|e| {
+    let mut child = spawn_with_retry(&mut cmd).map_err(|e| {
         crate::log_error!("harness", "{program} could not be started: {e}");
         format!("{program} could not be started ({e}). Check that it is installed.")
     })?;

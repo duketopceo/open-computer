@@ -53,6 +53,8 @@ pub struct Targets {
     pub program_timeout: Duration,
     /// The log file whose writability is checked.
     pub log: PathBuf,
+    /// `desktop.json`: where the core address must persist.
+    pub config_path: PathBuf,
 }
 
 impl Targets {
@@ -68,6 +70,7 @@ impl Targets {
             ],
             program_timeout: Duration::from_secs(20),
             log: crate::applog::log_path(),
+            config_path: crate::config::default_path(),
         }
     }
 }
@@ -75,13 +78,13 @@ impl Targets {
 /// Runs `program args`, returning (success, stdout+stderr) or why it could not run. Gives up after `limit`.
 fn run_bounded(program: &str, args: &[&str], limit: Duration) -> Result<(bool, String), String> {
     let exe = crate::harness::resolve_program(program);
-    let mut child = Command::new(&exe)
-        .args(args)
+    let mut cmd = Command::new(&exe);
+    cmd.args(args)
         .env("PATH", signin::child_path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    let mut child = crate::harness::spawn_with_retry(&mut cmd)
         .map_err(|e| format!("{program} could not be started ({e}); looked at {exe}"))?;
     let start = Instant::now();
     loop {
@@ -171,8 +174,119 @@ fn endpoint(t: &Targets) -> Result<(Endpoint, &'static str), String> {
     Ok((Endpoint::new(&saved.cloud_url, &token), "keyring"))
 }
 
+/// What is saved right now: the address in `desktop.json` and the token in the keyring (or the consent to use `cloud.json`).
+fn persisted_line(t: &Targets) -> Line {
+    const NAME: &str = "persisted connection (what survives a restart)";
+    let saved = crate::config::load(&t.config_path);
+    let addr = !saved.cloud_url.is_empty();
+    let token = match t.real_store.get(Slot::CloudAccess) {
+        Ok(Some(v)) if !v.is_empty() => Ok(true),
+        Ok(_) => Ok(false),
+        Err(e) => Err(e.0),
+    };
+    let file_ok = saved.file_token_ok
+        && autoconnect::inspect_saved_core(&t.cloud_json)
+            .problem
+            .is_none();
+    let token_words = match &token {
+        Ok(true) => "token in keyring: yes".to_owned(),
+        Ok(false) if file_ok => "token in keyring: no, but you chose to use cloud.json".to_owned(),
+        Ok(false) => "token in keyring: no".to_owned(),
+        Err(e) => format!("token in keyring: unreadable ({e})"),
+    };
+    let address_words = if addr {
+        format!("address in desktop.json: yes ({})", saved.cloud_url)
+    } else {
+        "address in desktop.json: no".to_owned()
+    };
+    let ok = addr && (token == Ok(true) || file_ok);
+    Line::new(
+        NAME,
+        if ok { Verdict::Pass } else { Verdict::Fail },
+        format!(
+            "{address_words}; {token_words}; setup finished: {}",
+            if saved.setup_done { "yes" } else { "no" }
+        ),
+    )
+}
+
+/// Proves adoption end to end without touching the real entries: the saved token goes into the keyring under the probe service
+/// name and is read back and deleted, and the address round-trips through a probe file next to `desktop.json`.
+fn adoption_lines(t: &Targets) -> Vec<Line> {
+    let mut out = Vec::new();
+    match autoconnect::read_saved_core(&t.cloud_json) {
+        None => {
+            out.push(Line::new(
+                "adopt: token into the keyring",
+                Verdict::Fail,
+                "no usable saved connection to adopt",
+            ));
+            out.push(Line::new(
+                "persist: address survives a reload",
+                Verdict::Fail,
+                "no address to save",
+            ));
+        }
+        Some(core) => {
+            let url = core.url.clone();
+            let tmp = crate::secrets::InMemorySecrets::new();
+            let adopted = core.use_for_session(&tmp).and_then(|_| {
+                let token = tmp
+                    .get(Slot::CloudAccess)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                t.probe_store
+                    .set_persistent(Slot::CloudAccess, &token)
+                    .map_err(|e| e.0)?;
+                let back = t.probe_store.get(Slot::CloudAccess).map_err(|e| e.0)?;
+                let _ = t.probe_store.delete(Slot::CloudAccess);
+                if back.as_deref() == Some(token.as_str()) {
+                    Ok(())
+                } else {
+                    Err("the keyring accepted the token but did not give it back".to_owned())
+                }
+            });
+            out.push(match adopted {
+                Ok(()) => Line::new("adopt: token into the keyring", Verdict::Pass, "the saved token was stored in the keyring, read back and removed (probe entry, your real one is untouched)"),
+                Err(e) => Line::new("adopt: token into the keyring", Verdict::Fail, e),
+            });
+            let probe = t.config_path.with_file_name("desktop.json.selftest");
+            let saved = crate::config::Saved {
+                cloud_url: url.clone(),
+                ..Default::default()
+            };
+            let persisted = crate::config::save(&probe, &saved)
+                .map_err(|e| format!("could not write {}: {e}", probe.display()))
+                .and_then(|()| {
+                    let back = crate::config::load(&probe);
+                    let _ = std::fs::remove_file(&probe);
+                    if back.cloud_url == url {
+                        Ok(())
+                    } else {
+                        Err("the address did not survive a reload".to_owned())
+                    }
+                });
+            out.push(match persisted {
+                Ok(()) => Line::new(
+                    "persist: address survives a reload",
+                    Verdict::Pass,
+                    format!(
+                        "{url} written next to {} and read back",
+                        t.config_path.display()
+                    ),
+                ),
+                Err(e) => Line::new("persist: address survives a reload", Verdict::Fail, e),
+            });
+        }
+    }
+    out
+}
+
 pub fn run(t: &Targets) -> Vec<Line> {
-    let mut out = vec![keyring_line(t)];
+    let mut out = vec![persisted_line(t)];
+    out.extend(adoption_lines(t));
+    out.push(keyring_line(t));
 
     let saved = autoconnect::inspect_saved_core(&t.cloud_json);
     out.push(match (&saved.problem, &saved.url) {
@@ -399,6 +513,9 @@ mod tests {
             harnesses: vec![("hermes", fake_agent())],
             program_timeout: Duration::from_secs(5),
             log: std::env::temp_dir().join(format!("oc-selftest-{}.log", std::process::id())),
+            config_path: std::env::temp_dir()
+                .join(format!("oc-selftest-cfg-{}", std::process::id()))
+                .join("desktop.json"),
         }
     }
 
@@ -416,6 +533,36 @@ mod tests {
         p.to_string_lossy().into_owned()
     }
 
+    fn by_name<'a>(lines: &'a [Line], n: &str) -> &'a Line {
+        lines
+            .iter()
+            .find(|l| l.name == n)
+            .unwrap_or_else(|| panic!("{n}"))
+    }
+
+    #[test]
+    fn nothing_persisted_is_the_first_failure_and_says_what_is_missing() {
+        // The owner's symptom: a token in the keyring but no address saved.
+        let url = fake_core();
+        let f = temp_file("p.json", &format!(r#"{{"url":"{url}","token":"{TOKEN}"}}"#));
+        let mut t = targets(f.clone(), Box::new(InMemorySecrets::new()));
+        t.config_path = std::env::temp_dir()
+            .join(format!("oc-selftest-none-{}", std::process::id()))
+            .join("desktop.json");
+        let real = InMemorySecrets::new();
+        real.set(Slot::CloudAccess, TOKEN).unwrap();
+        t.real_store = Box::new(real);
+        let lines = run(&t);
+        assert_eq!(lines[0].verdict, Verdict::Fail);
+        assert!(
+            lines[0].detail.contains("address in desktop.json: no")
+                && lines[0].detail.contains("token in keyring: yes"),
+            "{}",
+            lines[0].detail
+        );
+        let _ = std::fs::remove_file(f);
+    }
+
     fn temp_file(name: &str, text: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("oc-selftest-{}-{name}", std::process::id()));
         std::fs::write(&p, text).unwrap();
@@ -429,9 +576,44 @@ mod tests {
             "ok.json",
             &format!(r#"{{"url":"{url}","token":"{TOKEN}"}}"#),
         );
-        let lines = run(&targets(f.clone(), Box::new(InMemorySecrets::new())));
+        let mut t = targets(f.clone(), Box::new(InMemorySecrets::new()));
+        // Something is already persisted: the address in desktop.json and the token in the keyring.
+        std::fs::create_dir_all(t.config_path.parent().unwrap()).unwrap();
+        crate::config::save(
+            &t.config_path,
+            &crate::config::Saved {
+                cloud_url: url.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let real = InMemorySecrets::new();
+        real.set(Slot::CloudAccess, TOKEN).unwrap();
+        t.real_store = Box::new(real);
+        let lines = run(&t);
         let text = render(&lines);
         assert!(!text.contains(TOKEN), "{text}");
+        assert_eq!(
+            lines[0].name, "persisted connection (what survives a restart)",
+            "persistence is proven first: {text}"
+        );
+        assert_eq!(lines[0].verdict, Verdict::Pass, "{text}");
+        assert_eq!(
+            by_name(&lines, "adopt: token into the keyring").verdict,
+            Verdict::Pass,
+            "{text}"
+        );
+        assert_eq!(
+            by_name(&lines, "persist: address survives a reload").verdict,
+            Verdict::Pass,
+            "{text}"
+        );
+        assert!(
+            !t.config_path
+                .with_file_name("desktop.json.selftest")
+                .exists(),
+            "the probe file is removed"
+        );
         let by = |n: &str| {
             lines
                 .iter()
