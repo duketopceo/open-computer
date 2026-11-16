@@ -8,6 +8,7 @@ mod getstarted;
 mod integrations;
 mod main_app;
 mod screens;
+mod settings_actions;
 mod theme;
 
 use app::App;

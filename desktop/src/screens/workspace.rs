@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use rune::{El, Icon, ScrollSpec, Transition, col, el, icon, row, text};
 use rune_kit::glyphs::{CHECK_SMALL, CLOSE};
 use rune_kit::shell::{INSPECTOR, SIDEBAR};
-use rune_kit::{Button, ButtonVariant, Kit, Markdown, Spinner, TextArea};
+use rune_kit::{Kit, Markdown, Spinner, TextArea};
 use shell_core::chat::{Chat, Item, ToolCard, write_diff};
 use shell_core::defaults;
 use shell_core::harness::Harness;
@@ -169,8 +169,8 @@ pub fn view(s: &App, k: &Kit, m: &Main) -> El {
     }
     let body = match m.tab {
         Tab::Chat => chat_page(s, k, m),
-        Tab::Settings => page(s, k, m, "Settings", main_view::settings(s, k, m)),
-        Tab::Diagnostics => page(s, k, m, "Diagnostics", main_view::diagnostics(s, k)),
+        // Settings is a full page of its own, with a section list on the left; Diagnostics is one of its sections.
+        Tab::Settings | Tab::Diagnostics => super::settings_page::page(s, k, m),
     };
     let mut content = col().key("content").grow(1.0).h_full().child(body);
     if let Some(n) = &s.notice {
@@ -183,36 +183,6 @@ pub fn view(s: &App, k: &Kit, m: &Main) -> El {
         );
     }
     window.child(content)
-}
-
-/// Settings and Diagnostics open as full pages in the content area, with a way back.
-fn page(s: &App, k: &Kit, m: &Main, title: &str, body: El) -> El {
-    let _ = s;
-    col()
-        .key("page")
-        .w_full()
-        .grow(1.0)
-        .padding(24.0)
-        .gap(16.0)
-        .child(
-            row()
-                .gap(12.0)
-                .center_y()
-                .child(sidebar_toggle(k, m))
-                .child(
-                    text(title.to_owned())
-                        .font(heading_style(k, 20.0))
-                        .color(k.c.text_strong)
-                        .grow(1.0),
-                )
-                .child(
-                    Button::new("Back to chat")
-                        .variant(ButtonVariant::Ghost)
-                        .on_press(|s: &mut App| s.show_tab(Tab::Chat))
-                        .build(k),
-                ),
-        )
-        .child(col().w_full().grow(1.0).max_w(880.0).child(body))
 }
 
 fn heading_style(k: &Kit, size: f32) -> rune::TextStyle {

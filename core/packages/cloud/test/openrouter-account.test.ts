@@ -36,6 +36,14 @@ describe("OpenRouter account routes (official SDK behind the core's own auth)", 
     expect(key).not.toContain(MODEL_KEY);
   });
 
+  it("tells which models support tools and reasoning, from the provider's supported parameters", async () => {
+    install([]);
+    setFetch(async () => ok({ data: [{ id: "a/tooly", name: "Tooly", context_length: 1000, pricing: { prompt: "0.000001", completion: "0.000002" }, supported_parameters: ["tools", "reasoning"] }, { id: "b/plain", name: "Plain", context_length: 500, pricing: { prompt: "0.000001", completion: "0.000002" }, supported_parameters: ["temperature"] }] }));
+    const body = (await (await api("/v1/openrouter/models")).json()) as { models: Array<Record<string, unknown>> };
+    expect(body.models.find((m) => m.id === "a/tooly")).toMatchObject({ tools: true, reasoning: true });
+    expect(body.models.find((m) => m.id === "b/plain")).toMatchObject({ tools: false, reasoning: false });
+  });
+
   it("maps a rejected key to a plain 401 code", async () => {
     install([]);
     setFetch(async () => new Response("{}", { status: 401 }));

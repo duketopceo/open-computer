@@ -21,4 +21,5 @@ pub mod http;
 pub mod onboarding;
 pub mod openrouter;
 pub mod secrets;
+pub mod settings_data;
 pub mod signin;

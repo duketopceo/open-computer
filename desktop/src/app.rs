@@ -19,6 +19,14 @@ use shell_core::secrets::{KeyringSecrets, SecretStore, Slot};
 /// Names the local core binary, or `node <script>`. Packaging (a later unit) bundles it.
 const CORE_BIN_ENV: &str = "OC_CORE_BIN";
 
+pub(crate) enum DataMsg {
+    Bindings(Result<serde_json::Value, String>),
+    CoreInfo(Result<shell_core::settings_data::CoreInfo, String>),
+    Spend(Result<shell_core::settings_data::SpendReport, String>),
+    Memory(Result<shell_core::settings_data::MemoryStats, String>),
+    MemoryCleared(Result<u64, String>),
+}
+
 pub(crate) enum Msg {
     TestDone(Result<TestConnection, String>),
     DiagRows(Vec<Row>),
@@ -49,6 +57,8 @@ pub(crate) enum Msg {
     SetupDone(Result<bool, String>),
     /// Whether the connected core already holds an OpenRouter key.
     CoreHasKey(bool),
+    /// Settings page data arriving from the core.
+    Data(DataMsg),
     /// Whether the connected core routes model calls through an AI Gateway.
     Gateway(Option<bool>),
     GatewayReason(Option<String>),
@@ -116,6 +126,14 @@ pub struct App {
     pub gateway_link: bool,
     pub show_advanced: bool,
     pub core_has_model_key: bool,
+    // Settings page data, each loaded from the core on its own.
+    pub bindings: shell_core::settings_data::Load<serde_json::Value>,
+    pub core_info: shell_core::settings_data::Load<shell_core::settings_data::CoreInfo>,
+    pub spend: shell_core::settings_data::Load<shell_core::settings_data::SpendReport>,
+    pub memory: shell_core::settings_data::Load<shell_core::settings_data::MemoryStats>,
+    pub confirm_clear: bool,
+    pub models_query: TextEdit,
+    pub models_sort: (shell_core::settings_data::ModelSort, bool),
     last_tick: u64,
     waker: Option<Waker>,
     tx: Sender<Msg>,
@@ -186,6 +204,13 @@ impl App {
             gateway_link: false,
             show_advanced: false,
             core_has_model_key: false,
+            bindings: Default::default(),
+            core_info: Default::default(),
+            spend: Default::default(),
+            memory: Default::default(),
+            confirm_clear: false,
+            models_query: TextEdit::new(""),
+            models_sort: (shell_core::settings_data::ModelSort::Prompt, true),
             last_tick: 0,
             waker: None,
             tx,
@@ -278,6 +303,7 @@ impl App {
                 }
                 Msg::SetupDone(r) => self.on_setup_done(r),
                 Msg::CoreHasKey(has) => self.on_core_has_key(has),
+                Msg::Data(d) => self.on_data(d),
                 Msg::GatewayReason(r) => self.cf_gateway_reason = r,
                 Msg::Gateway(g) => {
                     if g.is_some() {

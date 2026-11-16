@@ -339,6 +339,9 @@ fn plain(status: u16) -> String {
     }
 }
 
+/// A route's status, its headers (names lowercased) and its body as text.
+pub type RawReply = (u16, Vec<(String, String)>, String);
+
 impl Endpoint {
     pub fn new(base: &str, token: &str) -> Self {
         Self {
@@ -465,6 +468,32 @@ impl Endpoint {
         } else {
             Err(plain(status))
         }
+    }
+
+    /// A request to one of the core's own routes with the answer left as text and the response headers kept (names lowercased).
+    pub fn raw(&self, method: &str, path: &str) -> Result<RawReply, String> {
+        let agent = Self::agent(Some(Duration::from_secs(60)));
+        let url = format!("{}{}", self.base, path);
+        let auth = format!("Bearer {}", self.token);
+        let res = if method == "POST" {
+            agent.post(&url).header("authorization", &auth).send_empty()
+        } else {
+            agent.get(&url).header("authorization", &auth).call()
+        };
+        let mut res = res.map_err(|_| "The core could not be reached.".to_owned())?;
+        let status = res.status().as_u16();
+        let headers = res
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_ascii_lowercase(),
+                    v.to_str().unwrap_or("").to_owned(),
+                )
+            })
+            .collect();
+        let text = res.body_mut().read_to_string().unwrap_or_default();
+        Ok((status, headers, text))
     }
 
     /// A GET on one of the core's own routes: the status and the JSON body.

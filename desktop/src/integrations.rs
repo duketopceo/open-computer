@@ -294,6 +294,141 @@ impl App {
         });
     }
 
+    /// Fake Settings data for the headless screenshots and tests: what each section shows once the core has answered. Built
+    /// from the same answers a core gives (the audit log text goes through the real spend parser).
+    pub fn apply_settings_fixture(&mut self) {
+        use shell_core::autoconnect::FoundCore;
+        use shell_core::openrouter::{Account, Credits, Generation, KeyInfo, ModelPrice, Source};
+        use shell_core::settings_data::{
+            CoreInfo, Load, MemoryStats, spend_from_audit, today_days, ymd_string,
+        };
+        let model = |id: &str, ctx: u64, p: f64, c: f64, tools: bool, reasoning: bool| ModelPrice {
+            id: id.into(),
+            name: id.into(),
+            context: ctx,
+            prompt_per_m: p,
+            completion_per_m: c,
+            tools,
+            reasoning,
+        };
+        self.or_account = Some(Account {
+            source: Source::Core,
+            key: Some(KeyInfo {
+                label: "sk-or-v1-abc...xyz".into(),
+                usage: 82.29,
+                limit: Some(50.0),
+                limit_remaining: Some(12.5),
+                is_free_tier: false,
+                limit_reset: Some("monthly".into()),
+                usage_daily: Some(1.1),
+                usage_weekly: Some(7.7),
+                usage_monthly: Some(37.5),
+            }),
+            credits: None,
+            credits_need_management_key: true,
+            models: vec![
+                model("z-ai/glm-5.3", 200_000, 0.6, 2.2, true, true),
+                model("z-ai/glm-5.3-flash", 128_000, 0.1, 0.4, true, false),
+                model("anthropic/claude-sonnet", 200_000, 3.0, 15.0, true, true),
+                model("openai/gpt-mini", 128_000, 0.15, 0.6, true, false),
+                model("meta/llama-70b", 32_000, 0.9, 0.9, false, false),
+                model("google/gemini-flash", 1_000_000, 0.1, 0.4, true, true),
+            ],
+            generations: vec![
+                Generation {
+                    id: "gen-3".into(),
+                    model: "z-ai/glm-5.3".into(),
+                    cost: 0.00033,
+                    prompt_tokens: 760,
+                    completion_tokens: 52,
+                    latency_ms: Some(1100.0),
+                    ts: Some("2026-11-15T12:04:10Z".into()),
+                    task_id: Some("t1".into()),
+                },
+                Generation {
+                    id: "gen-2".into(),
+                    model: "z-ai/glm-5.3".into(),
+                    cost: 0.00041,
+                    prompt_tokens: 640,
+                    completion_tokens: 88,
+                    latency_ms: Some(1900.0),
+                    ts: Some("2026-11-15T12:03:58Z".into()),
+                    task_id: Some("t1".into()),
+                },
+                Generation {
+                    id: "gen-1".into(),
+                    model: "z-ai/glm-5.3-flash".into(),
+                    cost: 0.0002,
+                    prompt_tokens: 420,
+                    completion_tokens: 30,
+                    latency_ms: Some(700.0),
+                    ts: Some("2026-11-14T09:30:00Z".into()),
+                    task_id: None,
+                },
+            ],
+            problems: Vec::new(),
+        });
+        let _ = Credits {
+            total: 0.0,
+            used: 0.0,
+        };
+        self.bindings = Load::Ready(serde_json::json!({
+            "d1": true, "r2": true, "durable_objects": true, "workflow": true, "container": true, "access_secret": true, "model_key": true,
+            "gateway": false, "gateway_configured": true, "gateway_via": "direct",
+            "gateway_reason": "AI Gateway refused the request (needs authentication)."
+        }));
+        self.core_info = Load::Ready(CoreInfo {
+            version: "0.1.0".into(),
+            served_from: Some("SJC".into()),
+        });
+        let mut found = FoundCore::new(
+            "open-computer-core",
+            "Your account",
+            "https://open-computer-core.you.workers.dev",
+            "0",
+        );
+        found.modified_on = Some("2026-11-15T19:20:00Z".into());
+        self.found_core = Some(found);
+        let today = today_days();
+        let line = |back: i64, cost: f64| {
+            format!(
+                r#"{{"seq":1,"ts":"{}T10:00:00.000Z","task_id":"t","kind":"event:usage","data":{{"cost":{cost}}}}}"#,
+                ymd_string(today - back)
+            )
+        };
+        let audit = [
+            line(0, 0.012),
+            line(1, 0.031),
+            line(2, 0.0),
+            line(3, 0.02),
+            line(4, 0.008),
+            line(6, 0.045),
+            line(8, 0.015),
+            line(11, 0.027),
+            line(12, 0.004),
+        ]
+        .join("\n");
+        self.spend = Load::Ready(spend_from_audit(&audit, today, Some("ok")));
+        self.memory = Load::Ready(MemoryStats {
+            blocks: vec![("agent_notes".into(), 640), ("user_profile".into(), 212)],
+            entries: 7,
+            newest: Some("2026-11-15T12:05:00Z".into()),
+        });
+        self.cf_state = Some(signin::SignIn {
+            signed_in: true,
+            email: Some("you@example.com".into()),
+            accounts: vec!["Your account".into()],
+            scopes: vec![
+                "account".into(),
+                "workers".into(),
+                "d1".into(),
+                "containers".into(),
+            ],
+            missing: Vec::new(),
+        });
+        self.cf_access = Some(AccessState::NotProtected);
+    }
+
     /// Fake conversations for the workspace screenshots: `OC_SCREEN_WORKSPACE=empty|running|done`. Built from the same events a
     /// core streams, so the screens draw what a real task would show. Never touches a network or an account.
     pub fn apply_workspace_fixture(&mut self, kind: &str) {
@@ -423,6 +558,8 @@ impl App {
                     context: 128_000,
                     prompt_per_m: 0.1,
                     completion_per_m: 0.4,
+                    tools: true,
+                    reasoning: false,
                 },
                 ModelPrice {
                     id: "vendor/large".into(),
@@ -430,6 +567,8 @@ impl App {
                     context: 200_000,
                     prompt_per_m: 3.0,
                     completion_per_m: 15.0,
+                    tools: true,
+                    reasoning: true,
                 },
             ],
             generations: vec![Generation {
@@ -439,6 +578,8 @@ impl App {
                 prompt_tokens: 120,
                 completion_tokens: 40,
                 latency_ms: Some(900.0),
+                ts: Some("2026-11-15T12:00:00Z".into()),
+                task_id: Some("t1".into()),
             }],
             problems: Vec::new(),
         });
@@ -475,6 +616,9 @@ impl App {
         }
         if let Ok(kind) = std::env::var("OC_SCREEN_WORKSPACE") {
             self.apply_workspace_fixture(&kind);
+        }
+        if std::env::var_os("OC_SCREEN_SETTINGS").is_some() {
+            self.apply_settings_fixture();
         }
         // OC_SCREEN_ROWS=1: a test chain part way through, for the Diagnostics screenshot.
         if std::env::var_os("OC_SCREEN_ROWS").is_some() {

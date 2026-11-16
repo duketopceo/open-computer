@@ -276,6 +276,15 @@ pub struct ModelPrice {
     /// Dollars per million tokens.
     pub prompt_per_m: f64,
     pub completion_per_m: f64,
+    pub tools: bool,
+    pub reasoning: bool,
+}
+
+impl ModelPrice {
+    /// The vendor part of `vendor/model`.
+    pub fn provider(&self) -> &str {
+        self.id.split('/').next().unwrap_or("")
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -286,11 +295,21 @@ pub struct Generation {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub latency_ms: Option<f64>,
+    /// When the core made the call (ISO time) and the task it belonged to, when the core said.
+    pub ts: Option<String>,
+    pub task_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct Wrap<T> {
     data: T,
+}
+
+/// Whether a list field (such as `supported_parameters`) contains `word`.
+fn supports(v: &Value, field: &str, word: &str) -> bool {
+    v.get(field)
+        .and_then(Value::as_array)
+        .is_some_and(|l| l.iter().any(|x| x.as_str() == Some(word)))
 }
 
 fn num(v: &Value, k: &str) -> f64 {
@@ -383,6 +402,9 @@ impl Client {
                     context: m.get("context_length").and_then(Value::as_u64).unwrap_or(0),
                     prompt_per_m: num(p, "prompt") * 1_000_000.0,
                     completion_per_m: num(p, "completion") * 1_000_000.0,
+                    tools: supports(m, "supported_parameters", "tools"),
+                    reasoning: supports(m, "supported_parameters", "reasoning")
+                        || supports(m, "supported_parameters", "include_reasoning"),
                 }
             })
             .filter(|m| !m.id.is_empty())
@@ -406,6 +428,8 @@ impl Client {
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
             latency_ms: opt(d, "latency"),
+            ts: None,
+            task_id: None,
         })
     }
 }
@@ -527,6 +551,8 @@ pub fn load_account_via_core(ep: &crate::chat::Endpoint) -> Option<Account> {
                         context: m["context"].as_u64().unwrap_or(0),
                         prompt_per_m: num(m, "prompt_per_m"),
                         completion_per_m: num(m, "completion_per_m"),
+                        tools: m["tools"].as_bool().unwrap_or(false),
+                        reasoning: m["reasoning"].as_bool().unwrap_or(false),
                     })
                     .filter(|m| !m.id.is_empty())
                     .collect()
@@ -556,6 +582,8 @@ pub fn load_account_via_core(ep: &crate::chat::Endpoint) -> Option<Account> {
                         prompt_tokens: g["prompt_tokens"].as_u64().unwrap_or(0),
                         completion_tokens: g["completion_tokens"].as_u64().unwrap_or(0),
                         latency_ms: opt(g, "latency_ms"),
+                        ts: g["ts"].as_str().map(str::to_owned),
+                        task_id: g["task_id"].as_str().map(str::to_owned),
                     })
                     .collect()
             })

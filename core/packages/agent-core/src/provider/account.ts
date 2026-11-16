@@ -138,7 +138,16 @@ export async function accountModels(c: AccountContext): Promise<AccountReply> {
     const models: Array<Record<string, unknown>> = [];
     for await (const page of await sdk.models.list()) {
       for (const m of page.result.data) {
-        models.push({ id: m.id, name: m.name, context: m.contextLength ?? 0, prompt_per_m: perMillion(m.pricing?.prompt), completion_per_m: perMillion(m.pricing?.completion) });
+        const params = ((m.supportedParameters ?? []) as string[]).map(String);
+        models.push({
+          id: m.id,
+          name: m.name,
+          context: m.contextLength ?? 0,
+          prompt_per_m: perMillion(m.pricing?.prompt),
+          completion_per_m: perMillion(m.pricing?.completion),
+          tools: params.includes("tools"),
+          reasoning: params.includes("reasoning") || params.includes("include_reasoning"),
+        });
       }
     }
     return { status: 200, body: { models } };
@@ -149,7 +158,16 @@ export async function accountModels(c: AccountContext): Promise<AccountReply> {
       const models = list.map((m) => {
         const o = rec(m);
         const pr = rec(o.pricing);
-        return { id: String(o.id ?? ""), name: String(o.name ?? ""), context: num(o.context_length) ?? 0, prompt_per_m: perMillion(pr.prompt), completion_per_m: perMillion(pr.completion) };
+        const params = Array.isArray(o.supported_parameters) ? (o.supported_parameters as unknown[]).map(String) : [];
+        return {
+          id: String(o.id ?? ""),
+          name: String(o.name ?? ""),
+          context: num(o.context_length) ?? 0,
+          prompt_per_m: perMillion(pr.prompt),
+          completion_per_m: perMillion(pr.completion),
+          tools: params.includes("tools"),
+          reasoning: params.includes("reasoning") || params.includes("include_reasoning"),
+        };
       });
       return { status: 200, body: { models } };
     } catch (e2) {

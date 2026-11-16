@@ -25,6 +25,7 @@ export * from "./memory/blocks.ts";
 export * from "./memory/history.ts";
 export * from "./memory/recall.ts";
 export * from "./memory/memory.ts";
+export * from "./memory/admin.ts";
 export * from "./tools/web-search.ts";
 export * from "./sandbox/port.ts";
 export * from "./it-policy.ts";

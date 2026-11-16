@@ -1,4 +1,4 @@
-import { OPENROUTER_BASE_URL, accountRoute, toNdjson, verifyChain, type FetchLike } from "@open-computer/agent-core";
+import { OPENROUTER_BASE_URL, accountRoute, clearMemory, memoryStats, toNdjson, verifyChain, type FetchLike } from "@open-computer/agent-core";
 import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import { authenticate } from "./auth.ts";
 import type { Env } from "./env.ts";
@@ -6,7 +6,7 @@ import { readSecret, SecretError } from "./models/secrets.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
 import { modelRefusal, settingRefusal } from "@open-computer/agent-core";
 import { NO_POLICY, parsePolicy, PolicyError, resolveDailyCaps, validateUserDailyCap, type DailyCaps, type Policy } from "./policy.ts";
-import { readAllAudit } from "./storage/ledger-client.ts";
+import { ledgerStub, readAllAudit } from "./storage/ledger-client.ts";
 import { handleDiag } from "./diag.ts";
 import { cloudflareSandbox } from "./sandbox/cloudflare-port.ts";
 import type { SandboxPort } from "./sandbox/port.ts";
@@ -175,6 +175,14 @@ export function createHandler(deps: {
         }
         const reply = await accountRoute(orRoute[1] as string, { apiKey, fetch: deps.fetch, audit: () => readAllAudit(env) });
         return reply ? json(reply.body, reply.status) : problem(404, "not_found", "No such endpoint.");
+      }
+
+      // What memory holds (sizes and counts only), and a way to empty it.
+      if (method === "GET" && path === "/v1/memory/stats") return json(await memoryStats(new D1MemoryStore(env.DB)));
+      if (method === "POST" && path === "/v1/memory/clear") {
+        const out = await clearMemory(new D1MemoryStore(env.DB));
+        await ledgerStub(env).appendAudit("memory.cleared", null, { entries: out.cleared });
+        return json({ ok: true, ...out });
       }
 
       if (method === "POST" && path === "/v1/memory/probe") {
