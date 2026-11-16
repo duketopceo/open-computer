@@ -10,6 +10,16 @@ import { buildReport, runWizard, stepsFor, type Backend, type Ctx, type Row } fr
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cloudDir = path.join(here, "..", "..", "cloud");
 
+/** OC_EXTRA_KEY_<NAME>=value in the environment becomes the extra key slot <name>. */
+export function extraKeysFromEnv(env: Record<string, string | undefined> = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    const m = /^OC_EXTRA_KEY_([A-Z][A-Z0-9_]*)$/.exec(k);
+    if (m && v) out[(m[1] as string).toLowerCase()] = v;
+  }
+  return out;
+}
+
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : undefined;
@@ -55,7 +65,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const backend = (flag(args, "backend") ?? "cloudflare") as Backend;
   const state = readState();
-  const control = cmd === "setup" ? createControlPlane({ run: wranglerRunner(cloudDir), cloudDir, modelKey: () => process.env.OC_OPENROUTER_KEY }) : undefined;
+  const control = cmd === "setup" ? createControlPlane({ run: wranglerRunner(cloudDir), cloudDir, modelKey: () => process.env.OC_OPENROUTER_KEY, extraKeys: extraKeysFromEnv }) : undefined;
 
   const ctx: Ctx = {
     baseUrl: flag(args, "url") ?? process.env.OC_CLOUD_URL ?? state.url ?? "",

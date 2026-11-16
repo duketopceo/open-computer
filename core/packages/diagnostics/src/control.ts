@@ -48,6 +48,8 @@ export interface ControlOptions {
   stateDir?: string;
   /** Returns the OpenRouter key from the environment without it ever being printed. */
   modelKey?: () => string | undefined;
+  /** Optional extra key slots by name (for example "search" or "coding"), stored as `oc_key_<name>`. Values never printed. */
+  extraKeys?: () => Record<string, string>;
   log?: (line: string) => void;
 }
 
@@ -219,12 +221,21 @@ export function createControlPlane(o: ControlOptions): ControlPlane {
           const sid = await storeId();
           if (!sid) return fail("Secrets Store could not be reached.", "Retry.");
           const have = await hasSecret(sid, SECRET_NAMES.model);
-          if (have) return { ok: true, detail: "An OpenRouter key is already stored (its value is never shown)." };
-          const key = o.modelKey?.();
-          if (!key) return fail("No OpenRouter key was provided.", "Set OC_OPENROUTER_KEY in this shell (do not paste it into the command line) and run setup again.", "store-key");
-          return (await putSecret(sid, SECRET_NAMES.model, key))
-            ? { ok: true, detail: "The OpenRouter key is stored in Secrets Store (not shown, not logged)." }
-            : fail("The key could not be stored.", "Retry.");
+          let detail = "An OpenRouter key is already stored (its value is never shown).";
+          if (!have) {
+            const key = o.modelKey?.();
+            if (!key) return fail("No OpenRouter key was provided.", "Set OC_OPENROUTER_KEY in this shell (do not paste it into the command line) and run setup again.", "store-key");
+            if (!(await putSecret(sid, SECRET_NAMES.model, key))) return fail("The key could not be stored.", "Retry.");
+            detail = "The OpenRouter key is stored in Secrets Store (not shown, not logged).";
+          }
+          const stored: string[] = [];
+          for (const [name, value] of Object.entries(o.extraKeys?.() ?? {})) {
+            if (!/^[a-z][a-z0-9_]{0,31}$/.test(name) || !value) return fail(`The extra key slot "${name}" has a bad name or no value.`, "Slot names are lowercase letters, digits and underscores.", "store-key");
+            if ((await hasSecret(sid, `oc_key_${name}`)) === true) continue;
+            if (!(await putSecret(sid, `oc_key_${name}`, value))) return fail(`The extra key "${name}" could not be stored.`, "Retry.");
+            stored.push(name);
+          }
+          return { ok: true, detail: stored.length ? `${detail} Extra slots stored: ${stored.join(", ")}.` : detail };
         }
       }
     },
