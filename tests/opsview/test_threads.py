@@ -393,7 +393,9 @@ def test_a_plan_decision_resumes_the_chat_that_owns_the_run(tdir, monkeypatch):
 
 def test_memory_splices_before_final_note_when_fit_ate_the_live_turn(tdir):
     """On the final pass fit() can compact the live user message away;
-    the memory then lands after FINAL_NOTE, which must stay last."""
+    the memory then lands after FINAL_NOTE, which must stay last. The
+    stub compactor really removes the live question, so the no-match
+    fallback (insert before FINAL_NOTE) is the path under test."""
     from services import compact as oc_compact
 
     t = threads.create("long research thread", PLAN)
@@ -402,10 +404,20 @@ def test_memory_splices_before_final_note_when_fit_ate_the_live_turn(tdir):
         threads.append(t["id"], "assistant", f"reply {i}: {'notes ' * 60}")
     threads.append(t["id"], "user", "the live question")
     oc_compact.write_memory(t["id"], "goal: keep visible")
+
+    class AteTheTurn:
+        def fit(self, tid, msgs):
+            kept = [m for m in msgs if m.get("content") != "the live question"]
+            return oc_compact.Compacted(messages=kept, compacted=True,
+                                        tokens_before=1, tokens_after=1)
+
     d, _ = deps(Script(decision("reply", "wrapping up")))
+    d.compact = AteTheTurn()
     # final pass (n == max_passes) so build_messages appends FINAL_NOTE
     threads.run_turn(t["id"], d, max_passes=0)
     second = d.engine.seen[0]
+    # the live question really is gone from the request
+    assert not any(m.get("content") == "the live question" for m in second)
     final_idx = next(i for i, m in enumerate(second) if m["content"] == chat.FINAL_NOTE)
     mem_idx = next(i for i, m in enumerate(second)
                    if m["content"].startswith(oc_compact.MEMORY_HEADER))
