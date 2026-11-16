@@ -8,6 +8,7 @@
 //! - [`secrets`]: the secret-storage trait, an in-memory fake and the OS keyring.
 //! - [`checks`]: the Test connection round trip against a running core.
 
+pub mod autoconnect;
 pub mod chat;
 pub mod checks;
 pub mod config;
