@@ -198,3 +198,57 @@ fn real_wrangler_signed_out_is_reported_as_not_signed_in() {
     let after = signin::sign_out_with(&cmd).unwrap();
     assert!(!after.signed_in);
 }
+
+#[test]
+#[ignore = "needs the real opencode; run by desktop/scripts/real_harness_check.sh"]
+fn opencode_runs_open_computers_model_through_the_openrouter_provider() {
+    let Some(program) = var("OC_REAL_OPENCODE_MAPPED") else {
+        eprintln!("skipped: OC_REAL_OPENCODE_MAPPED not set");
+        return;
+    };
+    // The real `opencode models` lists the configured openrouter provider's model; the adapter maps `z-ai/glm-5.3` onto it.
+    let mut chat = Chat::default();
+    chat.push_user("say hi");
+    let mut events = Vec::new();
+    let cancel = Arc::new(AtomicBool::new(false));
+    run_task(
+        &mut OpenCodeAdapter::default(),
+        "say hi",
+        Some("z-ai/glm-5.3"),
+        None,
+        Some(&program),
+        &cancel,
+        &mut |e| {
+            chat.apply(&e);
+            events.push(e);
+        },
+    )
+    .unwrap();
+    assert_eq!(chat.status, "done", "{events:?}");
+    assert_eq!(answer(&chat), "FAKE-ANSWER-OK", "{events:?}");
+    assert!(
+        !events.iter().any(|e| e["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("doesn't know"))),
+        "the model was found, not dropped: {events:?}"
+    );
+
+    // A model OpenCode does not list is dropped with a line saying so, and the run still works on OpenCode's default.
+    let mut events = Vec::new();
+    run_task(
+        &mut OpenCodeAdapter::default(),
+        "say hi",
+        Some("acme/unheard-of-7"),
+        None,
+        Some(&program),
+        &cancel,
+        &mut |e| events.push(e),
+    )
+    .unwrap();
+    assert!(
+        events.iter().any(|e| e["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("OpenCode doesn't know acme/unheard-of-7"))),
+        "{events:?}"
+    );
+}

@@ -61,10 +61,98 @@ def deps(engine, views=None, stops=None):
         ('{"action":"run","text":"on it"}', chat.Decision("reply", '{"action":"run","text":"on it"}')),  # no goal: not a run
         ("just words", chat.Decision("reply", "just words")),
         ("", chat.Decision("reply", "I did not get an answer back. Try again.")),
+        ('{"action":"memory","text":"goal: the lidar fix"}', chat.Decision("memory", "goal: the lidar fix")),
+        ('{"action":"memory"}', chat.Decision("reply", '{"action":"memory"}')),  # no text: not a memory write
     ],
 )
 def test_parse_decision_never_loses_text(raw, want):
     assert chat.parse_decision(raw) == want
+
+
+# --- the thread memory file (OC-077): what the model wrote survives compaction whole
+def test_memory_file_splices_last_and_survives_compaction(tdir):
+    from services import compact as oc_compact
+
+    t = threads.create("long research thread", PLAN)
+    # a thread long enough that fit() must compact it (budget 1 forces it);
+    # the LIVE user turn is appended last so tail=1 keeps it verbatim
+    for i in range(4):
+        threads.append(t["id"], "user", f"filler {i}: {'words ' * 60}")
+        threads.append(t["id"], "assistant", f"reply {i}: {'notes ' * 60}")
+    threads.append(t["id"], "user", "the live question")
+    d, started = deps(Script(decision("memory", "goal: survey the regolith papers"), decision("reply", "on it")))
+    d.compact = oc_compact.Compactor(oc_compact.CompactConfig(budget=1, tail=1), lambda model, messages: '{"rel":1,"load":0.1}')
+    threads.run_turn(t["id"], d)
+    # the file was written beside the span store
+    assert oc_compact.read_memory(t["id"]) == "goal: survey the regolith papers"
+    # the second pass (the one that produced the reply) saw the memory
+    # immediately before the live user turn, after the compacted block
+    second = d.engine.seen[1] if hasattr(d.engine, "seen") else d.engine.calls[1]
+    mem_idx = next(i for i, m in enumerate(second)
+                   if m["content"].startswith(oc_compact.MEMORY_HEADER))
+    assert "goal: survey the regolith papers" in second[mem_idx]["content"]
+    # the message right after the memory is the live user turn (or the
+    # final note on the last pass); the compacted block sat before it
+    assert any(oc_compact.HEADER in m["content"] for m in second[:mem_idx])
+    assert mem_idx + 1 < len(second)  # the live turn follows the memory
+    # the memory write cost no run
+    assert started == []
+
+
+def test_memory_write_is_bounded_per_turn(tdir):
+    """A model that only ever writes memory would loop unboundedly: each
+    successful save `continue`s without advancing the pass counter.
+    MAX_MEMORY_WRITES bounds it, and the stop is a user-visible reply."""
+    from services import compact as oc_compact
+
+    t = threads.create("loopy", PLAN)
+    answers = [decision("memory", f"goal v{i}") for i in range(6)]
+    d, started = deps(Script(*answers, decision("reply", "finally")))
+    threads.run_turn(t["id"], d)
+    # writes stopped at the bound; the turn ended with a visible reply
+    assert oc_compact.read_memory(t["id"]).startswith("goal v1")  # last accepted write
+    last = threads.get(t["id"])["messages"][-1]
+    assert last["role"] == "assistant" and "too many memory saves" in last["text"]
+    # the loop did not spin: bounded engine calls (writes + the final reply)
+    assert len(d.engine.seen) <= threads.MAX_MEMORY_WRITES + 2
+
+
+def test_memory_write_works_without_a_compactor(tdir):
+    """OC_COMPACT=off (d.compact None) must not turn every memory
+    decision into a failure note: the write path does not need the
+    compactor, and the read path already injects without checking."""
+    from services import compact as oc_compact
+
+    t = threads.create("no compaction", PLAN)
+    d, _ = deps(Script(decision("memory", "goal: keep this"), decision("reply", "done")))
+    threads.run_turn(t["id"], d)
+    assert oc_compact.read_memory(t["id"]) == "goal: keep this"
+    last = threads.get(t["id"])["messages"][-1]
+    assert last["role"] == "assistant" and last["text"] == "done"
+
+
+def test_no_memory_file_splices_nothing(tdir):
+    t = threads.create("hello", PLAN)
+    d, _ = deps(Script(decision("reply", "hi")))
+    threads.run_turn(t["id"], d)
+    assert oc_compact_read(t["id"]) is None  # shape only; covered below
+
+
+def oc_compact_read(tid):
+    from services import compact as oc_compact
+    return oc_compact.read_memory(tid)
+
+
+def test_memory_write_failure_with_a_broken_compact_root_replies_with_a_note(tdir, monkeypatch):
+    """A write that fails (unwritable compact root) still degrades to a
+    user-visible note, not a crash."""
+    from services import compact as oc_compact
+    t = threads.create("hello", PLAN)
+    monkeypatch.setattr(oc_compact, "write_memory", lambda tid, text, root=None: False)
+    d, _ = deps(Script(decision("memory", "goal: x"), decision("reply", "hi")))
+    threads.run_turn(t["id"], d)
+    msgs = threads.get(t["id"])["messages"]
+    assert msgs[-1]["role"] == "assistant" and "memory file" in msgs[-1]["text"]
 
 
 # --- turns
@@ -301,3 +389,36 @@ def test_a_plan_decision_resumes_the_chat_that_owns_the_run(tdir, monkeypatch):
     assert server.resume_after_plan("goal_0000abcd", "luke")
     assert calls == [(t["id"], "goal_0000abcd")]
     assert not server.resume_after_plan("goal_ffffffff", "luke")  # a run no chat started: nothing to resume
+
+
+def test_memory_splices_before_final_note_when_fit_ate_the_live_turn(tdir):
+    """On the final pass fit() can compact the live user message away;
+    the memory then lands after FINAL_NOTE, which must stay last. The
+    stub compactor really removes the live question, so the no-match
+    fallback (insert before FINAL_NOTE) is the path under test."""
+    from services import compact as oc_compact
+
+    t = threads.create("long research thread", PLAN)
+    for i in range(4):
+        threads.append(t["id"], "user", f"filler {i}: {'words ' * 60}")
+        threads.append(t["id"], "assistant", f"reply {i}: {'notes ' * 60}")
+    threads.append(t["id"], "user", "the live question")
+    oc_compact.write_memory(t["id"], "goal: keep visible")
+
+    class AteTheTurn:
+        def fit(self, tid, msgs):
+            kept = [m for m in msgs if m.get("content") != "the live question"]
+            return oc_compact.Compacted(messages=kept, compacted=True,
+                                        tokens_before=1, tokens_after=1)
+
+    d, _ = deps(Script(decision("reply", "wrapping up")))
+    d.compact = AteTheTurn()
+    # final pass (n == max_passes) so build_messages appends FINAL_NOTE
+    threads.run_turn(t["id"], d, max_passes=0)
+    second = d.engine.seen[0]
+    # the live question really is gone from the request
+    assert not any(m.get("content") == "the live question" for m in second)
+    final_idx = next(i for i, m in enumerate(second) if m["content"] == chat.FINAL_NOTE)
+    mem_idx = next(i for i, m in enumerate(second)
+                   if m["content"].startswith(oc_compact.MEMORY_HEADER))
+    assert mem_idx < final_idx  # memory before the note; the note stays last

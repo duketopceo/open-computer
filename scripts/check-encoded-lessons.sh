@@ -18,6 +18,7 @@ CHECKS=(
   # Repo-specific.
   scripts/check-403-not-key-invalid.sh
   scripts/check-desktop-packaging.sh
+  scripts/check-desktop-logging.sh
   scripts/check-workflow-hardening.sh
 )
 

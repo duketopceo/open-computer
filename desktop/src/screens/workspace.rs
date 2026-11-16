@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use rune::{El, Icon, ScrollSpec, Transition, col, el, icon, row, text};
 use rune_kit::glyphs::{CHECK_SMALL, CLOSE};
 use rune_kit::shell::{INSPECTOR, SIDEBAR};
-use rune_kit::{Kit, Markdown, Spinner, TextArea};
+use rune_kit::{Button, ButtonVariant, Kit, Markdown, Spinner, TextArea};
 use shell_core::chat::{Chat, Item, ToolCard, write_diff};
 use shell_core::defaults;
 use shell_core::harness::Harness;
@@ -142,13 +142,24 @@ pub fn status_line(chat: &Chat, model: &str, core: &str) -> String {
     format!("{model} · {spend} · {core}")
 }
 
-fn core_state(m: &Main) -> &'static str {
-    if m.endpoint.is_some() {
-        "core connected"
-    } else if m.starting_local {
-        "starting the core"
-    } else {
-        "core not connected"
+/// What the core chip and the status line say. "core connected" only after the core answered a real request.
+fn core_state(s: &App, m: &Main) -> String {
+    use crate::app::CoreCheck;
+    if m.endpoint.is_none() {
+        return if m.starting_local {
+            "starting the core"
+        } else {
+            "core not connected"
+        }
+        .to_owned();
+    }
+    match &s.core_check {
+        CoreCheck::Ok => "core connected".to_owned(),
+        CoreCheck::Unknown | CoreCheck::Checking => "checking the core".to_owned(),
+        CoreCheck::Failed(why) => {
+            let short: String = why.chars().take(60).collect();
+            format!("core not answering: {short}")
+        }
     }
 }
 
@@ -213,7 +224,7 @@ fn sidebar_toggle(k: &Kit, m: &Main) -> El {
 
 // ---------- sidebar ----------
 
-fn sidebar(_s: &App, k: &Kit, m: &Main) -> El {
+fn sidebar(s: &App, k: &Kit, m: &Main) -> El {
     let now = SystemTime::now();
     let mut list = col().key("threads").w_full().gap(2.0);
     // Newest first: the task on screen (when it has begun), then earlier ones from the most recent.
@@ -336,21 +347,20 @@ fn sidebar(_s: &App, k: &Kit, m: &Main) -> El {
         .padding(8.0)
         .radius(8.0)
         .border(1.0, k.c.border_base)
+        .child(el().w(8.0).h(8.0).radius(4.0).fill(
+            if m.endpoint.is_some() && s.core_check == crate::app::CoreCheck::Ok {
+                k.c.text_strong
+            } else {
+                k.c.border_strong
+            },
+        ))
         .child(
-            el().w(8.0)
-                .h(8.0)
-                .radius(4.0)
-                .fill(if m.endpoint.is_some() {
-                    k.c.text_strong
-                } else {
-                    k.c.border_strong
-                }),
-        )
-        .child(
-            text(core_state(m))
+            text(core_state(s, m))
                 .font(k.ty.caption())
                 .color(k.c.text_muted),
-        );
+        )
+        // Pressing the chip asks the core again.
+        .on_press(|s: &mut App| s.verify_core());
 
     col()
         .key("sidebar")
@@ -458,6 +468,7 @@ fn chat_page(s: &App, k: &Kit, m: &Main) -> El {
         .h_full()
         .child(top)
         .child(transcript(s, k, m))
+        .children(s.busy_conflict.as_ref().map(|_| busy_card(k)))
         .child(col().w_full().items_center().padding(16.0).child(composer(
             s,
             k,
@@ -469,6 +480,48 @@ fn chat_page(s: &App, k: &Kit, m: &Main) -> El {
         body = body.child(computer_panel(s, k, m));
     }
     body
+}
+
+/// The task could not start because another is still running in this conversation: say so and offer both ways out.
+fn busy_card(k: &Kit) -> El {
+    col()
+        .key("busy-card")
+        .w_full()
+        .max_w(COMPOSER_W)
+        .gap(8.0)
+        .padding(12.0)
+        .radius(12.0)
+        .border(1.0, k.c.border_strong)
+        .child(
+            text(shell_core::chat::SESSION_BUSY)
+                .font(k.ty.ui_medium)
+                .color(k.c.text_strong),
+        )
+        .child(
+            text("Yours is waiting. Stop the running one and it starts at once, or start a new conversation and leave the other as it is.")
+                .font(k.ty.caption())
+                .color(k.c.text_muted)
+                .w_full()
+                .wrap(),
+        )
+        .child(
+            row()
+                .gap(8.0)
+                .child(
+                    Button::new("Stop it")
+                        .variant(ButtonVariant::Submit)
+                        .on_press(|s: &mut App| s.stop_busy_and_retry())
+                        .build(k)
+                        .key("busy-stop"),
+                )
+                .child(
+                    Button::new("Start a new conversation")
+                        .variant(ButtonVariant::Neutral)
+                        .on_press(|s: &mut App| s.new_conversation_for_busy())
+                        .build(k)
+                        .key("busy-new"),
+                ),
+        )
 }
 
 fn empty_state(s: &App, k: &Kit, m: &Main) -> El {
@@ -826,7 +879,7 @@ pub fn composer(s: &App, k: &Kit, m: &Main, placeholder: &str) -> El {
         .gap(8.0)
         .child(card)
         .child(
-            text(status_line(&m.chat, &model_name(m), core_state(m)))
+            text(status_line(&m.chat, &model_name(m), &core_state(s, m)))
                 .key("status-line")
                 .font(k.ty.caption())
                 .color(k.c.text_muted),

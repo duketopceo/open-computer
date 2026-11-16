@@ -186,6 +186,9 @@ jobs:
       - name: shell-core tests (no display, no GPU)
         working-directory: desktop
         run: cargo test -p shell-core
+      - name: desktop tests (headless rune, no display)
+        working-directory: desktop
+        run: cargo test -p open-computer-desktop
       - name: build check
         working-directory: desktop
         run: cargo check --workspace
@@ -229,7 +232,7 @@ jobs:
           echo "OC_HERMES_BIN=$RUNNER_TEMP/hermes/bin/hermes" >> "$GITHUB_ENV"
       - name: real binaries through the adapter (text, tool call, error, Stop) and wrangler signed out
         env:
-          OC_WRANGLER_CMD: pnpm --dir ${{ github.workspace }}/core/packages/cloud exec wrangler
+          OC_WRANGLER_CMD: ${{ github.workspace }}/core/packages/cloud/node_modules/.bin/wrangler
         run: bash desktop/scripts/real_harness_check.sh
 
   console-e2e:

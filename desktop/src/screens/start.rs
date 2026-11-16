@@ -27,6 +27,21 @@ pub fn current(s: &App) -> Current {
     }
 }
 
+/// Badge on the Cloudflare card: local-only is not a sign-in.
+pub fn cloudflare_badge(
+    local_only: bool,
+    signed_in: bool,
+    core_connected: bool,
+) -> (&'static str, bool) {
+    if local_only {
+        ("Not needed (local only)", false)
+    } else if signed_in || core_connected {
+        ("Signed in", true)
+    } else {
+        ("Not signed in", false)
+    }
+}
+
 fn badge(k: &Kit, label: &str, done: bool) -> El {
     Badge::new(label.to_owned())
         .variant(if done {
@@ -69,7 +84,7 @@ fn action(
 ) -> El {
     if now {
         // In a row, so the button is as wide as its label instead of stretching across the card.
-        row().child(accent_button(
+        row().gap(8.0).center_y().child(accent_button(
             k,
             key,
             if busy { "Working…" } else { label },
@@ -77,7 +92,7 @@ fn action(
             f,
         ))
     } else {
-        row().child(
+        row().gap(8.0).center_y().child(
             Button::new(label.to_owned())
                 .variant(if busy {
                     ButtonVariant::Loading
@@ -141,31 +156,61 @@ pub fn view(s: &App, k: &Kit) -> El {
     let key_ready = key_here || s.core_has_model_key;
 
     // 1. Cloudflare
+    let local_only = s.onboarding.local_only();
     let who = s
         .cf_state
         .as_ref()
         .filter(|c| c.signed_in)
         .map(|c| c.email.clone().unwrap_or_else(|| "signed in".to_owned()));
-    let mut one = step(
-        k,
-        "step-signin",
-        1,
-        "Cloudflare",
-        signed || connected,
-        if signed || connected {
-            "Signed in"
-        } else {
-            "Not signed in"
-        },
-    );
-    one = one.child(caption(
-        k,
-        "Your browser opens Cloudflare's own page and you click Allow. Nothing is typed or pasted.",
-    ));
-    if let Some(w) = who {
+    let (cf_status, cf_done) = cloudflare_badge(local_only, signed, connected);
+    let mut one = step(k, "step-signin", 1, "Cloudflare", cf_done, cf_status);
+    if local_only {
+        one = one.child(caption(
+            k,
+            "A Cloudflare account is not needed when the agent runs on this computer only.",
+        ));
+    } else {
+        one = one.child(caption(
+            k,
+            "Your browser opens Cloudflare's own page and you click Allow. Nothing is typed or pasted.",
+        ));
+    }
+    let account_line = s
+        .cf_state
+        .as_ref()
+        .filter(|c| c.signed_in)
+        .map(|c| c.account_line());
+    if let Some(line) = account_line {
+        one = one.child(
+            col()
+                .key("signed-in-as")
+                .w_full()
+                .gap(4.0)
+                .child(
+                    text(line)
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_strong)
+                        .w_full()
+                        .wrap(),
+                )
+                .child(
+                    row().child(
+                        Button::new("Not you? Switch account")
+                            .variant(ButtonVariant::Neutral)
+                            .disabled(s.signing_in)
+                            .on_press(|s: &mut App| s.switch_cloudflare())
+                            .build(k)
+                            .key("not-you"),
+                    ),
+                ),
+        );
+    } else if let Some(w) = who {
         one = one.child(caption(k, format!("Signed in as {w}.")));
     }
     if !(signed || connected) {
+        one = one.child(caption(k, shell_core::signin::CONSENT_TIP));
+    }
+    if !local_only && !(signed || connected) {
         one = one.child(action(
             k,
             now == Current::SignIn,
@@ -248,7 +293,34 @@ pub fn view(s: &App, k: &Kit) -> El {
         two = two.child(setup_rows(k, &s.setup_rows));
     }
     if let Some(l) = &s.core_line {
-        two = two.child(text(l.clone()).font(k.ty.ui).color(k.c.text_base).w_full());
+        two = two.child(
+            text(l.clone())
+                .font(k.ty.ui)
+                .color(k.c.text_base)
+                .w_full()
+                .wrap(),
+        );
+    }
+    if let Some(p) = &s.keyring_problem {
+        two = two.child(
+            text(p.clone())
+                .key("keyring-problem")
+                .font(k.ty.ui)
+                .color(k.c.text_strong)
+                .w_full()
+                .wrap(),
+        );
+    }
+    if s.file_token_offer {
+        two = two.child(
+            row().gap(8.0).center_y().child(
+                Button::new("Use the saved token for now")
+                    .variant(ButtonVariant::Neutral)
+                    .on_press(|s: &mut App| s.use_saved_token())
+                    .build(k)
+                    .key("use-saved-token"),
+            ),
+        );
     }
     if s.gateway_link && !connected && (s.setup_running || !s.setup_rows.is_empty()) {
         two = two.child(
@@ -278,9 +350,27 @@ pub fn view(s: &App, k: &Kit) -> El {
             "OpenRouter is connected. The key is in your system keyring.",
         ));
     } else {
+        let retry = s.or_line.is_some();
+        let label = super::openrouter_action_label(s.or_busy, retry);
+        let mut actions = action(
+            k,
+            now == Current::OpenRouter,
+            "connect-openrouter",
+            label,
+            s.or_busy,
+            |s: &mut App| s.connect_openrouter(),
+        );
+        if s.or_busy {
+            actions = actions.child(
+                Button::new("Cancel")
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(|s: &mut App| s.cancel_openrouter())
+                    .build(k),
+            );
+        }
         three = three
             .child(caption(k, "Your browser opens OpenRouter and you click Authorize. The key is saved in your system keyring."))
-            .child(action(k, now == Current::OpenRouter, "connect-openrouter", "Connect OpenRouter", s.or_busy, |s: &mut App| s.connect_openrouter()));
+            .child(actions);
     }
     if let Some(l) = &s.or_line {
         three = three.child(text(l.clone()).font(k.ty.ui).color(k.c.text_base).w_full());

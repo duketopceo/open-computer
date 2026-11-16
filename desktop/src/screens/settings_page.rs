@@ -38,7 +38,11 @@ fn card(k: &Kit, key: &str, title: &str) -> El {
 }
 
 fn line(k: &Kit, t: impl Into<String>) -> El {
-    text(t.into()).font(k.ty.ui).color(k.c.text_base).w_full()
+    text(t.into())
+        .font(k.ty.ui)
+        .color(k.c.text_base)
+        .w_full()
+        .wrap()
 }
 
 fn note(k: &Kit, t: impl Into<String>) -> El {
@@ -46,6 +50,7 @@ fn note(k: &Kit, t: impl Into<String>) -> El {
         .font(k.ty.caption())
         .color(k.c.text_muted)
         .w_full()
+        .wrap()
 }
 
 fn pair(k: &Kit, label: &str, value: impl Into<String>) -> El {
@@ -611,6 +616,61 @@ fn generation_row(k: &Kit, i: usize, g: &Generation) -> El {
 
 // ---------- 2. Cloudflare ----------
 
+/// Which browser sign-in pages open in: the page uses whatever account that browser is signed in to.
+fn browser_card(s: &App, k: &Kit) -> El {
+    let current = s.signin_browser.text.trim().to_owned();
+    let mut c = card(k, "cf-browser", "Open sign-in pages with")
+        .child(note(
+            k,
+            "Cloudflare and OpenRouter show their consent page in a browser, and it uses the account that browser is signed in to. Choose the browser or profile that holds the right one. Empty uses your system browser.",
+        ))
+        .child(
+            TextInput::new(&s.signin_browser)
+                .placeholder("system browser, or a command such as chromium --profile-directory=\"Profile 2\"")
+                .on_edit(|s: &mut App| &mut s.signin_browser)
+                .width(None)
+                .build(k),
+        );
+    let mut picks = row().key("browser-picks").w_full().gap(8.0);
+    picks = picks.child(crate::controls::choice(
+        k,
+        "browser-system",
+        "System browser",
+        current.is_empty(),
+        true,
+        |s: &mut App| s.pick_signin_browser(""),
+    ));
+    for (i, d) in s.browsers.iter().take(8).enumerate() {
+        let command = d.command.clone();
+        picks = picks.child(crate::controls::choice(
+            k,
+            format!("browser-{i}"),
+            &d.label,
+            current == d.command,
+            true,
+            move |s: &mut App| s.pick_signin_browser(&command),
+        ));
+    }
+    c = c.child(picks);
+    c.child(
+        row().child(
+            Button::new("Save")
+                .variant(ButtonVariant::Neutral)
+                .on_press(|s: &mut App| s.save_signin_browser())
+                .build(k)
+                .key("browser-save"),
+        ),
+    )
+    .child(note(
+        k,
+        if s.browsers.is_empty() {
+            "No other browser was found on this computer. Type the command if you use one."
+        } else {
+            "Found on this computer. Profiles are listed by folder name."
+        },
+    ))
+}
+
 fn cloudflare(s: &App, k: &Kit, m: &Main) -> El {
     let mut sec = col().w_full().gap(16.0);
 
@@ -723,7 +783,35 @@ fn cloudflare(s: &App, k: &Kit, m: &Main) -> El {
         }
         _ => {}
     }
+    // Right after any sign-in the account is stated plainly, with the way out if it is the wrong one.
+    if let Some(c) = s.cf_state.as_ref().filter(|c| c.signed_in) {
+        account = account.child(
+            col()
+                .key("cf-who")
+                .w_full()
+                .gap(4.0)
+                .child(
+                    text(c.account_line())
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_strong)
+                        .w_full()
+                        .wrap(),
+                )
+                .child(
+                    row().child(
+                        Button::new("Not you? Switch account")
+                            .variant(ButtonVariant::Neutral)
+                            .disabled(s.signing_in)
+                            .on_press(|s: &mut App| s.switch_cloudflare())
+                            .build(k)
+                            .key("cf-not-you"),
+                    ),
+                ),
+        );
+    }
+    account = account.child(note(k, shell_core::signin::CONSENT_TIP));
     sec = sec.child(account);
+    sec = sec.child(browser_card(s, k));
 
     // Core
     let mut core = card(k, "cf-core", "Core");
@@ -964,7 +1052,32 @@ fn agent(s: &App, k: &Kit) -> El {
         .gap(16.0)
         .child(note(k, "The default for new tasks is the one marked In use. You can also change it from the chip under the composer."))
         .child(super::integrations::harness(s, k))
+        .child(harness_key_card(s, k))
         .child(row().child(Button::new("Open Codex").variant(ButtonVariant::Neutral).on_press(|s: &mut App| s.launch_codex()).build(k)))
+}
+
+/// Hermes and OpenCode read `OPENROUTER_API_KEY`. Handing it over is the person's choice, and only possible when a real key is on
+/// this computer; a key the core holds never leaves the core.
+fn harness_key_card(s: &App, k: &Kit) -> El {
+    let mut c = card(k, "harness-key", "Model access for Hermes and OpenCode");
+    if s.has_shareable_key() {
+        c = c
+            .child(note(k, "Both agents read the OPENROUTER_API_KEY environment variable. When this is on, Open Computer sets it for their process only. It is not written to any file or log."))
+            .child(crate::controls::switch(
+                k,
+                "harness-key-toggle",
+                "Hand my OpenRouter key to them",
+                s.harness_key,
+                true,
+                |s: &mut App| {
+                    let on = !s.harness_key;
+                    s.set_harness_key(on)
+                },
+            ));
+    } else {
+        c = c.child(note(k, "Your OpenRouter key is held by your core, so it cannot be handed to a local agent. Give the agent its own model instead: run `hermes setup` or `opencode auth login` in a terminal. If a task fails for that reason, the failure message says so."));
+    }
+    c
 }
 
 // ---------- 4. Models and spend ----------
@@ -1314,6 +1427,13 @@ fn about(s: &App, k: &Kit) -> El {
                 .child(pair(k, "Core", core))
                 .child(pair(
                     k,
+                    "Keyring",
+                    s.keyring_problem
+                        .clone()
+                        .unwrap_or_else(|| "no problem recorded".to_owned()),
+                ))
+                .child(pair(
+                    k,
                     "Backend",
                     if s.onboarding.local_only() {
                         "this computer only".to_owned()
@@ -1339,6 +1459,36 @@ fn about(s: &App, k: &Kit) -> El {
                     k,
                     "A slow, faint glow drifts behind the window. Off holds it still. It also stays still when your system asks for reduced motion.",
                 )),
+        )
+        .child(
+            card(k, "about-log", "Diagnostics log")
+                .child(note(
+                    k,
+                    format!(
+                        "The app writes what it does (connections, keyring, Wrangler, agents) to {}. Keys and tokens are never written, and anything that looks like one is hidden.",
+                        shell_core::applog::log_path().display()
+                    ),
+                ))
+                .child(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(
+                            Button::new("Copy diagnostics")
+                                .variant(ButtonVariant::Neutral)
+                                .on_press(|s: &mut App| s.copy_diagnostics())
+                                .build(k)
+                                .key("about-copy-diagnostics"),
+                        )
+                        .child(note(
+                            k,
+                            if s.diag_copied {
+                                "Copied the last 200 lines."
+                            } else {
+                                "Copies the last 200 lines, redacted."
+                            },
+                        )),
+                ),
         )
         .child(
             card(k, "about-links", "Project").child(

@@ -110,13 +110,20 @@ pub struct SystemProbe;
 
 impl Probe for SystemProbe {
     fn first_line(&self, program: &str, args: &[&str]) -> Option<String> {
-        let out = Command::new(program)
+        let out = Command::new(resolve_program(program))
             .args(args)
+            .env("PATH", crate::signin::child_path())
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
             .ok()?;
         if !out.status.success() {
+            crate::log_info!(
+                "harness",
+                "{program} {} exited with {}",
+                args.join(" "),
+                out.status
+            );
             return None;
         }
         String::from_utf8_lossy(&out.stdout)
@@ -150,6 +157,11 @@ pub fn detect_all(probe: &dyn Probe) -> Vec<Detected> {
 /// How to start a harness and how to read what it prints.
 pub trait Adapter: Send {
     fn program(&self) -> String;
+    /// Called once before the process starts, with the program that will run and the model Open Computer wants. May look the
+    /// model up in the program (OpenCode's list) and returns a line to show the person when it changes or drops the model.
+    fn prepare(&mut self, _program: &str, _oc_model: Option<&str>) -> Option<String> {
+        None
+    }
     fn args(&self, goal: &str, model: Option<&str>) -> Vec<String>;
     /// Maps one output line to zero or more core events. Must not panic on any input.
     fn map_line(&mut self, line: &str) -> Vec<Value>;
@@ -191,6 +203,12 @@ impl Adapter for HermesAdapter {
     fn args(&self, goal: &str, model: Option<&str>) -> Vec<String> {
         let mut a = vec!["-z".to_owned(), goal.to_owned()];
         if let Some(m) = model.filter(|m| !m.is_empty()) {
+            // An id like `z-ai/glm-5.3` is an OpenRouter id. Hermes would otherwise guess the provider from its own config, so it
+            // is named (`--provider`: "Provider override for this invocation", applies to -z).
+            if m.contains('/') {
+                a.push("--provider".to_owned());
+                a.push("openrouter".to_owned());
+            }
             a.push("-m".to_owned());
             a.push(m.to_owned());
         }
@@ -211,17 +229,123 @@ pub struct OpenCodeAdapter {
     text_open: bool,
     /// OpenCode reports a failed model call as an `error` event and still exits 0.
     errored: bool,
+    /// The model to pass, decided in `prepare` (none: leave OpenCode on its own default).
+    plan: Option<ModelPlan>,
+}
+
+/// What to pass OpenCode as `--model`, and what to tell the person.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModelPlan {
+    pub model: Option<String>,
+    pub note: Option<String>,
+}
+
+/// OpenCode reads the first segment of `--model` as the PROVIDER, so Open Computer's `z-ai/glm-5.3` (an OpenRouter id) must be
+/// `openrouter/z-ai/glm-5.3`. `known` is `opencode models` (none when it could not be listed). An id whose first segment is
+/// already a provider OpenCode lists is passed as it is; an id OpenCode does not list at all is dropped so OpenCode uses its own
+/// default model, and the note says so.
+pub fn plan_opencode_model(oc_model: Option<&str>, known: Option<&[String]>) -> ModelPlan {
+    let Some(m) = oc_model.map(str::trim).filter(|m| !m.is_empty()) else {
+        return ModelPlan::default();
+    };
+    let listed = |id: &str| known.is_some_and(|k| k.iter().any(|x| x == id));
+    let provider_known =
+        |p: &str| known.is_some_and(|k| k.iter().any(|x| x.split('/').next() == Some(p)));
+    let first = m.split('/').next().unwrap_or("");
+    if m.contains('/') && provider_known(first) && listed(m) {
+        return ModelPlan {
+            model: Some(m.to_owned()),
+            note: None,
+        };
+    }
+    let mapped = format!("openrouter/{m}");
+    match known {
+        None => ModelPlan {
+            model: Some(mapped),
+            note: None,
+        },
+        Some(_) if listed(&mapped) => ModelPlan {
+            model: Some(mapped),
+            note: None,
+        },
+        Some(_) => ModelPlan {
+            model: None,
+            note: Some(format!(
+                "OpenCode doesn't know {m}; using its default model."
+            )),
+        },
+    }
+}
+
+/// `program models` (offline and quick), one id per line; cached for the life of the app, per program.
+fn opencode_models(program: &str) -> Option<Vec<String>> {
+    static CACHE: std::sync::Mutex<Vec<(String, Vec<String>)>> = std::sync::Mutex::new(Vec::new());
+    if let Some((_, v)) = CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(p, _)| p == program)
+    {
+        return Some(v.clone());
+    }
+    let exe = resolve_program(program);
+    let out = crate::secrets::bounded(std::time::Duration::from_secs(20), move || {
+        Command::new(exe)
+            .arg("models")
+            .env("PATH", crate::signin::child_path())
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+    })
+    .flatten()?;
+    if !out.status.success() {
+        crate::log_warn!("harness", "`{program} models` exited with {}", out.status);
+        return None;
+    }
+    let list: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| crate::signin::strip_ansi_text(l).trim().to_owned())
+        .filter(|l| l.contains('/'))
+        .collect();
+    if list.is_empty() {
+        return None;
+    }
+    crate::log_info!("harness", "{program} lists {} models", list.len());
+    CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((program.to_owned(), list.clone()));
+    Some(list)
 }
 
 impl Adapter for OpenCodeAdapter {
     fn program(&self) -> String {
         "opencode".to_owned()
     }
+    fn prepare(&mut self, program: &str, oc_model: Option<&str>) -> Option<String> {
+        let known = oc_model.and_then(|_| opencode_models(program));
+        let plan = plan_opencode_model(oc_model, known.as_deref());
+        crate::log_info!(
+            "harness",
+            "opencode model: asked {:?}, passing {:?}",
+            oc_model,
+            plan.model
+        );
+        let note = plan.note.clone();
+        self.plan = Some(plan);
+        note
+    }
     fn args(&self, goal: &str, model: Option<&str>) -> Vec<String> {
         let mut a = vec!["run".to_owned(), "--format".to_owned(), "json".to_owned()];
-        if let Some(m) = model.filter(|m| !m.is_empty()) {
+        // `prepare` decided; without it (a direct call) map without a lookup.
+        let plan = self
+            .plan
+            .clone()
+            .unwrap_or_else(|| plan_opencode_model(model, None));
+        if let Some(m) = plan.model {
             a.push("--model".to_owned());
-            a.push(m.to_owned());
+            a.push(m);
         }
         a.push(goal.to_owned());
         a
@@ -327,6 +451,83 @@ fn kill_tree(root: u32) {
     }
 }
 
+/// Starts a command, trying again for a moment when Linux says the file is busy (a script written a moment ago can still be open for
+/// writing in another thread of this process: ETXTBSY).
+pub fn spawn_with_retry(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    let mut tries = 0;
+    loop {
+        match cmd.spawn() {
+            Err(e) if e.raw_os_error() == Some(26) && tries < 8 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            other => return other,
+        }
+    }
+}
+
+/// A program name to start: a bare name is looked up on the PATH and then in the extra directories (`~/.local/bin`, the mise
+/// shims), because an app opened from a desktop menu has a minimal PATH. Anything with a slash is used as given.
+pub fn resolve_program(program: &str) -> String {
+    if program.contains('/') || program.contains('\\') {
+        return program.to_owned();
+    }
+    crate::signin::find_program(
+        program,
+        std::env::var_os("PATH").as_deref(),
+        &crate::signin::extra_dirs(crate::signin::home_dir().as_deref()),
+        &crate::signin::is_executable_file,
+    )
+    .map_or_else(|| program.to_owned(), |p| p.to_string_lossy().into_owned())
+}
+
+/// What to tell the person when a harness fails: the program's own words (its stderr), plus the documented fix when the words
+/// say it has no model, provider or login. `stderr` has already been through [`crate::applog::redact`].
+pub fn explain_failure(program: &str, code: Option<i32>, stderr: &str) -> String {
+    let name = match program.rsplit('/').next().unwrap_or(program) {
+        "hermes" => "Hermes",
+        "opencode" => "OpenCode",
+        other => other,
+    };
+    let tail = stderr.trim();
+    let lower = tail.to_ascii_lowercase();
+    let unconfigured = [
+        "no model",
+        "no provider",
+        "not configured",
+        "api key",
+        "api_key",
+        "apikey",
+        "not logged in",
+        "no credentials",
+        "unauthorized",
+        "authenticat",
+        "login",
+        "no inference provider",
+        "provider",
+    ]
+    .iter()
+    .any(|w| lower.contains(w));
+    let fix = match (name, unconfigured) {
+        ("Hermes", true) => {
+            " Hermes has no model or provider configured: run `hermes setup` (or `hermes model`) in a terminal, then try again. If you keep an OpenRouter key on this computer you can also let Open Computer hand it to Hermes under Settings, Agent harness."
+        }
+        ("OpenCode", true) => {
+            " OpenCode has no provider configured: run `opencode auth login` in a terminal, then try again. If you keep an OpenRouter key on this computer you can also let Open Computer hand it to OpenCode under Settings, Agent harness."
+        }
+        _ => "",
+    };
+    let code = code.map_or_else(
+        || "was stopped".to_owned(),
+        |c| format!("exited with code {c}"),
+    );
+    if tail.is_empty() {
+        format!("{name} {code} and printed nothing to stderr.{fix}")
+    } else {
+        format!("{name} {code}. It said: {tail}.{fix}")
+    }
+}
+
 /// Starts the harness, feeds every mapped event to `emit` and ends with a `run` event. `cancel` kills the process.
 /// `program_override` lets tests start a fake command instead of the real agent.
 pub fn run_task(
@@ -338,20 +539,83 @@ pub fn run_task(
     cancel: &Arc<AtomicBool>,
     emit: &mut dyn FnMut(Value),
 ) -> Result<(), String> {
+    run_task_with(
+        adapter,
+        goal,
+        model,
+        cwd,
+        program_override,
+        &[],
+        cancel,
+        emit,
+    )
+}
+
+/// [`run_task`] with extra environment variables for the child (for example `OPENROUTER_API_KEY`, only when the person opted in).
+/// The program's stderr is kept (last 4 KB, redacted) so a failure can say what the program said.
+#[allow(clippy::too_many_arguments)]
+pub fn run_task_with(
+    adapter: &mut dyn Adapter,
+    goal: &str,
+    model: Option<&str>,
+    cwd: Option<&std::path::Path>,
+    program_override: Option<&str>,
+    env: &[(String, String)],
+    cancel: &Arc<AtomicBool>,
+    emit: &mut dyn FnMut(Value),
+) -> Result<(), String> {
     let program = program_override.map_or_else(|| adapter.program(), str::to_owned);
-    let mut cmd = Command::new(&program);
+    let model_note = adapter.prepare(&program, model);
+    let exe = resolve_program(&program);
+    let mut cmd = Command::new(&exe);
     cmd.args(adapter.args(goal, model))
+        .env("PATH", crate::signin::child_path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     if let Some(d) = cwd {
         cmd.current_dir(d);
     }
-    let mut child = cmd
-        .spawn()
-        .map_err(|_| format!("{program} could not be started. Check that it is installed."))?;
+    crate::log_info!(
+        "harness",
+        "starting {program} ({exe}); env passed: {}",
+        env.iter()
+            .map(|(k, _)| k.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let mut child = spawn_with_retry(&mut cmd).map_err(|e| {
+        crate::log_error!("harness", "{program} could not be started: {e}");
+        format!("{program} could not be started ({e}). Check that it is installed.")
+    })?;
     emit(json!({"type": "run", "status": "running"}));
+    if let Some(note) = model_note {
+        emit(json!({"type": "error", "message": note}));
+    }
     let stdout = child.stdout.take().ok_or("The agent has no output.")?;
+    let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
+    let err_reader = child.stderr.take().map(|e| {
+        let tail = stderr_tail.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(e).lines().map_while(Result::ok) {
+                let clean = crate::applog::redact(&crate::signin::strip_ansi_text(&line));
+                crate::log_debug!("harness", "stderr: {clean}");
+                let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
+                if !t.is_empty() {
+                    t.push(' ');
+                }
+                t.push_str(clean.trim());
+                let len = t.len();
+                if len > 4000 {
+                    let cut = t.ceil_char_boundary(len - 4000);
+                    *t = t[cut..].to_owned();
+                }
+            }
+        })
+    });
     // Killing from another thread unblocks the read below, so Stop works while the agent is quiet.
     let id = child.id();
     let watch_cancel = cancel.clone();
@@ -374,11 +638,28 @@ pub fn run_task(
     let status = child.wait().map_err(|e| e.to_string())?;
     done.store(true, Ordering::Relaxed);
     let _ = watcher.join();
+    if let Some(r) = err_reader {
+        let _ = r.join();
+    }
     if cancel.load(Ordering::Relaxed) {
         emit(json!({"type": "run", "status": "cancelled"}));
         return Ok(());
     }
-    for ev in adapter.finish(status.success()) {
+    let stderr = stderr_tail
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    crate::log_info!("harness", "{program} finished: {status}");
+    let events = adapter.finish(status.success());
+    let failed = events
+        .iter()
+        .any(|e| e.get("status").and_then(Value::as_str) == Some("failed"));
+    let why = failed.then(|| explain_failure(&program, status.code(), &stderr));
+    if let Some(why) = &why {
+        crate::log_warn!("harness", "{program} failed: {why}");
+        emit(json!({"type": "error", "message": why}));
+    }
+    for ev in events {
         emit(ev);
     }
     Ok(())
@@ -428,12 +709,126 @@ mod tests {
     #[test]
     fn adapters_build_the_documented_commands() {
         let h = HermesAdapter::default();
-        assert_eq!(h.args("fix it", Some("m/x")), ["-z", "fix it", "-m", "m/x"]);
+        assert_eq!(h.args("fix it", None), ["-z", "fix it"]);
+        // An OpenRouter id names its provider for Hermes.
+        assert_eq!(
+            h.args("fix it", Some("z-ai/glm-5.3")),
+            [
+                "-z",
+                "fix it",
+                "--provider",
+                "openrouter",
+                "-m",
+                "z-ai/glm-5.3"
+            ]
+        );
+        // A bare name has no provider to name.
+        assert_eq!(
+            h.args("fix it", Some("gpt-x")),
+            ["-z", "fix it", "-m", "gpt-x"]
+        );
         let o = OpenCodeAdapter::default();
         assert_eq!(
             o.args("fix it", None),
             ["run", "--format", "json", "fix it"]
         );
+        // Without a lookup, a bare OpenRouter id becomes `openrouter/<id>`.
+        assert_eq!(
+            o.args("fix it", Some("z-ai/glm-5.3")),
+            [
+                "run",
+                "--format",
+                "json",
+                "--model",
+                "openrouter/z-ai/glm-5.3",
+                "fix it"
+            ]
+        );
+    }
+
+    fn listed() -> Vec<String> {
+        [
+            "openrouter/z-ai/glm-5.3",
+            "openrouter/z-ai/glm-5.3-flash",
+            "anthropic/claude-sonnet-5",
+            "github-copilot/auto",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect()
+    }
+
+    #[test]
+    fn opencode_gets_the_openrouter_provider_in_front_of_an_openrouter_id() {
+        let k = listed();
+        let p = plan_opencode_model(Some("z-ai/glm-5.3"), Some(&k));
+        assert_eq!(p.model.as_deref(), Some("openrouter/z-ai/glm-5.3"));
+        assert_eq!(p.note, None);
+        // Already provider-qualified and listed: untouched.
+        let p = plan_opencode_model(Some("anthropic/claude-sonnet-5"), Some(&k));
+        assert_eq!(p.model.as_deref(), Some("anthropic/claude-sonnet-5"));
+        let p = plan_opencode_model(Some("openrouter/z-ai/glm-5.3-flash"), Some(&k));
+        assert_eq!(p.model.as_deref(), Some("openrouter/z-ai/glm-5.3-flash"));
+        // No lookup possible: map and let the real error speak.
+        assert_eq!(
+            plan_opencode_model(Some("z-ai/glm-5.3"), None)
+                .model
+                .as_deref(),
+            Some("openrouter/z-ai/glm-5.3")
+        );
+        assert_eq!(plan_opencode_model(None, Some(&k)), ModelPlan::default());
+    }
+
+    #[test]
+    fn a_model_opencode_does_not_list_is_dropped_with_a_line_saying_so() {
+        let k = listed();
+        let p = plan_opencode_model(Some("acme/unheard-of-7"), Some(&k));
+        assert_eq!(p.model, None, "OpenCode keeps its own default");
+        assert_eq!(
+            p.note.as_deref(),
+            Some("OpenCode doesn't know acme/unheard-of-7; using its default model.")
+        );
+        let mut a = OpenCodeAdapter::default();
+        a.plan = Some(p);
+        assert_eq!(
+            a.args("x", Some("acme/unheard-of-7")),
+            ["run", "--format", "json", "x"]
+        );
+    }
+
+    #[test]
+    fn prepare_lists_the_programs_models_once_and_reports_a_dropped_model() {
+        let dir = std::env::temp_dir().join(format!("oc-fake-opencode-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let script = dir.join("opencode.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nif [ \"$1\" = models ]; then printf 'openrouter/z-ai/glm-5.3\\nanthropic/claude-sonnet-5\\n'; fi\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let p = script.to_str().unwrap();
+        let mut a = OpenCodeAdapter::default();
+        assert_eq!(a.prepare(p, Some("z-ai/glm-5.3")), None);
+        assert!(
+            a.args("g", Some("z-ai/glm-5.3"))
+                .contains(&"openrouter/z-ai/glm-5.3".to_owned())
+        );
+        let mut b = OpenCodeAdapter::default();
+        assert!(
+            b.prepare(p, Some("nope/model"))
+                .unwrap()
+                .contains("doesn't know nope/model")
+        );
+        assert!(
+            !b.args("g", Some("nope/model"))
+                .contains(&"--model".to_owned())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -560,5 +955,98 @@ mod tests {
         .unwrap();
         assert!(t.elapsed().as_secs() < 5);
         assert_eq!(last, "cancelled");
+    }
+
+    #[test]
+    fn a_failure_says_what_the_program_said_and_the_fix_for_a_missing_model() {
+        let w = explain_failure(
+            "hermes",
+            Some(1),
+            "Error: no model configured for provider openrouter",
+        );
+        assert!(w.contains("It said: Error: no model configured"), "{w}");
+        assert!(w.contains("`hermes setup`"), "{w}");
+        let w = explain_failure("opencode", Some(1), "ProviderAuthError: not logged in");
+        assert!(w.contains("`opencode auth login`"), "{w}");
+        let w = explain_failure("hermes", Some(2), "segfault in libfoo");
+        assert!(
+            w.contains("segfault in libfoo") && !w.contains("hermes setup"),
+            "{w}"
+        );
+        let w = explain_failure("opencode", Some(1), "");
+        assert!(w.contains("printed nothing to stderr"), "{w}");
+    }
+
+    #[test]
+    fn a_failing_run_carries_the_real_stderr_into_the_chat() {
+        let dir = std::env::temp_dir().join(format!("oc-fake-harness-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let script = dir.join("fake-agent.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho 'no model configured; run setup' >&2\nexit 3\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut events = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut a = HermesAdapter::default();
+        run_task(
+            &mut a,
+            "x",
+            None,
+            None,
+            Some(script.to_str().unwrap()),
+            &cancel,
+            &mut |e| events.push(e),
+        )
+        .unwrap();
+        let msg = events
+            .iter()
+            .find(|e| e["type"] == "error")
+            .and_then(|e| e["message"].as_str())
+            .unwrap_or("");
+        assert!(
+            msg.contains("no model configured; run setup") && msg.contains("code 3"),
+            "{events:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extra_environment_reaches_the_child_but_only_its_name_is_logged() {
+        let mut events = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        struct Echo;
+        impl Adapter for Echo {
+            fn program(&self) -> String {
+                "sh".into()
+            }
+            fn args(&self, _: &str, _: Option<&str>) -> Vec<String> {
+                vec!["-c".into(), "echo $OC_TEST_ENV".into()]
+            }
+            fn map_line(&mut self, line: &str) -> Vec<Value> {
+                vec![json!({"type": "message.delta", "text": line})]
+            }
+            fn finish(&mut self, ok: bool) -> Vec<Value> {
+                finished(ok, true)
+            }
+        }
+        run_task_with(
+            &mut Echo,
+            "x",
+            None,
+            None,
+            None,
+            &[("OC_TEST_ENV".into(), "visible-123".into())],
+            &cancel,
+            &mut |e| events.push(e),
+        )
+        .unwrap();
+        assert!(events.iter().any(|e| e["text"] == "visible-123"));
     }
 }

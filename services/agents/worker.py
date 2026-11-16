@@ -199,6 +199,17 @@ class AcpWorker:
                 emit("permission", {"tool": title, "verdict": why})
                 reply(pick)
 
+            # an always-human state (CAPTCHA, paywall, security warning,
+            # forced identity check) named in the permission input is the
+            # owner's to resolve: refused as a handoff before ANY verdict
+            # path — including the automatic allow for an in-workspace
+            # read, whose `rawInput["text"]` `policy.classify` never sees.
+            # The confirm contract says the marker wins over everything.
+            from services.threads.confirm import always_human, refusal as _handoff_refusal
+            marker = always_human(str(tool_call.get("rawInput") or ""))
+            if marker:
+                answer(False, _handoff_refusal(marker))
+                return
             if verdict != "ask":
                 answer(verdict == "allow", verdict)
                 return

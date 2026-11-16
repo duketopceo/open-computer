@@ -102,7 +102,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-046 | P4 | jev-compact for long runs | open |
 | OC-047 | P4 | Enforcement wiring: numbat, bumblebee, OpenShell (audit mode first) | open |
 | OC-048 | P4 | Evals: golden replicates (>=5) per arm + DRACO/WANDR subset via orch | open |
-| OC-049 | P4 | Decision: browsesafe input screening keep or cut | open |
+| OC-049 | P4 | Decision: browsesafe input screening keep or cut | open — **owner call.** Note added 2026-11-15: OC-083's injection story now has a landed substrate it can bind to (`services/threads/confirm.py` + the DATA fences already in the orchestrator), so this decision gates only whether browsesafe's *model-side* screening is also kept; the mechanical half no longer depends on it. Decide before U16 lands its page-content handling |
 | OC-050 | P4 | Decision: knowledge index (pplx-embed) cut or keep kurultai | open |
 | OC-051 | P3 | Logo v2: sketch 3 marks, 16px test, owner sign-off | open |
 | OC-052 | P3 | Brand build script and rollout (README, ops view, favicon, social preview, plugin icons) | open |
@@ -118,7 +118,7 @@ OC-048 (U12), OC-045 (U13), OC-030 (U14), OC-042/043 (U15), none (U16 docketry f
 | OC-063 | P5 | Smithery listing (optional) | open |
 | OC-064 | P6 | Remote HTTPS MCP with auth (prerequisite for public directories) | open |
 | OC-065 | P6 | Anthropic directory submission (claude.ai/directory/manage) | open |
-| OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open |
+| OC-066 | P5 | Decision doc: Perplexity and Composio are not distribution targets | open — **owner call.** REA evidence for the decision (2026-11-15, `~/research/REA-REPORT.md` §3): Clicky wraps all 11 integration skills in Composio — a vendor dependency and an egress path, not a capability to inherit; the REA recommends declining it. Writing the decision doc closes the row |
 | OC-067 | P3 | Effort composer: one goal box with a Low / Medium / High picker that chooses the model and a hard per-run budget (tier models from `TIER_MODELS`, budget clamped to `OC_DAILY_CAP`, no premium and never High by default), model and budget behind one Advanced disclosure, effort shown on the run page. Plan: `docs/plans/2026-10-31-001-feat-effort-composer-plan.md` | merged (#95): composer, `GET /api/effort`, per-run ledger cap, resume keeps model and cap, e2e + axe; open: a resume-after-budget-pause control, folding agent jobs and Automations into the same box (superseded by threads, OC-070+), folding `OC_TASK_CAP`/`OC_RUN_CAP` into the effort table |
 
 Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-plan.md`). Ids follow the plan's units U1..U18.
@@ -132,7 +132,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-072 | P3 | App shell: everyday chat-first sidebar (New, Chats/Recents, Agent jobs; operator pages under progressive disclosure), texture, mobile | partial: New chat, Agent jobs, Chats and Earlier runs in the rail, Operator collapsed; Perplexity-cloned primary nav (Computer/Automations/Artifacts/Plugins/Projects) superseded by `docs/plans/2026-11-06-1222-feat-everyday-chat-ui-plan.md` (no fake destinations) |
 | OC-073 | P3 | Orchestrator turn loop: user-picked model, tools, budgets, approvals, steer, interrupt | partial: one model call per turn over the whole thread, decides reply, ask or run, sees each run's real output and can run again (max 3 runs per message), stops on approval or budget pause (this PR); no tool calling, steer or interrupt yet |
 | OC-074 | P3 | Built-in tools: sandbox, files, artifacts, ask the owner | open |
-| OC-075 | P3 | Web search and fetch tools | open |
+| OC-075 | P3 | Web search and fetch tools | shipped: `services/orchestrator/tools/web.py` (worker steps marked `needs_web` run a host-side search/fetch loop; providers injected — BrowserOS MCP, Scrapling MCP, hosted JSON API, or opt-in Sonar via `OC_SEARCH_PROVIDER=sonar`; fetch honors the egress allowlist, refuses private/loopback hosts, re-checks redirects, caps page text; results return inside a data-only block, 31 tests). Landed in #131, extended by #146, #147, #153; decompose emits `needs_web` and `engines.work_fn` routes it. Remaining: the thread orchestrator's native `web.search` tool call (KTD15's Search mode still uses this worker path) |
 | OC-076 | P3 | Subagents with carved budgets | open |
 | OC-077 | P4 | Context compaction for long threads | open |
 | OC-078 | P4 | Durable thread workflow on Temporal | open |
@@ -140,7 +140,7 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-080 | P3 | Settings and the Developer area | open |
 | OC-081 | P3 | Artifacts page | open |
 | OC-082 | P4 | MCP client and the Plugins page (connectors and skills) | open |
-| OC-083 | P4 | Browser tool (builds on OC-045) | open |
+| OC-083 | P4 | Browser tool (builds on OC-045) | partial: the confirm-class layer the tool will bind to is built and tested — `services/threads/confirm.py` classifies every action from the tool and its arg (run / ask / handoff), ask-class approval details hash-bind to the exact arg via `services.gate.gate.payload_hash`, and an always-human state (CAPTCHA, paywall, security warning, forced identity check) named in the permission input is refused as a handoff in `services/agents/worker.py` `on_permission` before any approval path can ask. Known limit, in force until U16: the check reads `rawInput` (what the model named or is filling), not the rendered page — a page-state marker the input does not reflect is not detected; U16 adds the page-state check at the element layer. The browser tool itself stays open behind U16 (U7 + U15 + live sandbox acceptance) |
 | OC-084 | P4 | Automations post to threads; retire the goal-run DAG | open |
 | OC-085 | P2 | `oc` CLI chat and threads (absorbs OC-039) | open |
 | OC-086 | P3 | Silver Lining neutral tokens as the one console theme (dark, light, system default plus toggle) | done (vendored from Tallyline main 43d2675; `oc-scale.css` holds the scale) |
@@ -157,6 +157,40 @@ Chat agent product (plan: `docs/plans/2026-10-31-003-feat-chat-agent-product-pla
 | OC-098 | P2 | Skill catalog: loader, declared capability vocabulary, run-side resolution | partial: `services/skills/` (one directory per skill with a `SKILL.md`), a vocabulary that names each capability's enforcement site, `/api/skills` reporting the catalog with a `degraded` status, a refusal before a run's first dispatch when the build cannot provide a declared token, and `skills.ndjson` recording what each run resolved; two seed skills. A refusal writes no `plan.json` and marks its plan cancelled, so `recover` does not adopt it and `resume` cannot re-drive it after a restart. `sandbox` is answered by the SDK the selected backend boots with plus its control-plane URL, not by a constant; `cross-repo-read` is scoped `applies_to: device` because reading a local checkout is not a microVM job. **Gap:** a resolved body is not injected into the worker prompt, so nothing the catalog resolves changes what the model reads yet. Plan: `docs/plans/2026-11-13-2336-feat-oc-skill-catalog-and-provisioning-plan.md` |
 | OC-099 | P2 | Provisioning integrity: the image installs only hash-verified packages | shipped: a generated `requirements.txt` (654 `--hash=sha256:` lines over the runtime extras) installed under `--require-hashes`, plus a separate `deploy/server-001/requirements-vcs.txt` for `jev-compact`, whose integrity guarantee is its full commit pin because pip cannot hash a git source. `temporalio` is a `durable` extra, so the optional-import contract in `services/opsview/goalruns.py` survives. Freshness, pin and a real round-trip install are tested; CI has a `provisioning` job registered in `deploy/approved_deploy.py` `REQUIRED_JOBS` |
 | OC-100 | P2 | Workspace archive listing bounds | shipped: input size, entry count and accumulated listing are capped in `services/workspace/caps.py`, and a declared entry count is read from the end-of-central-directory record before `zipfile` opens the archive, because `ZipFile.__init__` materializes the whole directory on open. An over-bound archive is a 422 rather than an unbounded read. The declared count is attacker-controlled (measured: patching it to 1 in a 110,000-entry archive still costs ~60 MB inside `ZipFile()`), so the per-entry walk is the bound that holds and the header read is only an early exit. Deliberately not a decompression guard: nothing in this tree extracts an entry |
+
+## v1: desktop app + Cloudflare core (2026-11-16)
+
+v1 replaces the Python console with a Rust desktop app and a TypeScript core deployed to the user's own
+Cloudflare account. The sections above describe the earlier stack and stay as history.
+
+### Landed
+
+| Area | What | PRs |
+|---|---|---|
+| Plan and core | v1 plan; TypeScript agent core; Cloudflare deploy-as-code; live setup wizard and `oc doctor` | #165, #167, #169 |
+| Runtime | Self-hosted daemon, local-only mode, real model prices, IT policy file, OpenTelemetry | #170 |
+| Integrations | Harness choice (Built-in / Hermes / OpenCode), the official OpenRouter SDK with account data, Sign in with Cloudflare | #171 |
+| AI Gateway | Model calls through the `open-computer` gateway via the Workers AI binding, with a direct fallback | #172 |
+| Desktop UX | Sign-in feedback (#173); scroll and layout (#174); zero-typing onboarding (#175); chat-first workspace with a live Computer panel (#176); full Settings page (#177) | #173–#177 |
+| CI/CD | Release builds (x86_64 and aarch64) with an installer; gated core deploy; `make lint-lessons` with 9 encoded checks | #178 |
+| In review | Live fixes: logging, keyring and auto-connect, task history, `--self-test`, harness model ids, stale-token re-adopt, 409 handling | #179 |
+
+### Next
+
+| Unit | What | Done when |
+|---|---|---|
+| OC-101 | **Diagnostics: full test suite.** The Diagnostics page runs every check the app knows, grouped by area, with the same live rows, timers and fix text as today's 18-row chain: core chain, harness, OpenRouter, MCP, plugins, APIs and memory. Each run is kept so you can compare it with the last one, and "Copy diagnostics" covers the whole suite. | Every group has at least one live check and one failure-path check proven on a fake; `--self-test` runs the same suite headless |
+| OC-102 | **Per-tab tests in Settings.** Each Settings tab gets a "Test this" button that runs only its group, inline:<br>• **Agent harness:** installed, version, model id understood (`openrouter/` mapping), provider configured, a dry run where the harness has one<br>• **OpenRouter:** key valid, limit and usage, model list, generation lookup, OAuth callback reachable<br>• **MCP:** each configured server reachable, tools listed, call timeouts<br>• **Plugins:** manifest valid, permissions granted, load and unload<br>• **APIs:** custom OpenAI-compatible endpoint, Cloudflare API scopes, AI Gateway route<br>• **Memory:** write, recall with a citation, delete, audit chain verifies | Each tab's button shows PASS/FAIL rows with a reason and a fix; results feed OC-101 |
+| OC-103 | **MCP tab** in Settings: add, edit and remove MCP servers; per-server tool list; enable per task | Servers configured in the app are usable by the Built-in harness |
+| OC-104 | **Plugins tab** in Settings (former U21): install, enable, permissions | One first-party plugin installs and runs |
+| OC-105 | **APIs tab** in Settings: custom endpoints, Cloudflare API and AI Gateway status in one place | Replaces the scattered endpoint fields |
+| OC-106 | Clear on/off control states and a subtle ambient background with a reduced-motion setting | Pixel tests per control type; idle CPU under 2% |
+| OC-107 | Workspace gaps: Attach, inline model picker, live terminal streaming in the Computer panel, sign-in browser/profile chooser | Each one works against the live core |
+| OC-108 | Cloudflare Access with service tokens for the desktop, `oc` and the wizard | Access on, with no lockout |
+| OC-109 | "Your own server" onboarding: self-host the core on one of your own servers over SSH and a private network | Setup and the full suite pass against a self-hosted core |
+| OC-110 | CI core deploy secret `CLOUDFLARE_API_TOKEN`, scoped | The deploy-core job runs green on main |
+
+Board: Tallyline project "Open Computer" (TLY-576 to TLY-581, plus a ticket for OC-101/OC-102).
 
 ## Landed since 2026-10-14
 

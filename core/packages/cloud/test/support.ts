@@ -112,6 +112,8 @@ export interface Fixture {
   failFlushAt: string[];
   /** Sets the IT policy text the handler sees for the rest of the test (undefined clears it). */
   setPolicy: (text: string | undefined) => void;
+  /** Moves the Session DO's clock forward, to age a running task without waiting (0 puts it back). */
+  setClockSkew: (ms: number) => void;
 }
 
 export function install(turns: Script["turns"]): Fixture {
@@ -134,7 +136,7 @@ export function install(turns: Script["turns"]): Fixture {
     },
   };
   setDoubles(current);
-  return { script, sandboxes, fetchCalls, keyInfoStatus, failFlushAt, setPolicy: (text) => void (current.policyJson = text) };
+  return { script, sandboxes, fetchCalls, keyInfoStatus, failFlushAt, setPolicy: (text) => void (current.policyJson = text), setClockSkew: (ms) => void (current.clockSkewMs = ms) };
 }
 
 export interface SseResult {

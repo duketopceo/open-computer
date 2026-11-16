@@ -18,6 +18,9 @@ pub enum Tab {
     Diagnostics,
 }
 
+/// Shown on a restored conversation whose task was still running when the app closed, until the core says how it ended.
+pub const INTERRUPTED: &str = "This task was interrupted when the app closed.";
+
 /// An earlier task: its own conversation and session. The task on screen is `Main::chat`; opening an earlier one swaps them.
 pub struct Thread {
     pub session_id: String,
@@ -125,6 +128,8 @@ pub struct Main {
     pub tab: Tab,
     pub chat: Chat,
     pub session_id: String,
+    /// Unique to this run of the app, so session ids and saved history never collide with an earlier run's.
+    pub run_id: String,
     /// Earlier tasks (not the one on screen).
     pub threads: Vec<Thread>,
     /// When the task on screen began.
@@ -145,6 +150,32 @@ pub struct Main {
 }
 
 impl Main {
+    /// Puts the conversations saved by earlier runs into the sidebar (the newest 30). A task that was running when the app
+    /// closed is shown as interrupted, not as still working.
+    pub fn restore_history(&mut self, dir: &std::path::Path) {
+        use shell_core::chat::Item;
+        let mut metas = shell_core::history::list(dir);
+        metas.truncate(30);
+        for meta in metas.into_iter().rev() {
+            if meta.session_id == self.session_id {
+                continue;
+            }
+            let mut chat = Chat::default();
+            for ev in shell_core::history::load(dir, &meta.session_id) {
+                chat.apply(&ev);
+            }
+            if chat.is_busy() {
+                chat.items.push(Item::Note(INTERRUPTED.to_owned()));
+                chat.status = "cancelled".to_owned();
+            }
+            self.threads.push(Thread {
+                session_id: meta.session_id,
+                chat,
+                began: std::time::UNIX_EPOCH + std::time::Duration::from_secs(meta.began),
+            });
+        }
+    }
+
     pub fn elapsed_secs(&self) -> u64 {
         self.started.map_or(0, |t| t.elapsed().as_secs())
     }
@@ -177,7 +208,7 @@ impl Main {
         let old = Thread {
             session_id: std::mem::replace(
                 &mut self.session_id,
-                format!("app-{}-{}", std::process::id(), self.next_session),
+                format!("app-{}-{}", self.run_id, self.next_session),
             ),
             chat: std::mem::take(&mut self.chat),
             began: std::mem::replace(&mut self.began, std::time::SystemTime::now()),
@@ -202,11 +233,19 @@ impl Main {
     }
 
     pub fn new() -> Self {
+        let run_id = format!(
+            "{}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+            std::process::id()
+        );
         Main {
             section: Section::OpenRouter,
             tab: Tab::Chat,
             chat: Chat::default(),
-            session_id: format!("app-{}", std::process::id()),
+            session_id: format!("app-{run_id}"),
+            run_id,
             threads: Vec::new(),
             began: std::time::SystemTime::now(),
             next_session: 1,
@@ -233,16 +272,25 @@ pub(crate) fn notify(tx: &Sender<Msg>, waker: &Option<Waker>, msg: Msg) {
 impl App {
     /// Leaves setup for the app, remembering that setup finished.
     pub fn enter_app(&mut self) {
-        let before = config::load(&config::default_path());
+        let before = config::load(&self.config_path.clone());
         let saved = Saved {
             cloud_url: self.onboarding.cloud_url().to_owned(),
             local_only: self.onboarding.local_only(),
             setup_done: true,
             ..before
         };
-        let _ = config::save(&config::default_path(), &saved);
-        self.main = Some(Main::new());
+        let _ = config::save(&self.config_path.clone(), &saved);
+        self.main = Some(self.new_main());
         self.connect_endpoint();
+    }
+
+    /// The workspace, with the conversations of earlier runs restored into the sidebar.
+    pub fn new_main(&self) -> Main {
+        let mut m = Main::new();
+        if let Some(dir) = &self.history_dir {
+            m.restore_history(dir);
+        }
+        m
     }
 
     /// Opens the saved app directly when setup already finished and the keys are still in the keyring.
@@ -260,7 +308,7 @@ impl App {
             self.onboarding.sync_secrets(&*self.store);
             self.onboarding.set_cloud_url(url.clone());
             self.cloud_url.replace_text(&url);
-            self.main = Some(Main::new());
+            self.main = Some(self.new_main());
             if std::env::var_os("OC_SCREEN_FIXTURE").is_some() {
                 self.apply_screen_fixture();
             }
@@ -284,19 +332,54 @@ impl App {
             self.connect_endpoint();
             return;
         }
-        let saved = config::load(&config::default_path());
+        let saved = config::load(&self.config_path.clone());
         if !saved.setup_done {
+            // An address saved while the keyring or setup was still unfinished is still the person's core.
+            if !saved.cloud_url.is_empty() && !saved.local_only {
+                self.onboarding.set_cloud_url(saved.cloud_url.clone());
+                self.cloud_url.replace_text(&saved.cloud_url);
+            }
             return;
         }
         self.harness = shell_core::harness::Harness::from_id(&saved.harness);
         self.ambient = !saved.ambient_off;
+        shell_core::browser::set(&saved.signin_browser);
+        self.signin_browser.replace_text(&saved.signin_browser);
+        self.browsers = shell_core::browser::detect();
+        self.harness_key = saved.harness_key;
+        self.harness_native = saved.harness_native_model.clone();
         self.onboarding.set_local_only(saved.local_only);
         self.onboarding.set_cloud_url(saved.cloud_url.clone());
         self.cloud_url.replace_text(&saved.cloud_url);
-        let secrets = self.onboarding.secrets_set();
+        let mut secrets = self.onboarding.secrets_set();
+        if !saved.local_only && !secrets.cloud_access && saved.file_token_ok {
+            // The keyring would not hold the token and the person agreed to use the saved connection file instead.
+            if let Some(core) =
+                shell_core::autoconnect::read_saved_core(&self.saved_core_path.clone())
+                && core.use_for_session(&*self.store).is_ok()
+            {
+                shell_core::log_info!(
+                    "connect",
+                    "resumed with the token from the saved connection file"
+                );
+                if !secrets.model_key {
+                    let _ = self.store.set(Slot::ModelKey, "managed-by-the-cloud-core");
+                }
+                self.onboarding.sync_secrets(&*self.store);
+                secrets = self.onboarding.secrets_set();
+            }
+        }
         let ready = secrets.model_key && (saved.local_only || secrets.cloud_access);
+        shell_core::log_info!(
+            "connect",
+            "resume: setup done {}, address saved {}, token present {}, model key present {}, ready {ready}",
+            saved.setup_done,
+            !saved.cloud_url.is_empty(),
+            secrets.cloud_access,
+            secrets.model_key
+        );
         if ready {
-            self.main = Some(Main::new());
+            self.main = Some(self.new_main());
             self.connect_endpoint();
         }
     }
@@ -314,6 +397,7 @@ impl App {
                 if let Some(m) = self.main.as_mut() {
                     m.endpoint = Some(Endpoint::new(&url, &t));
                 }
+                self.verify_core();
                 self.load_settings();
             }
             _ => self.notice = Some("Save the access secret for your cloud core first.".to_owned()),
@@ -436,7 +520,17 @@ impl App {
         m.started = Some(std::time::Instant::now());
         let session = m.session_id.clone();
         m.selected_step = None;
+        if let Some(dir) = &self.history_dir {
+            shell_core::history::append_user(dir, &session, &goal);
+        }
         self.composer.replace_text("");
+        self.busy_conflict = None;
+        self.spawn_task(ep, session, goal);
+    }
+
+    /// Starts a task on the core and streams its events back. Remembers what was sent so a retry can send it again.
+    fn spawn_task(&mut self, ep: Endpoint, session: String, goal: String) {
+        self.last_sent = Some((session.clone(), goal.clone()));
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || match ep.start_task(&goal, &session) {
             Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
@@ -451,6 +545,128 @@ impl App {
                 }
             }
         });
+    }
+
+    /// "Stop it": cancels the task in the way, then sends the waiting goal again.
+    pub fn stop_busy_and_retry(&mut self) {
+        let Some(conflict) = self.busy_conflict.clone() else {
+            return;
+        };
+        let Some(m) = self.main.as_mut() else { return };
+        let (Some(ep), Some(task)) = (m.endpoint.clone(), m.chat.task_id.clone()) else {
+            self.notice = Some(
+                "Which task is running here is not known. Start a new conversation instead."
+                    .to_owned(),
+            );
+            return;
+        };
+        if m.session_id != conflict.session {
+            self.notice =
+                Some("That conversation is not open. Start a new conversation instead.".to_owned());
+            return;
+        }
+        self.busy_conflict = None;
+        m.chat.status = "running".to_owned();
+        m.started = Some(std::time::Instant::now());
+        shell_core::log_info!(
+            "chat",
+            "stopping task {task} in {} and sending the goal again",
+            conflict.session
+        );
+        let (tx, waker) = (self.tx(), self.waker());
+        let session = conflict.session.clone();
+        let goal = conflict.goal.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = ep.cancel(&session, &task) {
+                notify(&tx, &waker, Msg::ChatFailed(session.clone(), e));
+                return;
+            }
+            match ep.start_task(&goal, &session) {
+                Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
+                Ok(started) => {
+                    let sid = started.session_id.clone();
+                    let r = ep.stream_events(&started.session_id, |ev| {
+                        notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev.clone()))
+                    });
+                    match r {
+                        Ok(()) => notify(&tx, &waker, Msg::ChatEnd(session.clone())),
+                        Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
+                    }
+                }
+            }
+        });
+    }
+
+    /// "Start a new conversation": the busy one stays as it is in the list and the goal goes to a fresh session.
+    pub fn new_conversation_for_busy(&mut self) {
+        let Some(conflict) = self.busy_conflict.take() else {
+            return;
+        };
+        let Some(m) = self.main.as_mut() else { return };
+        let Some(ep) = m.endpoint.clone() else { return };
+        m.new_task();
+        m.chat.push_user(&conflict.goal);
+        m.started = Some(std::time::Instant::now());
+        let session = m.session_id.clone();
+        if let Some(dir) = &self.history_dir {
+            shell_core::history::append_user(dir, &session, &conflict.goal);
+        }
+        shell_core::log_info!(
+            "chat",
+            "the conversation was busy; sending the goal in a new one ({session})"
+        );
+        self.spawn_task(ep, session, conflict.goal);
+    }
+
+    /// Asks the core how earlier conversations ended, once per run, so none shows as running or interrupted when it finished.
+    pub fn reconcile_threads(&mut self) {
+        if self.reconciled {
+            return;
+        }
+        let Some(ep) = self.main.as_ref().and_then(|m| m.endpoint.clone()) else {
+            return;
+        };
+        self.reconciled = true;
+        let (tx, waker) = (self.tx(), self.waker());
+        std::thread::spawn(move || {
+            notify(
+                &tx,
+                &waker,
+                Msg::Data(crate::app::DataMsg::RunStatuses(
+                    shell_core::settings_data::fetch_run_statuses(&ep),
+                )),
+            )
+        });
+    }
+
+    /// Earlier conversations the core finished (or abandoned) while the app was closed get the status the core reports.
+    pub fn apply_run_statuses(&mut self, statuses: &std::collections::HashMap<String, String>) {
+        use shell_core::chat::Item;
+        let Some(m) = self.main.as_mut() else { return };
+        for t in &mut m.threads {
+            let interrupted = t
+                .chat
+                .items
+                .iter()
+                .any(|i| matches!(i, Item::Note(n) if n == crate::main_app::INTERRUPTED));
+            let Some(task) = t.chat.task_id.clone() else {
+                continue;
+            };
+            let Some(status) = statuses.get(&task) else {
+                continue;
+            };
+            if interrupted && matches!(status.as_str(), "done" | "failed" | "cancelled") {
+                t.chat
+                    .items
+                    .retain(|i| !matches!(i, Item::Note(n) if n == crate::main_app::INTERRUPTED));
+                t.chat.items.push(Item::Note(match status.as_str() {
+                    "done" => "This task finished while the app was closed.".to_owned(),
+                    "cancelled" => "This task was cancelled while the app was closed.".to_owned(),
+                    _ => "This task failed while the app was closed.".to_owned(),
+                }));
+                t.chat.status = status.clone();
+            }
+        }
     }
 
     /// Opens or closes a thinking block or tool card.

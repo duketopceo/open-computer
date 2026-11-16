@@ -313,6 +313,37 @@ pub fn view_models<'a>(
 
 // ---------- fetchers ----------
 
+/// The last status each task reached, from the audit log's `event:run` records (`task id -> done | failed | cancelled | running`).
+pub fn run_statuses(ndjson: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for line in ndjson.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("kind").and_then(Value::as_str) != Some("event:run") {
+            continue;
+        }
+        let (Some(task), Some(status)) = (
+            v.get("task_id").and_then(Value::as_str),
+            v.pointer("/data/status").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        out.insert(task.to_owned(), status.to_owned());
+    }
+    out
+}
+
+pub fn fetch_run_statuses(
+    ep: &Endpoint,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let (status, _, text) = ep.raw("GET", "/v1/audit/export")?;
+    if status != 200 {
+        return Err(format!("The core answered with an error ({status})."));
+    }
+    Ok(run_statuses(&text))
+}
+
 pub fn fetch_spend(ep: &Endpoint) -> Result<SpendReport, String> {
     let (status, headers, text) = ep.raw("GET", "/v1/audit/export")?;
     if status != 200 {
@@ -381,6 +412,9 @@ mod tests {
                 let mut buf = [0u8; 4096];
                 let n = s.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                // Take the rest of a request body too: answering and closing with bytes unread resets the connection.
+                let _ = s.set_read_timeout(Some(Duration::from_millis(60)));
+                while matches!(s.read(&mut buf), Ok(m) if m > 0) {}
                 let first = req.lines().next().unwrap_or("").to_owned();
                 log.lock().unwrap().push(req.clone());
                 let hit = routes.iter().find(|(p, ..)| first.contains(p));
@@ -596,5 +630,58 @@ mod tests {
         let l: Load<u8> = Err("nope".to_owned()).into();
         assert_eq!(l.error(), Some("nope"));
         assert!(l.wants_fetch());
+    }
+
+    #[test]
+    fn a_409_from_starting_a_task_is_told_apart_by_its_code() {
+        let busy = r#"{"error":{"code":"session_busy","message":"This session already has a task running. Wait for it to finish or start a new session."}}"#;
+        let (base, _) = fake_core(vec![("/v1/tasks", 409, "", busy.to_owned())]);
+        let ep = Endpoint::new(&base, "t");
+        assert_eq!(
+            ep.start_task("g", "s").unwrap_err(),
+            crate::chat::SESSION_BUSY
+        );
+        let key = r#"{"error":{"code":"key_missing","message":"No OpenRouter key is stored on this core yet."}}"#;
+        let (base, _) = fake_core(vec![("/v1/tasks", 409, "", key.to_owned())]);
+        assert_eq!(
+            Endpoint::new(&base, "t").start_task("g", "s").unwrap_err(),
+            crate::chat::KEY_MISSING
+        );
+        let other = r#"{"error":{"code":"conflict","message":"Something else."}}"#;
+        let (base, _) = fake_core(vec![("/v1/tasks", 409, "", other.to_owned())]);
+        assert_eq!(
+            Endpoint::new(&base, "t").start_task("g", "s").unwrap_err(),
+            "Something else."
+        );
+    }
+
+    #[test]
+    fn the_problem_the_core_names_is_logged_as_code_and_message() {
+        let v =
+            serde_json::json!({"error": {"code": "session_busy", "message": "A task is running."}});
+        assert_eq!(
+            crate::http::problem_detail(&v),
+            "session_busy: A task is running."
+        );
+        assert_eq!(
+            crate::http::problem_detail(&serde_json::json!({"error": {"code": "x"}})),
+            "x"
+        );
+        assert_eq!(crate::http::problem_detail(&serde_json::Value::Null), "");
+    }
+
+    #[test]
+    fn the_last_status_of_each_task_comes_from_the_audit_log() {
+        let log = [
+            r#"{"seq":1,"task_id":"a","kind":"event:run","data":{"status":"running"}}"#,
+            r#"{"seq":2,"task_id":"b","kind":"event:run","data":{"status":"running"}}"#,
+            r#"{"seq":3,"task_id":"a","kind":"event:run","data":{"status":"done"}}"#,
+            r#"{"seq":4,"task_id":"a","kind":"event:usage","data":{"cost":0.1}}"#,
+            "not json",
+        ]
+        .join("\n");
+        let m = run_statuses(&log);
+        assert_eq!(m.get("a").map(String::as_str), Some("done"));
+        assert_eq!(m.get("b").map(String::as_str), Some("running"));
     }
 }

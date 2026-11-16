@@ -136,6 +136,11 @@ impl App {
             DataMsg::CoreInfo(r) => self.core_info = r.into(),
             DataMsg::Spend(r) => self.spend = r.into(),
             DataMsg::Memory(r) => self.memory = r.into(),
+            DataMsg::RunStatuses(r) => {
+                if let Ok(statuses) = r {
+                    self.apply_run_statuses(&statuses);
+                }
+            }
             DataMsg::MemoryCleared(r) => {
                 self.confirm_clear = false;
                 match r {

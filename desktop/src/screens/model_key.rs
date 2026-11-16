@@ -2,7 +2,7 @@
 //! the key goes to the system keyring. A core that already holds a key skips this step. Pasting a key lives under Advanced.
 
 use rune::{El, col, row, text};
-use rune_kit::{Badge, BadgeVariant, Field, Kit, TextInput};
+use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, Field, Kit, TextInput};
 
 use super::{accent_button, caption};
 use crate::app::App;
@@ -21,6 +21,7 @@ pub fn paste(s: &App, k: &Kit) -> El {
                     "Paste your OpenRouter key"
                 })
                 .on_edit(|s: &mut App| &mut s.model_key)
+                .width(None)
                 .build(k),
         )
         .build(k);
@@ -51,17 +52,24 @@ pub fn view(s: &App, k: &Kit) -> El {
                 .color(k.c.text_base),
         );
     } else {
-        page = page.child(accent_button(
+        let retry = s.or_line.is_some();
+        let label = super::openrouter_action_label(s.or_busy, retry);
+        let mut actions = row().gap(8.0).center_y().child(accent_button(
             k,
             "connect-openrouter",
-            if s.or_busy {
-                "Working…"
-            } else {
-                "Connect OpenRouter"
-            },
+            label,
             !s.or_busy,
             |s: &mut App| s.connect_openrouter(),
         ));
+        if s.or_busy {
+            actions = actions.child(
+                Button::new("Cancel")
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(|s: &mut App| s.cancel_openrouter())
+                    .build(k),
+            );
+        }
+        page = page.child(actions);
     }
     if let Some(l) = &s.or_line {
         page = page.child(text(l.clone()).font(k.ty.ui).color(k.c.text_base).w_full());

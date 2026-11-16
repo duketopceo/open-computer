@@ -17,6 +17,8 @@ export interface Doubles {
   failFlushAt: string[];
   /** The IT policy text the handler should see; unset means no policy. */
   policyJson?: string;
+  /** Milliseconds added to the Session DO's clock, to age a running task without waiting. */
+  clockSkewMs?: number;
 }
 
 const g = globalThis as unknown as { __doubles?: Doubles };
@@ -40,6 +42,9 @@ export class SessionDO extends BaseSessionDO {
       pending.splice(hit, 1);
       throw new Error("audit ledger unavailable");
     }
+  }
+  protected override clock(): number {
+    return Date.now() + (doubles().clockSkewMs ?? 0);
   }
   protected override policyText(): string | undefined {
     return doubles().policyJson;

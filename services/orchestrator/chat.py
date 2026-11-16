@@ -28,7 +28,10 @@ SYSTEM = (
     "must be self-contained: include every fact from earlier in this chat that the workers need.\n"
     "Prefer acting to asking. After a run you will see its results in the chat: if they do not meet the "
     "owner's request, run again with a corrected goal; otherwise reply with a brief summary. Never claim "
-    "work you have not seen in a run result."
+    "work you have not seen in a run result. On long work keep a memory file with "
+    '{"action":"memory","text":"<full file>"}: the goal, the owner\'s rules in their words, what done '
+    "means, where progress lives. It is shown back after every compaction; update it when a rule or the "
+    "plan changes."
 )
 FINAL_NOTE = "You have used all the runs allowed for this message. Do not start another run: reply with a short summary."
 
@@ -42,7 +45,7 @@ _RANGE = re.compile(r"^s\d{1,6}(?:-s\d{1,6})?$")
 
 @dataclass(frozen=True)
 class Decision:
-    action: str  # reply | ask | run | restore
+    action: str  # reply | ask | run | restore | memory
     text: str
     goal: str = ""
     spans: str = ""  # restore: a tombstoned range such as s4-s9
@@ -63,6 +66,10 @@ def parse_decision(raw: str) -> Decision:
         spans = obj.get("spans") if isinstance(obj.get("spans"), str) else ""
         if action == "restore" and _RANGE.match(spans.strip()):
             return Decision("restore", text.strip(), spans=spans.strip())
+        # writing the thread's memory file: `text` is the whole file,
+        # replacing whatever it held
+        if action == "memory" and text.strip():
+            return Decision("memory", text.strip())
     return Decision("reply", raw or "I did not get an answer back. Try again.")
 
 

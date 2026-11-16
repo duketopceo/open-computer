@@ -7,6 +7,8 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -16,6 +18,13 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub const BASE: &str = "https://openrouter.ai";
+
+/// How long "Connect OpenRouter" waits for the browser callback before it resets.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The wait ended because the person cancelled, or because the time ran out.
+pub const CANCELLED: &str = "The sign-in was cancelled. Try again.";
+pub const TIMED_OUT: &str = "The sign-in was not finished in time. Try again.";
 
 /// The error text for HTTP 403: the key is fine but is not allowed to read this (account credits need a management key).
 pub const FORBIDDEN: &str = "OpenRouter does not allow this key to read that.";
@@ -67,6 +76,10 @@ fn percent(s: &str) -> String {
 pub struct Callback {
     listener: TcpListener,
     pub port: u16,
+    cancel: Arc<AtomicBool>,
+    /// Runs once after accept and the accept-time cancel check, before the request is read.
+    #[cfg(test)]
+    after_accept: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Callback {
@@ -74,11 +87,35 @@ impl Callback {
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|_| "Could not open a local port for the sign-in.".to_owned())?;
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-        Ok(Callback { listener, port })
+        Ok(Callback {
+            listener,
+            port,
+            cancel: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            after_accept: std::sync::Mutex::new(None),
+        })
     }
 
     pub fn url(&self) -> String {
         format!("http://localhost:{}/callback", self.port)
+    }
+
+    /// The flag the UI sets to abandon a wait. Dropping this `Callback` (when the wait returns) closes the port.
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+
+    /// Test-only: run once after a connection is accepted and the accept-time cancel check has passed.
+    #[cfg(test)]
+    fn on_after_accept(&self, f: impl FnOnce() + Send + 'static) {
+        *self.after_accept.lock().unwrap() = Some(Box::new(f));
+    }
+
+    /// Stops a wait on `port` and lets `accept` return so the listener can be dropped.
+    pub fn request_cancel(flag: &AtomicBool, port: u16) {
+        flag.store(true, Ordering::Relaxed);
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let _ = TcpStream::connect_timeout(&addr, Duration::from_millis(100));
     }
 
     /// Waits for the browser to arrive at `/callback?code=...` and returns the code. Other requests get a 404 and are ignored.
@@ -88,11 +125,30 @@ impl Callback {
             .map_err(|e| e.to_string())?;
         let end = Instant::now() + timeout;
         while Instant::now() < end {
+            if self.cancel.load(Ordering::Relaxed) {
+                return Err(CANCELLED.to_owned());
+            }
             match self.listener.accept() {
                 Ok((mut s, _)) => {
+                    if self.cancel.load(Ordering::Relaxed) {
+                        return Err(CANCELLED.to_owned());
+                    }
+                    #[cfg(test)]
+                    if let Some(hook) = self.after_accept.lock().unwrap().take() {
+                        hook();
+                    }
                     let _ = s.set_nonblocking(false);
                     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
                     if let Some(code) = read_callback(&mut s) {
+                        // Cancel during the read must not return a code or exchange it.
+                        if self.cancel.load(Ordering::Relaxed) {
+                            reply(
+                                &mut s,
+                                200,
+                                "The sign-in was cancelled. You can close this tab.",
+                            );
+                            return Err(CANCELLED.to_owned());
+                        }
                         reply(
                             &mut s,
                             200,
@@ -108,7 +164,7 @@ impl Callback {
                 Err(e) => return Err(e.to_string()),
             }
         }
-        Err("The sign-in was not finished in time. Try again.".to_owned())
+        Err(TIMED_OUT.to_owned())
     }
 }
 
@@ -159,7 +215,7 @@ pub fn exchange_code(base: &str, code: &str, verifier: &str) -> Result<String, S
         .post(&format!("{base}/api/v1/auth/keys"))
         .header("Content-Type", "application/json")
         .send(body.as_bytes())
-        .map_err(|_| "OpenRouter could not be reached.".to_owned())?;
+        .map_err(|e| crate::http::unreachable("OpenRouter", "POST", "/api/v1/auth/keys", &e))?;
     let (status, v) = read_body(r);
     if status != 200 {
         return Err(
@@ -340,7 +396,7 @@ impl Client {
             .get(&format!("{}{path}", self.base))
             .header("Authorization", &format!("Bearer {}", self.key))
             .call()
-            .map_err(|_| "OpenRouter could not be reached.".to_owned())?;
+            .map_err(|e| crate::http::unreachable("OpenRouter", "GET", path, &e))?;
         match read_body(r) {
             (200, v) => Ok(v),
             (401, _) => Err("OpenRouter rejected the key.".to_owned()),
@@ -699,7 +755,90 @@ mod tests {
     fn a_callback_that_never_comes_times_out_in_plain_words() {
         let cb = Callback::bind().unwrap();
         let e = cb.wait_for_code(Duration::from_millis(200)).unwrap_err();
-        assert!(e.contains("not finished in time"));
+        assert_eq!(e, TIMED_OUT);
+    }
+
+    #[test]
+    fn cancelling_the_callback_stops_the_wait_and_releases_the_port() {
+        let cb = Callback::bind().unwrap();
+        let port = cb.port;
+        let flag = cb.cancel_flag();
+        let handle = std::thread::spawn(move || cb.wait_for_code(Duration::from_secs(30)));
+        std::thread::sleep(Duration::from_millis(80));
+        Callback::request_cancel(&flag, port);
+        let e = handle.join().expect("wait thread").unwrap_err();
+        assert_eq!(e, CANCELLED);
+        // The listener is dropped when the wait returns, so the port can be bound again (a moment's grace: another test's
+        // socket may still be closing on a busy machine).
+        let rebound = (0..40).any(|_| {
+            TcpListener::bind(("127.0.0.1", port)).is_ok() || {
+                std::thread::sleep(Duration::from_millis(25));
+                false
+            }
+        });
+        assert!(rebound, "the port is released");
+    }
+
+    #[test]
+    fn a_callback_that_arrives_after_cancel_is_not_accepted() {
+        let cb = Callback::bind().unwrap();
+        let port = cb.port;
+        let flag = cb.cancel_flag();
+        flag.store(true, Ordering::Relaxed);
+        let handle = std::thread::spawn(move || cb.wait_for_code(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(50));
+        if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+            let _ = write!(
+                s,
+                "GET /callback?code=should-not-be-used HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            );
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+        }
+        let e = handle.join().expect("wait thread").unwrap_err();
+        assert_eq!(e, CANCELLED);
+    }
+
+    #[test]
+    fn a_callback_cancelled_after_accept_is_not_exchanged() {
+        let (base, seen) = fake_server(vec![(
+            "/api/v1/auth/keys",
+            r#"{"key":"sk-or-should-not-be-issued","user_id":"u"}"#.to_owned(),
+        )]);
+        let cb = Callback::bind().unwrap();
+        let pkce = new_pkce().unwrap();
+        let port = cb.port;
+        let flag = cb.cancel_flag();
+        let (accepted_tx, accepted_rx) = std::sync::mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        cb.on_after_accept(move || {
+            accepted_tx.send(()).expect("signal accepted");
+            resume_rx.recv().expect("resume after cancel");
+        });
+        let handle =
+            std::thread::spawn(move || finish_connect(&base, &cb, &pkce, Duration::from_secs(5)));
+        // Hold the connection open with no request bytes so the wait can accept
+        // and pass the accept-time check; then cancel before the callback is sent.
+        let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect to callback port");
+        let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+        accepted_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("worker accepted the connection");
+        flag.store(true, Ordering::Relaxed);
+        resume_tx.send(()).expect("resume the worker");
+        let _ = write!(
+            s,
+            "GET /callback?code=should-not-be-exchanged HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        );
+        let mut out = String::new();
+        let _ = s.read_to_string(&mut out);
+        let e = handle.join().expect("wait thread").unwrap_err();
+        assert_eq!(e, CANCELLED);
+        let sent = seen.lock().unwrap().join("\n");
+        assert!(
+            !sent.contains("POST /api/v1/auth/keys"),
+            "cancelled callback was exchanged: {sent}"
+        );
     }
 
     #[test]

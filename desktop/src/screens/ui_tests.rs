@@ -18,12 +18,8 @@ fn lum(c: rune::Color) -> f32 {
 }
 
 /// A column with each control type twice: on and off, plus a disabled one.
-fn bench(s: &App, cx: &mut Cx<App>) -> El {
-    let k = crate::theme::kit(if s.ambient {
-        cx.system_dark()
-    } else {
-        cx.system_dark()
-    });
+fn bench(_s: &App, cx: &mut Cx<App>) -> El {
+    let k = crate::theme::kit(cx.system_dark());
     col()
         .key("bench")
         .w_full()
@@ -438,8 +434,8 @@ fn reduced_motion_holds_one_still_frame_with_no_wakes() {
 /// GPU time is not measured here (there is no window); the glows are three full-window gradients.
 #[test]
 fn the_background_adds_well_under_two_percent_of_one_core_while_idle() {
-    let (_, with) = timed(true);
-    let (_, without) = timed(false);
+    let fastest = |on: bool| (0..5).map(|_| timed(on).1).min().unwrap_or_default();
+    let (with, without) = (fastest(true), fastest(false));
     let per_wake_extra = with.saturating_sub(without).as_secs_f64() / 100.0;
     let share = per_wake_extra * 10.0;
     eprintln!(
@@ -454,4 +450,137 @@ fn the_background_adds_well_under_two_percent_of_one_core_while_idle() {
         "the background costs {:.2} percent of a core even in a debug build",
         share * 100.0
     );
+}
+
+// ---------- sign-in: the account, the browser, the tip ----------
+
+fn signed_in() -> shell_core::signin::SignIn {
+    shell_core::signin::SignIn {
+        signed_in: true,
+        email: Some("me@example.com".into()),
+        accounts: vec!["Work Account".into()],
+        scopes: vec!["workers".into()],
+        missing: Vec::new(),
+    }
+}
+
+fn has_text(rt: &Runtime<App>, needle: &str) -> bool {
+    rt.elements()
+        .into_iter()
+        .filter_map(|e| e.text)
+        .any(|t| t.contains(needle))
+}
+
+#[test]
+fn after_a_sign_in_the_account_is_stated_with_a_way_to_switch_on_get_started_and_in_settings() {
+    let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+    app.cf_state = Some(signed_in());
+    let mut rt = Runtime::new(app, super::view, (900.0, 900.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    assert!(has_text(
+        &rt,
+        "Signed in as me@example.com \u{b7} Work Account."
+    ));
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| e.key.as_deref() == Some("not-you"))
+    );
+    assert!(has_text(&rt, "Not you? Switch account"));
+
+    let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+    app.cf_state = Some(signed_in());
+    let mut m = Main::new();
+    m.tab = Tab::Settings;
+    m.section = Section::Cloudflare;
+    app.main = Some(m);
+    let mut rt = Runtime::new(app, super::view, (1440.0, 900.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    assert!(has_text(
+        &rt,
+        "Signed in as me@example.com \u{b7} Work Account."
+    ));
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| e.key.as_deref() == Some("cf-not-you"))
+    );
+}
+
+#[test]
+fn the_consent_step_says_which_account_the_browser_will_use() {
+    let app = App::with_store(Arc::new(InMemorySecrets::new()));
+    let mut rt = Runtime::new(app, super::view, (900.0, 900.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    assert!(has_text(
+        &rt,
+        "Cloudflare will use the account your browser is signed in to."
+    ));
+    // In Settings too, next to the account.
+    let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+    let mut m = Main::new();
+    m.tab = Tab::Settings;
+    m.section = Section::Cloudflare;
+    app.main = Some(m);
+    let mut rt = Runtime::new(app, super::view, (1440.0, 900.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    assert!(has_text(
+        &rt,
+        "Cloudflare will use the account your browser is signed in to."
+    ));
+}
+
+#[test]
+fn the_browser_setting_lists_what_is_found_saves_the_choice_and_uses_it() {
+    let dir = std::env::temp_dir().join(format!("oc-ui-browser-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = App::with_store(Arc::new(InMemorySecrets::new()));
+    app.config_path = dir.join("desktop.json");
+    app.browsers = vec![
+        shell_core::browser::Detected {
+            label: "Chromium, Profile 2".into(),
+            command: "chromium --profile-directory=\"Profile 2\"".into(),
+        },
+        shell_core::browser::Detected {
+            label: "Firefox".into(),
+            command: "firefox".into(),
+        },
+    ];
+    let mut m = Main::new();
+    m.tab = Tab::Settings;
+    m.section = Section::Cloudflare;
+    app.main = Some(m);
+    let mut rt = Runtime::new(app, super::view, (1440.0, 900.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    for key in [
+        "cf-browser",
+        "browser-system",
+        "browser-0",
+        "browser-1",
+        "browser-save",
+    ] {
+        assert!(
+            rt.elements()
+                .into_iter()
+                .any(|e| e.key.as_deref() == Some(key)),
+            "{key}"
+        );
+    }
+    assert!(has_text(&rt, "Chromium, Profile 2") && has_text(&rt, "Open sign-in pages with"));
+    // Picking a profile saves it and sets it for every sign-in page from now on.
+    // (`true` stands in for a browser: nothing opens while the choice is set.)
+    rt.update(|s, _| s.pick_signin_browser("true --profile-directory=\"Profile 2\""));
+    assert_eq!(
+        shell_core::browser::get().as_deref(),
+        Some("true --profile-directory=\"Profile 2\"")
+    );
+    assert_eq!(
+        shell_core::config::load(&dir.join("desktop.json")).signin_browser,
+        "true --profile-directory=\"Profile 2\""
+    );
+    // The system browser clears it.
+    rt.update(|s, _| s.pick_signin_browser(""));
+    assert_eq!(shell_core::browser::get(), None);
+    let _ = std::fs::remove_dir_all(&dir);
 }

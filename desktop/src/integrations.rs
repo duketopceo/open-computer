@@ -3,7 +3,6 @@
 //! OpenRouter callback, which goes straight to the keyring.
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use shell_core::config;
 use shell_core::harness::{self, Harness};
@@ -18,6 +17,9 @@ use crate::main_app::notify;
 pub fn open_url(url: &str) -> bool {
     if !url.starts_with("https://") {
         return false;
+    }
+    if let Some(browser) = shell_core::browser::get() {
+        return shell_core::browser::open_with(&browser, url).is_ok();
     }
     let (program, lead): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
@@ -53,18 +55,119 @@ impl App {
         });
     }
 
+    /// Saves the command sign-in pages open with (empty: the system browser) and uses it from now on.
+    pub fn save_signin_browser(&mut self) {
+        let text = self.signin_browser.text.trim().to_owned();
+        shell_core::browser::set(&text);
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.signin_browser = text.clone();
+        let _ = config::save(&path, &saved);
+        shell_core::log_info!(
+            "browser",
+            "sign-in pages open with: {}",
+            if text.is_empty() {
+                "the system browser"
+            } else {
+                "a chosen command"
+            }
+        );
+        self.notice = Some(if text.is_empty() {
+            "Sign-in pages open in your system browser.".to_owned()
+        } else {
+            "Sign-in pages open with that command from now on.".to_owned()
+        });
+    }
+
+    /// Picks a detected browser (or profile) as the command.
+    pub fn pick_signin_browser(&mut self, command: &str) {
+        self.signin_browser.replace_text(command);
+        self.save_signin_browser();
+    }
+
     /// Turns the moving background on or off and remembers the choice.
     pub fn set_ambient(&mut self, on: bool) {
         self.ambient = on;
-        let path = config::default_path();
+        let path = self.config_path.clone();
         let mut saved = config::load(&path);
         saved.ambient_off = !on;
         let _ = config::save(&path, &saved);
     }
 
+    /// The model Open Computer asks a harness to use: its own default model, mapped to the harness's naming by the adapter, or
+    /// none when the person chose the harness's default.
+    pub fn harness_model(&self, h: Harness) -> Option<String> {
+        if self.harness_native.iter().any(|id| id == h.id()) {
+            return None;
+        }
+        let from_core = self
+            .main
+            .as_ref()
+            .and_then(|m| m.settings.as_ref())
+            .and_then(|v| v.get("default_model"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        Some(from_core.unwrap_or_else(shell_core::defaults::default_model))
+    }
+
+    pub fn set_harness_native(&mut self, h: Harness, native: bool) {
+        self.harness_native.retain(|id| id != h.id());
+        if native {
+            self.harness_native.push(h.id().to_owned());
+        }
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.harness_native_model = self.harness_native.clone();
+        let _ = config::save(&path, &saved);
+        shell_core::log_info!("harness", "{} uses its own default model: {native}", h.id());
+    }
+
+    /// `OPENROUTER_API_KEY` for Hermes and OpenCode, only when the person opted in and a real key is on this computer (a core-managed
+    /// key never leaves the core). Both programs read that variable; nothing is passed as an argument.
+    pub fn harness_env(&self) -> Vec<(String, String)> {
+        if !self.harness_key {
+            return Vec::new();
+        }
+        match self.store.get(Slot::ModelKey) {
+            Ok(Some(k)) if !k.is_empty() && k != "managed-by-the-cloud-core" => {
+                vec![("OPENROUTER_API_KEY".to_owned(), k)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether a real OpenRouter key is on this computer that could be handed to a local agent.
+    pub fn has_shareable_key(&self) -> bool {
+        matches!(self.store.get(Slot::ModelKey), Ok(Some(k)) if !k.is_empty() && k != "managed-by-the-cloud-core")
+    }
+
+    pub fn set_harness_key(&mut self, on: bool) {
+        self.harness_key = on;
+        let path = self.config_path.clone();
+        let mut saved = config::load(&path);
+        saved.harness_key = on;
+        let _ = config::save(&path, &saved);
+        shell_core::log_info!("harness", "hand the OpenRouter key to local agents: {on}");
+    }
+
+    /// Puts the last 200 log lines, redacted, on the clipboard.
+    pub fn copy_diagnostics(&mut self) {
+        let mut text = format!(
+            "Open Computer {} diagnostics\ncore check: {:?}\nkeyring: {}\n---\n",
+            env!("CARGO_PKG_VERSION"),
+            self.core_check,
+            self.keyring_problem
+                .as_deref()
+                .unwrap_or("no problem recorded")
+        );
+        text.push_str(&shell_core::applog::tail(200));
+        self.copy_request = Some(text);
+        self.diag_copied = true;
+    }
+
     pub fn set_harness(&mut self, h: Harness) {
         self.harness = h;
-        let path = config::default_path();
+        let path = self.config_path.clone();
         let mut saved = config::load(&path);
         saved.harness = h.id().to_owned();
         let _ = config::save(&path, &saved);
@@ -90,6 +193,7 @@ impl App {
             ));
             return;
         }
+        let model = self.harness_model(h);
         let Some(m) = self.main.as_mut() else { return };
         self.notice = None;
         m.chat.push_user(&goal);
@@ -100,12 +204,23 @@ impl App {
         self.harness_running = true;
         self.harness_cancel.store(false, Ordering::Relaxed);
         let cancel = self.harness_cancel.clone();
+        if let Some(dir) = &self.history_dir {
+            shell_core::history::append_user(dir, &session, &goal);
+        }
+        let env = self.harness_env();
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || {
             let sid = session.clone();
-            let r = harness::run_task(&mut *adapter, &goal, None, None, None, &cancel, &mut |ev| {
-                notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev))
-            });
+            let r = harness::run_task_with(
+                &mut *adapter,
+                &goal,
+                model.as_deref(),
+                None,
+                None,
+                &env,
+                &cancel,
+                &mut |ev| notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev)),
+            );
             match r {
                 Ok(()) => notify(&tx, &waker, Msg::ChatEnd(session.clone())),
                 Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
@@ -137,18 +252,41 @@ impl App {
                 Some("The browser could not be opened. Paste a key below instead.".to_owned());
             return;
         }
+        self.or_connect_id = self.or_connect_id.wrapping_add(1);
+        let id = self.or_connect_id;
+        self.or_cancel = cb.cancel_flag();
+        self.or_port = Some(cb.port);
         self.or_busy = true;
         self.or_line = Some("Your browser opened OpenRouter. Click Authorize there.".to_owned());
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || {
-            let r =
-                openrouter::finish_connect(openrouter::BASE, &cb, &pkce, Duration::from_secs(300));
-            notify(&tx, &waker, Msg::OrKey(r));
+            let r = openrouter::finish_connect(
+                openrouter::BASE,
+                &cb,
+                &pkce,
+                openrouter::CONNECT_TIMEOUT,
+            );
+            notify(&tx, &waker, Msg::OrKey(id, r));
         });
+    }
+
+    /// Stops a running OpenRouter wait, closes the localhost listener, and enables Try again.
+    pub fn cancel_openrouter(&mut self) {
+        if let Some(port) = self.or_port.take() {
+            openrouter::Callback::request_cancel(&self.or_cancel, port);
+        } else {
+            self.or_cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        // Ignore a result that arrives after this cancel.
+        self.or_connect_id = self.or_connect_id.wrapping_add(1);
+        self.or_busy = false;
+        self.or_line = Some(openrouter::CANCELLED.to_owned());
     }
 
     /// Saves the key from the callback (keyring first), hands it to the connected core, then loads the account view.
     pub fn on_openrouter_key(&mut self, r: Result<String, String>) {
+        self.or_port = None;
         let key = match r {
             Ok(k) => k,
             Err(e) => {
