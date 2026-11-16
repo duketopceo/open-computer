@@ -1,0 +1,143 @@
+name: release
+
+# Desktop app release build for Linux (x86_64 and aarch64). Every push to main builds both binaries and keeps them as a
+# workflow artifact. A v* tag also publishes a GitHub Release with the binaries, the menu entry, the launcher, the icons
+# and install.sh. Pull requests that touch the desktop or this file build and smoke-test the same files, and publish
+# nothing. Nothing here deploys or contacts Cloudflare.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: read
+
+# `shell: bash` makes GitHub run bash -eo pipefail, so a failure inside a pipe fails the step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          # Hosted arm64 runners are free for public repositories, and this one is public.
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Same libraries as the desktop job in ci.yml, plus the icon renderer and the .desktop validator.
+      - name: system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxkbcommon-x11-dev libvulkan-dev librsvg2-bin desktop-file-utils
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktop
+          key: release-${{ matrix.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: build the release binary
+        working-directory: desktop
+        run: cargo build --release --locked --bin open-computer
+      - name: stage the files
+        run: |
+          mkdir -p dist
+          cp desktop/target/release/open-computer "dist/open-computer-linux-${{ matrix.arch }}"
+          file "dist/open-computer-linux-${{ matrix.arch }}"
+          [ "$(uname -m)" = "${{ matrix.arch }}" ]
+          cp desktop/packaging/linux/open-computer-launch desktop/packaging/linux/open-computer.desktop desktop/packaging/linux/install.sh dist/
+          sh desktop/packaging/linux/make-icons.sh dist
+          chmod +x dist/open-computer-launch dist/install.sh
+      # install.sh into a throwaway prefix and HOME on the runner (no containers, no VMs): the files land where the
+      # menu expects them, the entry validates, and the launcher puts the mise shims on the PATH and writes the log.
+      - name: install.sh and launcher smoke test
+        run: |
+          home="$RUNNER_TEMP/home"
+          rm -rf "$home"
+          mkdir -p "$home"
+          HOME="$home" sh dist/install.sh --prefix "$home/.local"
+          for f in bin/open-computer bin/open-computer-launch share/applications/open-computer.desktop \
+            share/icons/hicolor/48x48/apps/open-computer.png share/icons/hicolor/128x128/apps/open-computer.png \
+            share/icons/hicolor/256x256/apps/open-computer.png share/icons/hicolor/512x512/apps/open-computer.png \
+            share/icons/hicolor/scalable/apps/open-computer.svg; do
+            test -e "$home/.local/$f" || { echo "missing after install: $f"; exit 1; }
+          done
+          grep -qx "Exec=$home/.local/bin/open-computer-launch" "$home/.local/share/applications/open-computer.desktop"
+          desktop-file-validate "$home/.local/share/applications/open-computer.desktop"
+          env -i HOME="$home" PATH=/usr/bin:/bin "$home/.local/bin/open-computer-launch" --print-state
+          log="$home/.local/state/open-computer/desktop.log"
+          grep -q "$home/.local/share/mise/shims" "$log"
+          grep -q "$home/.local/bin" "$log"
+          python3 -c "import json,sys; json.loads(sys.argv[1])" "$(sed -n '/^{/,$p' "$log")"
+          echo "launcher log:"
+          cat "$log"
+      - name: upload the binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: open-computer-linux-${{ matrix.arch }}
+          path: dist/open-computer-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 30
+      # The menu entry, launcher, icons and installer do not depend on the CPU, so one job uploads them.
+      - name: upload the shared files
+        if: matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: open-computer-linux-shared
+          path: |
+            dist/open-computer-launch
+            dist/open-computer.desktop
+            dist/install.sh
+            dist/open-computer.svg
+            dist/open-computer-*.png
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: open-computer-linux-*
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        working-directory: dist
+        run: |
+          chmod +x install.sh open-computer-launch open-computer-linux-*
+          ls -l
+          sha256sum open-computer-linux-x86_64 open-computer-linux-aarch64 open-computer-launch open-computer.desktop open-computer.svg open-computer-*.png install.sh > SHA256SUMS
+          cat SHA256SUMS
+      - name: create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "Open Computer $TAG" --generate-notes --verify-tag
+          fi

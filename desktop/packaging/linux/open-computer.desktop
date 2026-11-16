@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Open Computer
+Comment=Run agents on your own Cloudflare account, from your desktop
+Exec=open-computer-launch
+Icon=open-computer
+Terminal=false
+Categories=Utility;Development;
+StartupWMClass=open-computer
