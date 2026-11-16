@@ -18,6 +18,8 @@ export interface Env {
   MODEL_TOTAL_TIMEOUT_MS?: string;
   /** How long a task waits for a human decision before it fails as expired, for example "24 hours". */
   APPROVAL_TIMEOUT: string;
+  /** IT policy as JSON text, for example {"max_daily_cap_usd": 20}. Empty means no policy. */
+  POLICY_JSON?: string;
   AI_GATEWAY_ACCOUNT: string;
   AI_GATEWAY_ID: string;
 }

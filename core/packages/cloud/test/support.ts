@@ -110,6 +110,8 @@ export interface Fixture {
   fetchCalls: Array<{ url: string; auth: string | null }>;
   keyInfoStatus: { value: number };
   failFlushAt: string[];
+  /** Sets the IT policy text the handler sees for the rest of the test (undefined clears it). */
+  setPolicy: (text: string | undefined) => void;
 }
 
 export function install(turns: Script["turns"]): Fixture {
@@ -118,7 +120,7 @@ export function install(turns: Script["turns"]): Fixture {
   const fetchCalls: Fixture["fetchCalls"] = [];
   const keyInfoStatus = { value: 200 };
   const failFlushAt: string[] = [];
-  setDoubles({
+  const current: Parameters<typeof setDoubles>[0] = {
     failFlushAt,
     provider: scriptedProvider(script),
     sandbox: (taskId) => {
@@ -130,8 +132,9 @@ export function install(turns: Script["turns"]): Fixture {
       fetchCalls.push({ url, auth: new Headers(init.headers).get("authorization") });
       return new Response("{}", { status: keyInfoStatus.value });
     },
-  });
-  return { script, sandboxes, fetchCalls, keyInfoStatus, failFlushAt };
+  };
+  setDoubles(current);
+  return { script, sandboxes, fetchCalls, keyInfoStatus, failFlushAt, setPolicy: (text) => void (current.policyJson = text) };
 }
 
 export interface SseResult {

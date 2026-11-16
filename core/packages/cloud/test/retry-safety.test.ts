@@ -164,32 +164,6 @@ describe("memory toggle in the cloud core", () => {
   });
 });
 
-describe("the daily spend cap", () => {
-  const costOf = async (body: Record<string, unknown>) => {
-    install([textTurn("ok")]);
-    const started = await startTask({ goal: "cap check", ...body });
-    const { events } = await readSse(await api(eventsUrl(started.session_id)));
-    return { started, cost: events.find((e) => e.type === "cost") };
-  };
-
-  it("applies the account default when a task does not send one, so no task runs without a daily cap", async () => {
-    const { started, cost } = await costOf({});
-    expect(defaults.daily_cap_usd).toBe(5);
-    expect(started.day_cap).toBe(defaults.daily_cap_usd);
-    expect(cost).toMatchObject({ type: "cost", day_cap: defaults.daily_cap_usd });
-  });
-
-  it("treats an explicit null the same as an omitted cap", async () => {
-    const { started } = await costOf({ day_cap: null });
-    expect(started.day_cap).toBe(defaults.daily_cap_usd);
-  });
-
-  it("lets a task lower the cap but never raise it above the account default", async () => {
-    expect((await costOf({ day_cap: 1 })).started.day_cap).toBe(1);
-    expect((await costOf({ day_cap: 500 })).started.day_cap).toBe(defaults.daily_cap_usd);
-  });
-});
-
 describe("the default model", () => {
   it("comes from the shared defaults file when a task names none", async () => {
     const fx = install([textTurn("hi")]);

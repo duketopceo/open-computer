@@ -75,7 +75,14 @@ test("the default model has one owner: neither Wrangler config defines it", () =
   assert.equal(shared.default_model, "z-ai/glm-5.3");
   assert.equal(shared.worker_model, "z-ai/glm-5.3-flash");
   assert.equal(shared.daily_cap_usd, 5);
+  assert.equal(shared.max_daily_cap_usd, 1000);
+  assert.ok(shared.daily_cap_usd <= shared.max_daily_cap_usd);
   assert.equal(prod.vars.DAILY_CAP_USD, undefined);
+});
+
+test("the IT policy variable exists and is empty by default, so no policy applies until a deployer sets one", () => {
+  assert.equal(prod.vars.POLICY_JSON, "");
+  assert.equal(testCfg.vars.POLICY_JSON, "");
 });
 
 test("model call limits are configured as positive millisecond counts", () => {
@@ -89,7 +96,7 @@ test("model call limits are configured as positive millisecond counts", () => {
 
 test("the migration creates every table the code reads", () => {
   const sql = read("migrations/0001_init.sql");
-  for (const t of ["audit", "spend", "task_cap_extra", "tasks", "memory_blocks", "memory_history", "memory_history_fts"]) {
+  for (const t of ["audit", "spend", "task_cap_extra", "settings", "tasks", "memory_blocks", "memory_history", "memory_history_fts"]) {
     assert.ok(new RegExp(`CREATE (VIRTUAL )?TABLE IF NOT EXISTS ${t}\\b`).test(sql), t);
   }
 });

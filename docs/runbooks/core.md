@@ -66,7 +66,13 @@ Tests never touch the network or a real model: the provider tests replay SSE cas
 - Model calls are bounded by three limits (connect, idle and total), set by `MODEL_CONNECT_TIMEOUT_MS`, `MODEL_IDLE_TIMEOUT_MS` and `MODEL_TOTAL_TIMEOUT_MS`. Any bytes, including provider keep-alive comments, reset the idle clock. A tripped limit ends the call with a retryable `provider_timeout` error event.
 - `sandbox.exec` stops a command after 120 seconds by default; the model may ask for up to 600 seconds with `timeout_seconds`.
 - Defaults have one definition, `core/contracts/defaults.json`: the default model (`z-ai/glm-5.3`), the worker model (`z-ai/glm-5.3-flash`, reserved for the coding worker unit) and the daily spend cap (5 US dollars per user per day). The cloud handler and the local core import the file and the desktop shell embeds it; the Wrangler configs do not define any of them, and a config test keeps it that way.
-- The daily spend cap is required. A task that sends no `day_cap` (or `null`) gets the account default, and a task can lower the cap but never raise it above the default. The accepted cap is returned as `day_cap` in the 202 response and appears in every `cost` event. Reaching it stops the task; a cap raise cannot lift a day total.
+- The daily spend cap is required, and five dollars is the default, not a ceiling. Four rules decide the cap a task gets:
+  1. The user can set their own cap with `PUT /v1/settings` (`{"daily_cap_usd": 20}`), stored in D1 and shown by `GET /v1/settings` with the default, the upper bound (1000, which catches typos), any policy maximum and the cap in effect. `null` goes back to the default. Zero, negatives, text, anything over 1000 and unknown fields are refused with a plain message and the old value is kept.
+  2. With no setting, the default from `core/contracts/defaults.json` applies.
+  3. An IT policy maximum, when present, overrides the user's setting: the cap in effect is the lower of the two. A user can still save a higher number, but it only takes effect if the policy goes away.
+  4. A task may ask for a lower cap with `day_cap`, never a higher one; omitting it (or sending `null`) gives the cap in effect. The accepted cap is returned as `day_cap` in the 202 response and appears in every `cost` event.
+- The IT policy is read from the `POLICY_JSON` variable (for example `{"max_daily_cap_usd": 20}`); empty means no policy. A policy that cannot be read fails closed: tasks and settings return a `policy_invalid` error until it is fixed. The full lockable policy file (R22) is a later unit and builds on this field.
+- Reaching the daily cap stops a task; a cap raise cannot lift a day total.
 
 ## Known gaps in this slice
 

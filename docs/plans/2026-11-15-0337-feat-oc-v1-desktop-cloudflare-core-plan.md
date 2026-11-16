@@ -255,7 +255,7 @@ Product Contract preservation: Product Contract unchanged except that Outstandin
 ### Assumptions
 
 - Cloud-to-desktop auth in v1 is one shared bearer secret generated at deploy time (256-bit random, constant-time comparison, throttled after repeated failures, rotatable in U16); Cloudflare Access in front of the Worker is optional hardening, tracked in U23.
-- Owner defaults (2026-11-15), kept in `core/contracts/defaults.json`: default model `z-ai/glm-5.3`, worker model `z-ai/glm-5.3-flash`, and a required daily spend cap of 5 US dollars per user per day that a task can lower but not raise.
+- Owner defaults (2026-11-15), kept in `core/contracts/defaults.json`: default model `z-ai/glm-5.3`, worker model `z-ai/glm-5.3-flash`, and a required daily spend cap that defaults to 5 US dollars per user per day. The user can set their own (a positive number up to 1000), an IT policy maximum overrides it when present, and a task can lower the cap in effect but not raise it.
 - Until U16 lands, a pre-deployed core gets its provider key and access secret set by the owner as Secrets Store entries; the first PR never writes to Cloudflare.
 - Character caps for tier-1 memory default to 2,200 for agent notes and 1,400 for the user profile and are settings, not product requirements.
 - Workflows step output is small enough when it carries references (the exact per-step output limit is checked in U10 against current Cloudflare docs).

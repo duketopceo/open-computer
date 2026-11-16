@@ -4,6 +4,7 @@ import { authenticate } from "./auth.ts";
 import type { Env } from "./env.ts";
 import { readSecret, SecretError } from "./models/secrets.ts";
 import { D1MemoryStore } from "./storage/d1-memory.ts";
+import { NO_POLICY, parsePolicy, PolicyError, resolveDailyCaps, validateUserDailyCap, type DailyCaps, type Policy } from "./policy.ts";
 import { readAllAudit } from "./storage/ledger-client.ts";
 
 export const VERSION = "0.1.0";
@@ -35,7 +36,25 @@ interface TaskBody {
  * The cloud core's HTTP surface. `deps.fetch` is the only outbound network the handler itself uses (the model
  * key check); tests pass a fake through the test entry, production passes the global fetch.
  */
-export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> {
+async function loadDailyCaps(env: Env, policy: Policy): Promise<DailyCaps> {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'daily_cap_usd'").first<{ value: string }>();
+  const stored = row ? Number(row.value) : null;
+  return resolveDailyCaps(stored !== null && Number.isFinite(stored) ? stored : null, policy);
+}
+
+const settingsBody = (caps: DailyCaps) => ({
+  daily_cap_usd: caps.user,
+  default_daily_cap_usd: defaults.daily_cap_usd,
+  max_daily_cap_usd: defaults.max_daily_cap_usd,
+  policy_max_daily_cap_usd: caps.policyMax,
+  effective_daily_cap_usd: caps.effective,
+});
+
+/**
+ * `fetch` is the only outbound network the handler itself uses (the model key check). `policy` supplies the IT
+ * policy text; production leaves it unset, which reads the `POLICY_JSON` variable, and tests pass their own.
+ */
+export function createHandler(deps: { fetch: FetchLike; policy?: () => string | undefined }): ExportedHandler<Env> {
   return {
     async fetch(request, env) {
       const auth = await authenticate(request, env);
@@ -46,6 +65,37 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
       const url = new URL(request.url);
       const path = url.pathname;
       const method = request.method;
+
+      let policy: Policy = NO_POLICY;
+      try {
+        policy = parsePolicy(deps.policy ? deps.policy() : env.POLICY_JSON);
+      } catch (e) {
+        if (e instanceof PolicyError) return problem(500, "policy_invalid", `The IT policy cannot be read, so nothing runs until it is fixed: ${e.message}`);
+        throw e;
+      }
+
+      if (path === "/v1/settings" && (method === "GET" || method === "PUT")) {
+        if (method === "PUT") {
+          let body: Record<string, unknown>;
+          try {
+            body = (await request.json()) as Record<string, unknown>;
+          } catch {
+            return problem(400, "bad_request", "The body must be JSON.");
+          }
+          for (const k of Object.keys(body)) if (k !== "daily_cap_usd") return problem(400, "bad_request", `Unknown setting "${k}".`);
+          if (!("daily_cap_usd" in body)) return problem(400, "bad_request", "daily_cap_usd is required (a number, or null to use the default).");
+          if (body.daily_cap_usd === null) {
+            await env.DB.prepare("DELETE FROM settings WHERE key = 'daily_cap_usd'").run();
+          } else {
+            const checked = validateUserDailyCap(body.daily_cap_usd);
+            if (typeof checked === "string") return problem(400, "bad_request", checked);
+            await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('daily_cap_usd', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+              .bind(String(checked))
+              .run();
+          }
+        }
+        return json(settingsBody(await loadDailyCaps(env, policy)));
+      }
 
       if (method === "GET" && path === "/v1/health") return json({ ok: true, version: VERSION });
 
@@ -81,10 +131,12 @@ export function createHandler(deps: { fetch: FetchLike }): ExportedHandler<Env> 
         if (!ID_RE.test(sessionId)) return problem(400, "bad_request", "session_id may use letters, digits, dot, dash and underscore.");
         const taskCap = body.task_cap === undefined ? 1 : Number(body.task_cap);
         if (!Number.isFinite(taskCap) || taskCap <= 0 || taskCap > 100) return problem(400, "bad_request", "task_cap must be above 0 and at most 100.");
-        // The daily cap is not optional: the account default always applies, and a task can only lower it.
-        const askedDayCap = body.day_cap === undefined || body.day_cap === null ? defaults.daily_cap_usd : Number(body.day_cap);
+        // The daily cap is not optional. The user's cap (else the default), held under any IT policy maximum, always
+        // applies; a task can ask for a lower one but never a higher one.
+        const caps = await loadDailyCaps(env, policy);
+        const askedDayCap = body.day_cap === undefined || body.day_cap === null ? caps.effective : Number(body.day_cap);
         if (!Number.isFinite(askedDayCap) || askedDayCap <= 0) return problem(400, "bad_request", "day_cap must be above 0.");
-        const dayCap = Math.min(askedDayCap, defaults.daily_cap_usd);
+        const dayCap = Math.min(askedDayCap, caps.effective);
         const model = typeof body.model === "string" && body.model !== "" ? body.model : defaults.default_model;
         const taskId = crypto.randomUUID();
         const session = env.SESSION.get(env.SESSION.idFromName(sessionId));

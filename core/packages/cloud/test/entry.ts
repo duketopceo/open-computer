@@ -15,6 +15,8 @@ export interface Doubles {
   fetch: FetchLike;
   /** Step-key suffixes (for example ":2") whose audit write fails once, as a ledger outage would. */
   failFlushAt: string[];
+  /** The IT policy text the handler should see; unset means no policy. */
+  policyJson?: string;
 }
 
 const g = globalThis as unknown as { __doubles?: Doubles };
@@ -44,4 +46,4 @@ export class SessionDO extends BaseSessionDO {
   }
 }
 
-export default createHandler({ fetch: (url, init) => doubles().fetch(url, init) });
+export default createHandler({ fetch: (url, init) => doubles().fetch(url, init), policy: () => doubles().policyJson });

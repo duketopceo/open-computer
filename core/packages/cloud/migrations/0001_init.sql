@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS task_cap_extra (
   amount REAL NOT NULL
 );
 
+-- The user's own settings (currently their daily spend cap), one value per key.
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
   task_id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
