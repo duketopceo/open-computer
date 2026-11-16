@@ -2,74 +2,16 @@
 
 use rune::{El, ScrollSpec, col, row, text};
 use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, Field, Kit, TextInput};
-use shell_core::chat::{ApprovalCard, Item, ToolCard, write_diff};
+use shell_core::chat::ApprovalCard;
 use shell_core::defaults;
 
 use super::{caption, test_connection};
 use crate::app::App;
-use crate::main_app::{Main, Tab};
+use crate::main_app::Main;
 
 pub fn view(s: &App, k: &Kit, m: &Main) -> El {
-    let tab_button = |label: &str, tab: Tab| {
-        Button::new(label)
-            .variant(if m.tab == tab {
-                ButtonVariant::Submit
-            } else {
-                ButtonVariant::Ghost
-            })
-            .on_press(move |s: &mut App| s.show_tab(tab))
-            .build(k)
-    };
-    let nav = row()
-        .key("nav")
-        .gap(8.0)
-        .center_y()
-        .child(
-            text("Open Computer")
-                .font(k.ty.body_medium)
-                .color(k.c.text_strong),
-        )
-        .child(tab_button("Chat", Tab::Chat))
-        .child(tab_button("Settings", Tab::Settings))
-        .child(tab_button("Diagnostics", Tab::Diagnostics));
-    let body = match m.tab {
-        Tab::Chat => chat(s, k, m),
-        Tab::Settings => settings(s, k, m),
-        Tab::Diagnostics => diagnostics(s, k),
-    };
-    let mut page = col()
-        .key("main")
-        .w_full()
-        .h_full()
-        .gap(10.0)
-        .child(nav)
-        .child(body);
-    if let Some(n) = &s.notice {
-        page = page.child(
-            text(n.clone())
-                .key("notice")
-                .font(k.ty.ui)
-                .color(k.c.text_strong),
-        );
-    }
-    page
+    super::workspace::view(s, k, m)
 }
-
-/// Three things worth asking first, one per capability: run something, remember something, look something up.
-const EXAMPLES: [(&str, &str); 3] = [
-    (
-        "Run a command in the sandbox",
-        "Run the command `uname -a` in your sandbox and tell me what it printed.",
-    ),
-    (
-        "Write and check a file",
-        "Write a file named notes.txt that says hello, then read it back to me.",
-    ),
-    (
-        "Look something up",
-        "Use web search to find the current stable version of Node.js and answer in one sentence.",
-    ),
-];
 
 fn card(k: &Kit, key: String) -> El {
     col()
@@ -81,198 +23,7 @@ fn card(k: &Kit, key: String) -> El {
         .border(1.0, k.c.border_strong)
 }
 
-fn chat(s: &App, k: &Kit, m: &Main) -> El {
-    let mut list = col().key("chat-list").gap(8.0).w_full();
-    if m.chat.items.is_empty() {
-        let hint = if m.endpoint.is_some() {
-            "Ask for something. The agent thinks, uses its sandbox and tools, and asks before it does anything risky."
-        } else if m.starting_local {
-            "Starting the local core."
-        } else {
-            "Not connected to a core yet. Open Settings."
-        };
-        list = list.child(caption(k, hint));
-        for (i, (label, task)) in EXAMPLES.iter().enumerate() {
-            let task: &'static str = task;
-            list = list.child(
-                col()
-                    .key(format!("example-{i}"))
-                    .gap(2.0)
-                    .w_full()
-                    .padding(10.0)
-                    .radius(8.0)
-                    .border(1.0, k.c.border_strong)
-                    .child(text(*label).font(k.ty.ui_medium).color(k.c.text_strong))
-                    .child(text(task).font(k.ty.caption()).color(k.c.text_muted))
-                    .child(
-                        Button::new("Use this")
-                            .variant(ButtonVariant::Ghost)
-                            .on_press(move |s: &mut App| s.use_example(task))
-                            .build(k),
-                    ),
-            );
-        }
-    }
-    for (i, item) in m.chat.items.iter().enumerate() {
-        list = list.child(item_view(k, s, m, i, item));
-    }
-    if m.chat.is_busy() && !m.chat.has_reasoning() {
-        list = list.child(
-            text(format!("Working \u{b7} {}s", m.elapsed_secs()))
-                .key("working")
-                .font(k.ty.ui)
-                .color(k.c.text_muted),
-        );
-    }
-    let scroller = col()
-        .key("chat-scroll")
-        .w_full()
-        .grow(1.0)
-        .scroll(ScrollSpec { stick_bottom: true })
-        .child(list);
-
-    let busy = m.chat.is_busy();
-    let composer = TextInput::new(&s.composer)
-        .placeholder("What should Open Computer do?")
-        .on_edit(|s: &mut App| &mut s.composer)
-        .on_submit(|s: &mut App, _| s.send())
-        .width(None)
-        .build(k);
-    let send = Button::new(if busy { "Working" } else { "Send" })
-        .variant(if busy {
-            ButtonVariant::Loading
-        } else {
-            ButtonVariant::Submit
-        })
-        .disabled(busy)
-        .on_press(|s: &mut App| s.send())
-        .build(k);
-    let mut bar = row()
-        .key("composer-row")
-        .gap(8.0)
-        .center_y()
-        .w_full()
-        .child(col().key("composer-fill").grow(1.0).child(composer))
-        .child(send);
-    if busy {
-        bar = bar.child(
-            Button::new("Stop")
-                .variant(ButtonVariant::Neutral)
-                .on_press(|s: &mut App| s.stop_task())
-                .build(k),
-        );
-    }
-    col()
-        .key("chat")
-        .w_full()
-        .grow(1.0)
-        .gap(8.0)
-        .child(scroller)
-        .child(bar)
-        .child(footer(k, m))
-}
-
-/// Model, spend against the caps, and the task state, always visible under the composer.
-fn footer(k: &Kit, m: &Main) -> El {
-    let cost = m.chat.items.iter().rev().find_map(|i| match i {
-        Item::Cost {
-            task,
-            day,
-            task_cap,
-            day_cap,
-        } => Some((*task, *day, *task_cap, *day_cap)),
-        _ => None,
-    });
-    let spend = match cost {
-        Some((t, d, tc, dc)) => format!(
-            "task ${t:.4} of ${tc:.2}  |  today ${d:.4} of {}",
-            dc.map_or("no cap".to_owned(), |c| format!("${c:.2}"))
-        ),
-        None => "no spend yet".to_owned(),
-    };
-    let state = if m.chat.status.is_empty() {
-        "idle"
-    } else {
-        m.chat.status.as_str()
-    };
-    text(format!(
-        "{}  |  {spend}  |  {state}",
-        defaults::default_model()
-    ))
-    .key("footer")
-    .font(k.ty.caption())
-    .color(k.c.text_muted)
-}
-
-fn item_view(k: &Kit, s: &App, m: &Main, i: usize, item: &Item) -> El {
-    let key = format!("item-{i}");
-    match item {
-        Item::User(t) => card(k, key)
-            .child(text("You").font(k.ty.caption()).color(k.c.text_muted))
-            .child(text(t.clone()).font(k.ty.ui).color(k.c.text_strong)),
-        Item::Thinking { text: t, done } => {
-            let open = !*done || m.chat.open.contains(&i);
-            let head = row()
-                .gap(8.0)
-                .center_y()
-                .child(
-                    text(if *done { "Thought" } else { "Thinking" })
-                        .font(k.ty.caption())
-                        .color(k.c.text_muted),
-                )
-                .child(
-                    Button::new(if open { "Hide" } else { "Show" })
-                        .variant(ButtonVariant::Ghost)
-                        .on_press(move |s: &mut App| s.toggle_item(i))
-                        .build(k),
-                );
-            let mut c = card(k, key).child(head);
-            if open {
-                c = c.child(text(t.clone()).font(k.ty.ui).color(k.c.text_muted));
-            }
-            c
-        }
-        Item::Assistant { text: t, done } => card(k, key)
-            .child(
-                text(if *done {
-                    "Open Computer"
-                } else {
-                    "Open Computer is writing"
-                })
-                .font(k.ty.caption())
-                .color(k.c.text_muted),
-            )
-            .child(text(t.clone()).font(k.ty.ui).color(k.c.text_strong)),
-        Item::Tool(t) => tool_card(k, m, i, key, t),
-        Item::Approval(a) => approval_card(k, s, key, a),
-        Item::Step {
-            step,
-            prompt,
-            completion,
-            reasoning,
-            cost,
-        } => text(format!(
-            "step {}: {prompt} in, {completion} out{}{}",
-            step + 1,
-            if *reasoning > 0 {
-                format!(" ({reasoning} reasoning)")
-            } else {
-                String::new()
-            },
-            cost.map_or(String::new(), |c| format!(", ${c:.5}"))
-        ))
-        .key(key)
-        .font(k.ty.caption())
-        .color(k.c.text_muted),
-        Item::Cost { .. } => col().key(key),
-        Item::Note(n) => text(n.clone())
-            .key(key)
-            .font(k.ty.caption())
-            .color(k.c.text_muted),
-    }
-}
-
-fn approval_card(k: &Kit, s: &App, key: String, a: &ApprovalCard) -> El {
+pub(super) fn approval_card(k: &Kit, s: &App, key: String, a: &ApprovalCard) -> El {
     let word = match a.state.as_str() {
         "requested" => "Needs your decision",
         "approved" => "Approved",
@@ -316,66 +67,7 @@ fn approval_card(k: &Kit, s: &App, key: String, a: &ApprovalCard) -> El {
     c
 }
 
-fn tool_card(k: &Kit, m: &Main, i: usize, key: String, t: &ToolCard) -> El {
-    let state = match t.status.as_str() {
-        "running" => "Running",
-        "ok" => "Done",
-        "denied" => "Denied",
-        _ => "Failed",
-    };
-    let finished = t.status != "running";
-    let open = !finished || m.chat.open.contains(&i);
-    let mut head = row()
-        .gap(8.0)
-        .center_y()
-        .child(
-            text(t.name.clone())
-                .font(k.ty.ui_medium)
-                .color(k.c.text_strong),
-        )
-        .child(Badge::new(state).variant(BadgeVariant::Neutral).build(k))
-        .child(
-            text(if t.risk.is_empty() {
-                String::new()
-            } else {
-                format!("risk: {}", t.risk)
-            })
-            .font(k.ty.caption())
-            .color(k.c.text_muted),
-        );
-    if finished {
-        head = head.child(
-            Button::new(if open { "Hide" } else { "Details" })
-                .variant(ButtonVariant::Ghost)
-                .on_press(move |s: &mut App| s.toggle_item(i))
-                .build(k),
-        );
-    }
-    let mut c = card(k, key).child(head);
-    if open && !t.args.is_empty() {
-        let body = write_diff(&t.args).unwrap_or_else(|| clip(&t.args, 400));
-        c = c.child(text(body).font(k.ty.caption()).color(k.c.text_muted));
-    }
-    if open && let Some(out) = &t.output {
-        let ms = t.ms.map_or(String::new(), |m| format!("  ({m:.0} ms)"));
-        c = c.child(
-            text(format!("{}{ms}", clip(out, 600)))
-                .font(k.ty.caption())
-                .color(k.c.text_base),
-        );
-    }
-    c
-}
-
-fn clip(s: &str, n: usize) -> String {
-    if s.chars().count() <= n {
-        s.to_owned()
-    } else {
-        format!("{}...", s.chars().take(n).collect::<String>())
-    }
-}
-
-fn settings(s: &App, k: &Kit, m: &Main) -> El {
+pub(super) fn settings(s: &App, k: &Kit, m: &Main) -> El {
     let section = |title: &str, key: &str| {
         col()
             .key(key.to_owned())
@@ -575,7 +267,7 @@ fn settings(s: &App, k: &Kit, m: &Main) -> El {
         .child(policy)
 }
 
-fn diagnostics(s: &App, k: &Kit) -> El {
+pub(super) fn diagnostics(s: &App, k: &Kit) -> El {
     col()
         .key("diagnostics")
         .w_full()

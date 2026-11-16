@@ -7,6 +7,7 @@ mod memory;
 mod model_key;
 mod start;
 mod test_connection;
+mod workspace;
 
 use rune::{Cx, El, ScrollSpec, col, row, text};
 use rune_kit::{Button, ButtonVariant, Kit};
@@ -21,8 +22,6 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
             col()
                 .key("frame")
                 .fill(k.c.page)
-                .padding(24.0)
-                .items_start()
                 .w_full()
                 .h_full()
                 .child(main_view::view(s, k, m)),
@@ -198,6 +197,9 @@ fn caption(k: &Kit, words: impl Into<String>) -> El {
 
 #[cfg(test)]
 mod start_tests;
+
+#[cfg(test)]
+mod workspace_tests;
 
 #[cfg(test)]
 mod tests {

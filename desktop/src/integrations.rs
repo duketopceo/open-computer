@@ -85,18 +85,21 @@ impl App {
         self.notice = None;
         m.chat.push_user(&goal);
         m.started = Some(std::time::Instant::now());
+        m.selected_step = None;
+        let session = m.session_id.clone();
         self.composer.replace_text("");
         self.harness_running = true;
         self.harness_cancel.store(false, Ordering::Relaxed);
         let cancel = self.harness_cancel.clone();
         let (tx, waker) = (self.tx(), self.waker());
         std::thread::spawn(move || {
+            let sid = session.clone();
             let r = harness::run_task(&mut *adapter, &goal, None, None, None, &cancel, &mut |ev| {
-                notify(&tx, &waker, Msg::ChatEvent(ev))
+                notify(&tx, &waker, Msg::ChatEvent(sid.clone(), ev))
             });
             match r {
-                Ok(()) => notify(&tx, &waker, Msg::ChatEnd),
-                Err(e) => notify(&tx, &waker, Msg::ChatError(e)),
+                Ok(()) => notify(&tx, &waker, Msg::ChatEnd(session.clone())),
+                Err(e) => notify(&tx, &waker, Msg::ChatFailed(session.clone(), e)),
             }
         });
     }
@@ -291,6 +294,92 @@ impl App {
         });
     }
 
+    /// Fake conversations for the workspace screenshots: `OC_SCREEN_WORKSPACE=empty|running|done`. Built from the same events a
+    /// core streams, so the screens draw what a real task would show. Never touches a network or an account.
+    pub fn apply_workspace_fixture(&mut self, kind: &str) {
+        use serde_json::json;
+        self.harness = Harness::BuiltIn;
+        let Some(m) = self.main.as_mut() else { return };
+        let run = |chat: &mut shell_core::chat::Chat, events: &[serde_json::Value]| {
+            for e in events {
+                chat.apply(e);
+            }
+        };
+        // Two earlier tasks for the sidebar.
+        let earlier = |goal: &str, answer: &str, ago_secs: u64, session: &str| {
+            let mut c = shell_core::chat::Chat::default();
+            c.push_user(goal);
+            c.apply(&json!({"type": "message.done", "text": answer}));
+            c.apply(&json!({"type": "run", "status": "done"}));
+            crate::main_app::Thread {
+                session_id: session.to_owned(),
+                chat: c,
+                began: std::time::SystemTime::now() - std::time::Duration::from_secs(ago_secs),
+            }
+        };
+        if kind != "empty" {
+            m.threads.push(earlier(
+                "Find the current Node.js LTS",
+                "Node.js 24 is the current LTS.",
+                26 * 3600,
+                "app-old-1",
+            ));
+            m.threads.push(earlier(
+                "Summarize my notes from last week",
+                "You worked on the sandbox and the desktop shell.",
+                3 * 3600,
+                "app-old-2",
+            ));
+        }
+        m.began = std::time::SystemTime::now() - std::time::Duration::from_secs(95);
+        m.chat = shell_core::chat::Chat::default();
+        if kind == "empty" {
+            return;
+        }
+        m.chat.push_user("Write a file named notes.txt that says hello, then run it through wc and tell me the result.");
+        run(
+            &mut m.chat,
+            &[
+                json!({"type": "run", "status": "running", "task_id": "t1"}),
+                json!({"type": "reasoning.delta", "text": "I need to write the file first, then count its words with wc."}),
+                json!({"type": "reasoning.done"}),
+                json!({"type": "tool_call.started", "call_id": "c1", "name": "sandbox.write_file"}),
+                json!({"type": "tool_call.finished", "call_id": "c1", "name": "sandbox.write_file", "args": "{\"path\":\"/workspace/notes.txt\",\"content\":\"hello\\n\"}", "risk": "write"}),
+                json!({"type": "tool_call.result", "call_id": "c1", "status": "ok", "output": "wrote 6 bytes to /workspace/notes.txt", "ms": 212.0}),
+                json!({"type": "tool_call.started", "call_id": "c2", "name": "sandbox.exec"}),
+                json!({"type": "tool_call.finished", "call_id": "c2", "name": "sandbox.exec", "args": "{\"command\":\"wc /workspace/notes.txt\"}", "risk": "exec"}),
+            ],
+        );
+        if kind == "running" {
+            run(
+                &mut m.chat,
+                &[
+                    json!({"type": "approval", "id": "a1", "hash": "h", "state": "requested", "summary": "Run `wc /workspace/notes.txt` in the sandbox"}),
+                    json!({"type": "usage", "step": 0, "prompt": 640, "completion": 88, "reasoning": 31, "cost": 0.00041}),
+                    json!({"type": "cost", "task_total": 0.00041, "day_total": 0.0123, "task_cap": 1.0, "day_cap": 5.0}),
+                    json!({"type": "run", "status": "waiting"}),
+                ],
+            );
+        } else {
+            run(
+                &mut m.chat,
+                &[
+                    json!({"type": "tool_call.result", "call_id": "c2", "status": "ok", "output": "1 1 6 /workspace/notes.txt", "ms": 1840.0}),
+                    json!({"type": "usage", "step": 0, "prompt": 640, "completion": 88, "reasoning": 31, "cost": 0.00041}),
+                    json!({"type": "usage", "step": 1, "prompt": 760, "completion": 52, "reasoning": 0, "cost": 0.00033}),
+                    json!({"type": "message.delta", "text": "I wrote `notes.txt` with the word **hello** and counted it with `wc`:\n\n- 1 line\n- 1 word\n- 6 bytes\n\nThe file is at `/workspace/notes.txt`."}),
+                    json!({"type": "message.done", "text": ""}),
+                    json!({"type": "cost", "task_total": 0.00074, "day_total": 0.0127, "task_cap": 1.0, "day_cap": 5.0}),
+                    json!({"type": "run", "status": "done"}),
+                ],
+            );
+        }
+        m.selected_step = None;
+        if std::env::var_os("OC_SCREEN_SIDEBAR_OFF").is_some() {
+            m.sidebar_open = false;
+        }
+    }
+
     /// Fake state for headless screenshots only (`OC_SCREEN_FIXTURE=1`); never touches the network or any account.
     pub fn apply_screen_fixture(&mut self) {
         use shell_core::openrouter::{Account, Generation, KeyInfo, ModelPrice};
@@ -383,6 +472,9 @@ impl App {
                 self.cloudflare_line =
                     Some(signin::locate_wrangler(None, None, &|_| false).describe(None));
             }
+        }
+        if let Ok(kind) = std::env::var("OC_SCREEN_WORKSPACE") {
+            self.apply_workspace_fixture(&kind);
         }
         // OC_SCREEN_ROWS=1: a test chain part way through, for the Diagnostics screenshot.
         if std::env::var_os("OC_SCREEN_ROWS").is_some() {
