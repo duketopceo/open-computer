@@ -11,7 +11,7 @@ import {
 } from "@open-computer/agent-core";
 import defaults from "../../../contracts/defaults.json" with { type: "json" };
 import type { Env } from "./env.ts";
-import { buildProvider, gatewayConfigured, resolveTarget } from "./models/gateway.ts";
+import { buildProvider, gatewayConfigured, gatewayReport, readGatewayState, resolveTarget } from "./models/gateway.ts";
 import { isValidationError, openRouterSdk, sdkStatus } from "./models/sdk.ts";
 import { readSecret, SecretError } from "./models/secrets.ts";
 import type { SandboxFactory } from "./sandbox/port.ts";
@@ -323,7 +323,7 @@ async function perf(env: Env, deps: DiagDeps): Promise<Response> {
     }
     out.edge_to_openrouter_ms = stats(direct);
     const target = await resolveTarget(env);
-    if (target.viaGateway) {
+    if (target.viaGateway && target.source !== "binding") {
       const via: number[] = [];
       for (let i = 0; i < 5; i++) {
         try {
@@ -336,6 +336,7 @@ async function perf(env: Env, deps: DiagDeps): Promise<Response> {
       out.edge_to_openrouter_via_gateway_ms = g;
       out.gateway_overhead_ms = round(g.p50 - stats(direct).p50);
     } else {
+      // Through the binding there is no plain GET to time, so the overhead is not measured.
       out.gateway_overhead_ms = null;
     }
   }
@@ -462,6 +463,9 @@ async function bindings(env: Env, deps: DiagDeps, version: string): Promise<Resp
     probe(() => readSecret(env.MODEL_KEY, "model_key")),
   ]);
   const target = await resolveTarget(env);
+  // A gateway can be set up and still be refusing requests (for example, an Authenticated Gateway called without a
+  // credential). The core retries those directly, so say what is really happening, and why.
+  const report = gatewayReport(env, target, target.viaGateway ? await readGatewayState(env) : null);
   return json({
     ok: db && r2,
     version,
@@ -472,8 +476,7 @@ async function bindings(env: Env, deps: DiagDeps, version: string): Promise<Resp
     durable_objects: !!env.SESSION && !!env.LEDGER,
     workflow: !!env.TASK_WORKFLOW,
     container: !!env.SANDBOX,
-    gateway: target.viaGateway,
-    gateway_via: target.source ?? "direct",
+    ...report,
     default_model: defaults.default_model,
     worker_model: defaults.worker_model,
     daily_cap_usd: deps.dayCap,

@@ -9,6 +9,7 @@ import {
   type StreamPart,
   type Usage,
 } from "./types.ts";
+import { GATEWAY_NEEDS_AUTH, gatewayErrorFromBody } from "./gateway-error.ts";
 
 export interface OpenRouterOptions {
   fetch: FetchLike;
@@ -111,6 +112,8 @@ export function buildRequestBody(request: ProviderRequest): Record<string, unkno
 
 function mapHttpError(status: number, text: string, key: string): ProviderError {
   const clean = (key ? text.split(key).join("[redacted]") : text).slice(0, 400);
+  // A refusal from Cloudflare AI Gateway is not OpenRouter rejecting the key; say which one it was.
+  if ((status === 401 || status === 403) && gatewayErrorFromBody(text)) return new ProviderError("gateway_refused", GATEWAY_NEEDS_AUTH, status);
   if (status === 401 || status === 403) return new ProviderError("key_invalid", clean || "The key was rejected.", status);
   if (status === 402) return new ProviderError("payment_required", clean || "The provider account has no credit.", status);
   if (status === 429) return new ProviderError("rate_limited", clean || "The provider is rate limiting requests.", status);

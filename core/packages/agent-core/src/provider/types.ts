@@ -66,6 +66,7 @@ export type StreamPart =
 export type ProviderErrorCode =
   | "key_invalid"
   | "key_missing"
+  | "gateway_refused"
   | "payment_required"
   | "rate_limited"
   | "provider_http_error"

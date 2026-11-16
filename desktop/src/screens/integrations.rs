@@ -254,10 +254,11 @@ pub fn cloudflare(s: &App, k: &Kit) -> El {
             sec = sec.child(note(k, f));
         }
     }
-    let gateway = match s.cf_gateway {
-        Some(true) => "configured",
-        Some(false) => "not configured",
-        None => "not checked (needs a connected core)",
+    let gateway = match (&s.cf_gateway, &s.cf_gateway_reason) {
+        (_, Some(why)) => format!("set up, but not in use: {why} Calls go straight to OpenRouter."),
+        (Some(true), None) => "configured".to_owned(),
+        (Some(false), None) => "not configured".to_owned(),
+        (None, None) => "not checked (needs a connected core)".to_owned(),
     };
     let access = match s.cf_access {
         Some(AccessState::Protected) => "on, the core's address asks you to sign in",

@@ -1,6 +1,7 @@
 export * from "./events.ts";
 export * from "./provider/types.ts";
 export * from "./provider/account.ts";
+export * from "./provider/gateway-error.ts";
 export * from "./audit/generations.ts";
 export { openRouterProvider, buildRequestBody, OPENROUTER_BASE_URL, DEFAULT_PROVIDER_TIMEOUTS } from "./provider/openrouter.ts";
 export type { OpenRouterOptions, ProviderTimeouts } from "./provider/openrouter.ts";

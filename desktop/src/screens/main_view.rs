@@ -449,10 +449,14 @@ fn settings(s: &App, k: &Kit, m: &Main) -> El {
     let routing = section("Routing", "set-routing")
         .child(line(
             k,
-            match s.cf_gateway {
-                Some(true) => "Through your Cloudflare AI Gateway, then OpenRouter. The gateway keeps the logs.".to_owned(),
-                Some(false) => "Direct to OpenRouter; AI Gateway is not configured on this core.".to_owned(),
-                None => "Routing is checked when a core is connected.".to_owned(),
+            match (&s.cf_gateway, &s.cf_gateway_reason) {
+                (_, Some(why)) => format!(
+                    "AI Gateway is set up but refused the request ({}); calls go straight to OpenRouter.",
+                    why.trim_end_matches('.')
+                ),
+                (Some(true), None) => "Through your Cloudflare AI Gateway, then OpenRouter. The gateway keeps the logs.".to_owned(),
+                (Some(false), None) => "Direct to OpenRouter; AI Gateway is not configured on this core.".to_owned(),
+                (None, None) => "Routing is checked when a core is connected.".to_owned(),
             },
         ))
         .child(note(k, "Prices come from OpenRouter and refresh daily."));

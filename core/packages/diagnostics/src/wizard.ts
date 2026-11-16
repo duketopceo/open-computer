@@ -117,6 +117,7 @@ const MODEL_FIX: Record<string, Fix> = {
   key_missing: { text: "Store your OpenRouter key: run setup again and paste it when asked.", action: "store-key" },
   key_invalid: { text: "OpenRouter rejected the key. Create a new key at openrouter.ai/keys and store it again.", action: "store-key" },
   payment_required: { text: "The OpenRouter account has no credit or the key's limit is used up. Add credit or raise the key limit.", action: "open:openrouter-credits" },
+  gateway_refused: { text: "The core retried directly. To use the gateway, run setup again so the core gets the Workers AI binding; a gateway with authentication on cannot be called without it.", action: "retry" },
   rate_limited: { text: "OpenRouter is rate limiting this key. Wait a minute and retry.", action: "retry" },
   cap_reached: { text: "Today's spend cap is reached. Raise the daily cap in Settings, or retry tomorrow.", action: "open:settings" },
   unreachable: { text: "The backend could not reach OpenRouter. Retry.", action: "retry" },
@@ -211,7 +212,7 @@ function cloudflareDefs(): Def[] {
         const bad = transport(r);
         if (bad) return bad;
         const b = r.body ?? {};
-        if (!b.ok) return { ok: false, detail: b.code === "key_missing" ? "No OpenRouter key is stored." : b.code === "key_invalid" ? "OpenRouter rejected the key." : b.code === "payment_required" ? "The key has no credit or limit left." : "The OpenRouter check failed.", fix: modelFix(String(b.code)) };
+        if (!b.ok) return { ok: false, detail: b.code === "key_missing" ? "No OpenRouter key is stored." : b.code === "key_invalid" ? "OpenRouter rejected the key." : b.code === "payment_required" ? "The key has no credit or limit left." : b.code === "gateway_refused" ? "AI Gateway refused the request (needs authentication)." : "The OpenRouter check failed.", fix: modelFix(String(b.code)) };
         const m: Metric[] = [{ label: "round trip", value: s(b.ms) }];
         if (typeof b.usage === "number") m.push({ label: "key usage", value: usd(b.usage) });
         m.push({ label: "key limit", value: typeof b.limit === "number" ? usd(b.limit) : "none set" });

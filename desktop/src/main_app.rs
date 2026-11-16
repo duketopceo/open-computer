@@ -193,11 +193,20 @@ impl App {
         std::thread::spawn(move || {
             notify(&tx, &waker, Msg::Settings(ep.settings()));
             // The core says whether it routes through an AI Gateway; the Routing and Cloudflare sections show it.
-            let gateway = ep
-                .bindings()
-                .ok()
-                .map(|b| shell_core::signin::gateway_configured(&b));
+            let bindings = ep.bindings().ok();
+            let gateway = bindings
+                .as_ref()
+                .map(shell_core::signin::gateway_configured);
             notify(&tx, &waker, Msg::Gateway(gateway));
+            notify(
+                &tx,
+                &waker,
+                Msg::GatewayReason(
+                    bindings
+                        .as_ref()
+                        .and_then(shell_core::signin::gateway_reason),
+                ),
+            );
         });
     }
 

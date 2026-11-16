@@ -78,12 +78,16 @@ oc admin access --hostname core.example.com --emails you@example.com
 ```
 
 To route the core through a gateway you created, run setup with its name: `OC_AI_GATEWAY_ID=open-computer oc setup`. The
-rendered (never committed) deploy config gets the Workers AI binding (`AI`) and `AI_GATEWAY_ID`; the core asks the binding
-for the gateway address, so no account id is written anywhere. `/v1/diag/bindings` then reports `gateway: true` and
-`gateway_via: "binding"`, and the desktop's Routing and Cloudflare sections show it. A gateway with authentication off
-needs no token. With authentication on, bind a token as the Secrets Store secret `oc_aig_token` (binding `AIG_TOKEN`) and the
-core sends `cf-aig-authorization` on every model call. If the binding cannot give an address the core falls back to the
-`AI_GATEWAY_ACCOUNT` route, then to OpenRouter directly. Not verified against the live gateway: no model call was made.
+rendered (never committed) deploy config gets the Workers AI binding (`AI`) and `AI_GATEWAY_ID`. Model calls go through
+`env.AI.gateway(id).run({ provider: "openrouter", endpoint: "chat/completions", headers, query })`, which authenticates as
+the Worker, so an Authenticated Gateway (the default for new gateways) needs no token and no account id is written anywhere
+(https://developers.cloudflare.com/ai-gateway/usage/universal/ and /ai-gateway/configuration/authentication/). A plain
+fetch to the gateway URL carries no credential and gets HTTP 401 / code 2009, which is why the core does not use one.
+If the gateway refuses or fails for any reason the core retries once straight to OpenRouter and records why:
+`/v1/diag/bindings` then reports `gateway: false`, `gateway_configured: true`, `gateway_via: "direct"` and a
+`gateway_reason`, and the wizard says "AI Gateway refused the request (needs authentication)", never that OpenRouter
+rejected the key. The desktop's Routing and Cloudflare sections show the same. An `AIG_TOKEN` secret (`oc_aig_token`) is
+only used on the plain-URL route (`AI_GATEWAY_ACCOUNT` set, no binding). Streaming through `run()` is tested on fakes only.
 
 Cloudflare Access: do not turn it on yet. The desktop, `oc` and the web wizard call the core with a bearer token, and Access
 would answer those calls with a sign-in page. It needs service-token support in all three first.
