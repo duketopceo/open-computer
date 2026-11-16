@@ -4,6 +4,10 @@ Goal: replicate Perplexity Computer's *cloud* orchestration (not Portable/local)
 open components. Stack: CubeVM + OpenRouter + Jev/pplx-decider + jev-compact +
 NVIDIA OpenShell, on the luke-agents harness.
 
+> v1 direction: one TypeScript agent core (`core/`) on the user's own Cloudflare account and inside a Rust desktop
+> app (`desktop/`). The Python components below are frozen while it replaces them; see
+> [docs/runbooks/core.md](docs/runbooks/core.md) and `docs/plans/2026-11-15-0337-feat-oc-v1-desktop-cloudflare-core-plan.md`.
+
 ## Component map
 
 | PPLX Computer (cloud) | OSS equivalent | Status |

@@ -1,0 +1,132 @@
+[
+  {
+    "type": "run",
+    "status": "running",
+    "task_id": "task-1",
+    "seq": 0
+  },
+  {
+    "type": "step",
+    "step": 0,
+    "state": "start",
+    "task_id": "task-1",
+    "seq": 1
+  },
+  {
+    "type": "tool_call.started",
+    "step": 0,
+    "call_id": "c1",
+    "name": "echo",
+    "index": 0,
+    "task_id": "task-1",
+    "seq": 2
+  },
+  {
+    "type": "tool_call.args.delta",
+    "call_id": "c1",
+    "text": "{\"x\":1}",
+    "task_id": "task-1",
+    "seq": 3
+  },
+  {
+    "type": "usage",
+    "step": 0,
+    "prompt": 10,
+    "completion": 5,
+    "reasoning": 0,
+    "cached": 0,
+    "cost": 0.001,
+    "estimated": false,
+    "task_id": "task-1",
+    "seq": 4
+  },
+  {
+    "type": "cost",
+    "task_total": 0.001,
+    "day_total": 0.001,
+    "task_cap": 100,
+    "day_cap": null,
+    "task_id": "task-1",
+    "seq": 5
+  },
+  {
+    "type": "step",
+    "step": 0,
+    "state": "end",
+    "task_id": "task-1",
+    "seq": 6
+  },
+  {
+    "type": "tool_call.finished",
+    "call_id": "c1",
+    "name": "echo",
+    "args": "{\"x\":1}",
+    "risk": "read",
+    "task_id": "task-1",
+    "seq": 7
+  },
+  {
+    "type": "tool_call.result",
+    "call_id": "c1",
+    "status": "ok",
+    "output": "ran echo {\"x\":1}",
+    "ms": 0,
+    "task_id": "task-1",
+    "seq": 8
+  },
+  {
+    "type": "step",
+    "step": 1,
+    "state": "start",
+    "task_id": "task-1",
+    "seq": 9
+  },
+  {
+    "type": "message.delta",
+    "step": 1,
+    "text": "done",
+    "task_id": "task-1",
+    "seq": 10
+  },
+  {
+    "type": "usage",
+    "step": 1,
+    "prompt": 10,
+    "completion": 5,
+    "reasoning": 0,
+    "cached": 0,
+    "cost": 0.001,
+    "estimated": false,
+    "task_id": "task-1",
+    "seq": 11
+  },
+  {
+    "type": "cost",
+    "task_total": 0.002,
+    "day_total": 0.002,
+    "task_cap": 100,
+    "day_cap": null,
+    "task_id": "task-1",
+    "seq": 12
+  },
+  {
+    "type": "message.done",
+    "step": 1,
+    "text": "done",
+    "task_id": "task-1",
+    "seq": 13
+  },
+  {
+    "type": "step",
+    "step": 1,
+    "state": "end",
+    "task_id": "task-1",
+    "seq": 14
+  },
+  {
+    "type": "run",
+    "status": "done",
+    "task_id": "task-1",
+    "seq": 15
+  }
+]

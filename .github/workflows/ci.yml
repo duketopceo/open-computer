@@ -51,6 +51,90 @@ jobs:
       - name: requirements.txt matches uv.lock, and every hash verifies
         run: uv run --with pytest pytest tests/unit/test_provisioning_pins.py -p no:cacheprovider
 
+  # v1 core (TypeScript). Nothing here deploys or contacts Cloudflare: the Worker runs under miniflare, and the
+  # bundle check is `wrangler deploy --dry-run`. Like every job here they are gates: both names are registered in
+  # deploy/approved_deploy.py REQUIRED_JOBS and listed in production-approval's `needs`.
+  core:
+    name: core (typecheck, tests, sidecar build, bundle dry run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: install (pnpm via corepack, frozen lockfile)
+        working-directory: core
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: typecheck
+        working-directory: core
+        run: pnpm typecheck
+      - name: tests (agent-core, local under Node; cloud under miniflare; no network, no real models)
+        working-directory: core
+        run: pnpm test
+      - name: sidecar build and smoke check
+        working-directory: core
+        run: pnpm --filter @open-computer/local build
+      - name: cloud bundle dry run (never a real deploy)
+        working-directory: core
+        run: pnpm --filter @open-computer/cloud exec wrangler deploy --dry-run --outdir dist
+      - name: event schema file is up to date
+        working-directory: core/packages/agent-core
+        run: node scripts/gen-schema.ts --check
+
+  desktop:
+    name: desktop (fmt, clippy, tests, sidecar e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Rune builds a windowing and GPU stack; these are the Linux libraries it and the keyring need.
+      - name: system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxkbcommon-x11-dev libvulkan-dev
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktop
+      - name: fmt
+        working-directory: desktop
+        run: cargo fmt --check
+      - name: clippy
+        working-directory: desktop
+        run: cargo clippy --workspace -- -D warnings
+      - name: shell-core tests (no display, no GPU)
+        working-directory: desktop
+        run: cargo test -p shell-core
+      - name: build check
+        working-directory: desktop
+        run: cargo check --workspace
+      - name: headless onboarding state
+        working-directory: desktop
+        run: cargo run -q -- --print-state | python3 -c "import json,sys; json.load(sys.stdin)"
+      # The contract fixtures catch shape drift; this proves the Rust client against the real compiled sidecar.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: build the sidecar
+        working-directory: core
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @open-computer/local build
+      - name: sidecar e2e
+        working-directory: desktop
+        env:
+          OC_CORE_BIN: ${{ github.workspace }}/core/packages/local/out/oc-core
+        run: cargo test -p shell-core --test e2e -- --ignored
+
   console-e2e:
     name: console e2e (playwright + axe)
     runs-on: ubuntu-latest
@@ -88,7 +172,7 @@ jobs:
   production-approval:
     name: production approval
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [python, console-e2e, provisioning]
+    needs: [python, console-e2e, provisioning, core, desktop]
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5

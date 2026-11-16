@@ -1,0 +1,24 @@
+// Test-only configuration for the Workers test pool (miniflare). Same bindings as wrangler.jsonc except:
+// the entry is test/entry.ts (which injects a fake provider and a fake sandbox) and there is no Container,
+// because Containers need Docker and do not run under miniflare.
+{
+  "name": "open-computer-core-test",
+  "main": "test/entry.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSION", "class_name": "SessionDO" },
+      { "name": "LEDGER", "class_name": "LedgerDO" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO", "LedgerDO"] }],
+  "workflows": [{ "name": "open-computer-task", "binding": "TASK_WORKFLOW", "class_name": "TaskWorkflow" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "open-computer-test", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "open-computer-artifacts-test" }],
+  "secrets_store_secrets": [
+    { "binding": "ACCESS_SECRET", "store_id": "test-store", "secret_name": "oc_access_secret" },
+    { "binding": "MODEL_KEY", "store_id": "test-store", "secret_name": "oc_model_key" }
+  ],
+  "vars": { "MODEL_IDLE_TIMEOUT_MS": "60000", "POLICY_JSON": "", "APPROVAL_TIMEOUT": "2 seconds", "AI_GATEWAY_ACCOUNT": "", "AI_GATEWAY_ID": "" }
+}

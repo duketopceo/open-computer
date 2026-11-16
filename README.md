@@ -20,6 +20,12 @@
 > [docs/FEATURES.md](./docs/FEATURES.md) (written 2026-10-14, so parts are behind the code). Unit board:
 > [ROADMAP.md](./ROADMAP.md).
 
+> **In progress: v1 core.** A TypeScript agent core (`core/`) that runs on your own Cloudflare account and inside a
+> Rust desktop app (`desktop/`) is replacing the Python services below, which are frozen. The first slice is
+> built and tested but nothing is deployed from the repository. Plan:
+> [docs/plans/2026-11-15-0337-feat-oc-v1-desktop-cloudflare-core-plan.md](./docs/plans/2026-11-15-0337-feat-oc-v1-desktop-cloudflare-core-plan.md).
+> How to run its tests: [docs/runbooks/core.md](./docs/runbooks/core.md).
+
 ## Why
 
 Perplexity Computer coordinates 19 models for $200/month; reviewers report simple tasks at roughly

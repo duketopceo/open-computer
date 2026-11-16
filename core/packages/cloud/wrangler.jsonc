@@ -1,0 +1,55 @@
+// Open Computer cloud core. Nothing here deploys itself: `wrangler deploy` is only ever run by the owner, and
+// CI runs it with --dry-run. Every id below is an inert placeholder; the one-step deploy (U16) creates the real
+// resources in the user's own account and fills these in at deploy time, so no account id is committed.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "open-computer-core",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSION", "class_name": "SessionDO" },
+      { "name": "LEDGER", "class_name": "LedgerDO" },
+      { "name": "SANDBOX", "class_name": "Sandbox" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO", "LedgerDO", "Sandbox"] }],
+
+  "workflows": [{ "name": "open-computer-task", "binding": "TASK_WORKFLOW", "class_name": "TaskWorkflow" }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "open-computer",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "open-computer-artifacts" }],
+
+  // Secrets Store (open beta). Reads go through src/models/secrets.ts only.
+  "secrets_store_secrets": [
+    { "binding": "ACCESS_SECRET", "store_id": "placeholder-store-id", "secret_name": "oc_access_secret" },
+    { "binding": "MODEL_KEY", "store_id": "placeholder-store-id", "secret_name": "oc_model_key" }
+  ],
+
+  // One Container class, one fresh sandbox per task. amd64 only, no keys inside the image.
+  "containers": [{ "class_name": "Sandbox", "image": "./sandbox/Dockerfile", "instance_type": "lite", "max_instances": 10 }],
+
+  "vars": {
+    // Model call limits (ms): time to first byte, silence once streaming, and the whole call.
+    "MODEL_CONNECT_TIMEOUT_MS": "30000",
+    "MODEL_IDLE_TIMEOUT_MS": "60000",
+    "MODEL_TOTAL_TIMEOUT_MS": "600000",
+    "APPROVAL_TIMEOUT": "24 hours",
+    // IT policy as JSON text (first field: max_daily_cap_usd). Empty means no policy; a broken policy fails closed.
+    "POLICY_JSON": "",
+    // Optional AI Gateway in front of OpenRouter. Empty means call OpenRouter directly.
+    "AI_GATEWAY_ACCOUNT": "",
+    "AI_GATEWAY_ID": ""
+  }
+}

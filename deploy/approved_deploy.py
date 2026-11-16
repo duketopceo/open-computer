@@ -25,6 +25,10 @@ REQUIRED_JOBS = frozenset({
     # The image's install runs before any sandbox exists, so an unverified registry artifact would execute with
     # host privilege. A green deploy requires that the file the image installs still verifies.
     "provisioning (hash-verified install)",
+    # The v1 core (TypeScript) and desktop shell (Rust). They do not change what server-001 deploys, but a red
+    # one means the repository is not in a releasable state, so they gate like every other job.
+    "core (typecheck, tests, sidecar build, bundle dry run)",
+    "desktop (fmt, clippy, tests, sidecar e2e)",
     "production approval",
 })
 HOME = Path.home()

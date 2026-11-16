@@ -1,0 +1,6 @@
+{
+  "default_model": "z-ai/glm-5.3",
+  "worker_model": "z-ai/glm-5.3-flash",
+  "daily_cap_usd": 5,
+  "max_daily_cap_usd": 1000
+}

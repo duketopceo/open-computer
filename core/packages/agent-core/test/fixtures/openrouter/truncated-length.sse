@@ -1,0 +1,8 @@
+: synthetic cassette, hand-authored from the documented OpenRouter chunk shapes
+
+data: {"id":"gen-6","choices":[{"index":0,"delta":{"role":"assistant","content":"The answer is long and gets cu"},"finish_reason":null}]}
+
+data: {"id":"gen-6","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":9,"completion_tokens":8,"cost":0.0001}}
+
+data: [DONE]
+

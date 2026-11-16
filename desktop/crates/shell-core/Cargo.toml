@@ -1,0 +1,27 @@
+[package]
+name = "shell-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Window-free logic of the Open Computer desktop shell: onboarding state machine, local core client and process launcher, secret storage."
+
+[dependencies]
+getrandom = "0.4.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# `native-tls`, not the default features: ureq 3.4 panics on any https request without it.
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Secret Service over D-Bus, in Rust (no libdbus).
+keyring = { version = "3.6.3", default-features = false, features = ["async-secret-service", "tokio", "crypto-rust"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
+
+[lints]
+workspace = true

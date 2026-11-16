@@ -1,0 +1,1 @@
+{"all_ok":true,"backend":{"ok":true,"code":"ok","message":"The cloud core answered."},"model":{"ok":true,"code":"ok","message":"The model key works."},"memory":{"ok":true,"code":"ok","message":"Memory saved and read back."}}

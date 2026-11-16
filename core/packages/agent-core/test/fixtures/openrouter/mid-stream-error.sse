@@ -1,0 +1,6 @@
+: synthetic cassette, hand-authored from the documented OpenRouter chunk shapes
+
+data: {"id":"gen-5","choices":[{"index":0,"delta":{"role":"assistant","content":"Partial answer"},"finish_reason":null}]}
+
+data: {"id":"gen-5","error":{"code":502,"message":"Upstream provider dropped the connection"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+
