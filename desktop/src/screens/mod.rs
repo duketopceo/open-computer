@@ -39,14 +39,12 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
 
     // Fixed header, a body that scrolls and fills the window, fixed footer: the window size never cuts content off.
     let mut head = col().key("head").w_full().gap(8.0);
-    if step != Step::Connect {
-        head = head.child(
-            text(format!("Step {position} of 4"))
-                .key("position")
-                .font(k.ty.caption())
-                .color(k.c.text_muted),
-        );
-    }
+    head = head.child(
+        text(format!("Step {position} of 4"))
+            .key("position")
+            .font(k.ty.ui)
+            .color(k.c.text_muted),
+    );
     head = head.child(
         text(step.title())
             .key("title")
@@ -189,11 +187,26 @@ fn footer(s: &App, k: &Kit) -> El {
     bar
 }
 
-/// A caption under a control.
+/// A caption under a control. Uses the UI size so it stays readable, and is full width so long
+/// lines wrap instead of being clipped mid-word.
 fn caption(k: &Kit, words: impl Into<String>) -> El {
     text(words.into())
-        .font(k.ty.caption())
+        .font(k.ty.ui)
         .color(k.c.text_muted)
+        .w_full()
+        .wrap()
+}
+
+/// Label on the OpenRouter connect button: Working while the browser wait is open, Try again after
+/// a cancelled or failed attempt, Connect otherwise.
+pub(crate) fn openrouter_action_label(busy: bool, retry: bool) -> &'static str {
+    if busy {
+        "Working…"
+    } else if retry {
+        "Try again"
+    } else {
+        "Connect OpenRouter"
+    }
 }
 
 #[cfg(test)]

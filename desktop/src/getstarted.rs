@@ -421,6 +421,9 @@ impl App {
 
     pub fn toggle_advanced(&mut self) {
         self.show_advanced = !self.show_advanced;
+        if self.show_advanced {
+            self.scroll_advanced = 2;
+        }
     }
 
     /// One-click setup: the same chain as `oc setup`, run from the app with its rows shown as they arrive.

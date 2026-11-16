@@ -253,3 +253,127 @@ fn the_running_timers_count_up_from_when_the_row_and_the_chain_started() {
         "the header total counts up live: {t:?}"
     );
 }
+
+#[test]
+fn local_only_marks_cloudflare_as_not_needed_and_does_not_claim_a_sign_in() {
+    assert_eq!(
+        super::start::cloudflare_badge(true, false, true),
+        ("Not needed (local only)", false)
+    );
+    assert_eq!(
+        super::start::cloudflare_badge(false, false, false),
+        ("Not signed in", false)
+    );
+    assert_eq!(
+        super::start::cloudflare_badge(false, true, false),
+        ("Signed in", true)
+    );
+
+    let mut a = app();
+    a.onboarding.set_local_only(true);
+    a.show_advanced = true;
+    let t = texts(a);
+    assert!(has(&t, "Not needed (local only)"));
+    assert!(
+        !has(&t, "Signed in"),
+        "local only must not show a Signed in badge: {t:?}"
+    );
+    assert!(
+        !has(&t, "click Allow"),
+        "local only drops the Cloudflare Allow copy: {t:?}"
+    );
+    assert!(has(
+        &t,
+        "You still need an OpenRouter key, because models are reached through OpenRouter."
+    ));
+    assert!(has(&t, "Use this computer only (no cloud)"));
+    assert!(
+        !has(&t, "Local only: on (press to use a cloud core)") && !has(&t, "Continue with these"),
+        "the old toggle wording and the second Continue are gone: {t:?}"
+    );
+    assert!(has(&t, "Step 1 of 4"));
+}
+
+#[test]
+fn cancelling_or_timing_out_openrouter_connect_resets_the_button_for_retry() {
+    let mut a = app();
+    a.onboarding.set_local_only(true);
+    a.or_busy = true;
+    a.or_line = Some("Your browser opened OpenRouter. Click Authorize there.".to_owned());
+    let t = texts(a);
+    assert!(has(&t, "Working…"));
+    assert!(has(&t, "Cancel"));
+
+    let mut a = app();
+    a.onboarding.set_local_only(true);
+    a.or_busy = true;
+    a.or_line = Some("Your browser opened OpenRouter. Click Authorize there.".to_owned());
+    a.cancel_openrouter();
+    assert!(!a.or_busy);
+    assert_eq!(
+        a.or_line.as_deref(),
+        Some(shell_core::openrouter::CANCELLED)
+    );
+    let t = texts(a);
+    assert!(has(&t, "Try again"));
+    assert!(!has(&t, "Working…"), "cancel must not leave Working: {t:?}");
+    assert!(
+        !has(&t, "Cancel"),
+        "Cancel is only shown while waiting: {t:?}"
+    );
+
+    let mut a = app();
+    a.onboarding.set_local_only(true);
+    a.or_busy = true;
+    a.on_openrouter_key(Err(shell_core::openrouter::TIMED_OUT.to_owned()));
+    assert!(!a.or_busy);
+    assert_eq!(
+        a.or_line.as_deref(),
+        Some(shell_core::openrouter::TIMED_OUT)
+    );
+    let t = texts(a);
+    assert!(has(&t, "Try again"));
+    assert!(has(&t, "not finished in time"));
+    assert!(!has(&t, "Working…"));
+}
+
+#[test]
+fn going_back_cancels_a_running_openrouter_connect() {
+    let mut a = app();
+    a.onboarding.set_local_only(true);
+    a.onboarding.advance().unwrap();
+    assert_eq!(a.onboarding.step(), Step::ModelKey);
+    a.or_busy = true;
+    a.or_line = Some("Your browser opened OpenRouter. Click Authorize there.".to_owned());
+    a.back();
+    assert_eq!(a.onboarding.step(), Step::Connect);
+    assert!(!a.or_busy);
+    assert_eq!(
+        a.or_line.as_deref(),
+        Some(shell_core::openrouter::CANCELLED)
+    );
+}
+
+#[test]
+fn get_started_descriptions_wrap_instead_of_clipping_to_one_line() {
+    let mut a = app();
+    a.onboarding.set_local_only(true);
+    a.show_advanced = true;
+    let mut rt = Runtime::new(a, view, (520.0, 800.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let cap = rt
+        .elements()
+        .into_iter()
+        .find(|e| {
+            e.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("Local only: the agent runs"))
+        })
+        .expect("the local-only description is on the page");
+    assert!(
+        cap.rect[3] > 28.0,
+        "the description must wrap onto more than one line, height was {}: {:?}",
+        cap.rect[3],
+        cap.rect
+    );
+}

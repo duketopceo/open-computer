@@ -412,6 +412,9 @@ mod tests {
                 let mut buf = [0u8; 4096];
                 let n = s.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                // Take the rest of a request body too: answering and closing with bytes unread resets the connection.
+                let _ = s.set_read_timeout(Some(Duration::from_millis(60)));
+                while matches!(s.read(&mut buf), Ok(m) if m > 0) {}
                 let first = req.lines().next().unwrap_or("").to_owned();
                 log.lock().unwrap().push(req.clone());
                 let hit = routes.iter().find(|(p, ..)| first.contains(p));
