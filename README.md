@@ -173,4 +173,4 @@ already does. Run the test command above before sending a PR. Default branch cha
 
 ## License
 
-MIT — see `LICENSE`.
+AGPL-3.0 — see `LICENSE`. Copyright (C) 2026 Herzog LLC.
